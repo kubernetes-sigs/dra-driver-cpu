@@ -1,0 +1,21 @@
+apiVersion: resource.k8s.io/v1beta1
+kind: ResourceClaim
+metadata:
+  name: cpu-request-4-cpus
+spec:
+  devices:
+    requests:
+    - name: req-dummy
+      deviceClassName: dra.cpu
+      count: 4
+---
+apiVersion: resource.k8s.io/v1beta1
+kind:  ResourceClaim
+metadata:
+  name: cpu-request-6-cpus
+spec:
+  devices:
+    requests:
+    - name: req-dummy-2
+      deviceClassName: dra.cpu
+      count: 6
