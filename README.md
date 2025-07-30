@@ -17,5 +17,4 @@ You can reach the maintainers of this project at:
 
 Participation in the Kubernetes community is governed by the [Kubernetes Code of Conduct](code-of-conduct.md).
 
-[owners]: https://git.k8s.io/community/contributors/guide/owners.md
-[Creative Commons 4.0]: https://git.k8s.io/website/LICENSE
+This project is managed by its [OWNERS](https://git.k8s.io/community/contributors/guide/owners.md) and is licensed under [Creative Commons 4.0](https://git.k8s.io/website/LICENSE).
