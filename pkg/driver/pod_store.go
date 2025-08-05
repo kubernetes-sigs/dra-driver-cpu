@@ -18,7 +18,9 @@ package driver
 import (
 	"sync"
 
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/cpuset"
 )
 
@@ -53,5 +55,20 @@ type PodConfigStore struct {
 }
 
 func NewPodConfigStore() *PodConfigStore {
-	return &PodConfigStore{}
+	cpuIDs := []int{}
+	cpuInfo, err := cpuinfo.GetCPUInfos()
+	if err != nil {
+		klog.Fatalf("Fatal error getting CPU topology: %v", err)
+	}
+	for _, cpu := range cpuInfo {
+		cpuIDs = append(cpuIDs, cpu.CpuID)
+	}
+
+	allCPUsSet := cpuset.New(cpuIDs...)
+
+	return &PodConfigStore{
+		configs:    make(map[types.UID]PodCPUAssignments),
+		allCPUs:    allCPUsSet,
+		publicCPUs: allCPUsSet.Clone(),
+	}
 }

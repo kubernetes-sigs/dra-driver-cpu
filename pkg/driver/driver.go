@@ -24,8 +24,6 @@ import (
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/containerd/nri/pkg/stub"
-	resourceapi "k8s.io/api/resource/v1beta1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 )
@@ -71,6 +69,9 @@ func Start(ctx context.Context, driverName string, kubeClient kubernetes.Interfa
 	}
 	plugin.cdiMgr = cdiMgr
 
+	// publish available resources
+	go plugin.PublishResources(ctx)
+
 	return plugin, nil
 }
 
@@ -79,13 +80,7 @@ func (cp *CPUDriver) Stop() {
 	cp.draPlugin.Stop()
 }
 
-// dra_hooks.go stubs
-func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resourceapi.ResourceClaim) (map[types.UID]kubeletplugin.PrepareResult, error) {
-	return nil, nil
-}
-func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubeletplugin.NamespacedObject) (map[types.UID]error, error) {
-	return nil, nil
-}
+
 
 // nri_hooks.go stubs
 func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, containers []*api.Container) ([]*api.ContainerUpdate, error) {
