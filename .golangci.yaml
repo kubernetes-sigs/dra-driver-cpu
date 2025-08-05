@@ -1,0 +1,38 @@
+version: "2"
+run:
+  tests: true
+linters:
+  enable:
+    - asasalint
+    - errcheck
+    - errorlint
+    - gocritic
+    - gosec
+    - ineffassign
+    - nilnil
+    - nilerr
+    - unused
+    - wastedassign
+    - whitespace
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
