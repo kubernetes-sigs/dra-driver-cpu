@@ -1,4 +1,5 @@
 module github.com/kubernetes-sigs/dra-driver-cpu
+
 go 1.24.0
 
 require (

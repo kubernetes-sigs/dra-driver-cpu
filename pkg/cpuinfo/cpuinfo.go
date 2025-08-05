@@ -89,9 +89,11 @@ func GetCPUInfos() ([]CPUInfo, error) {
 		}
 	}
 	if err := populateTopologyInfo(cpuInfos); err != nil {
+		// TODO(pkrishn): Handle this error better. We would have to surface this information upstream.
 		log.Printf("Warning: failed to populate NUMA info: %v", err)
 	}
 	if err := populateL3CacheIDs(cpuInfos); err != nil {
+		// TODO(pkrishn): Handle this error better. We would have to surface this information upstream.
 		log.Printf("Warning: failed to populate L3 cache IDs: %v", err)
 	}
 	populateCpuSiblings(cpuInfos)

@@ -1,5 +1,5 @@
 /*
-Copyright 2024 The Kubernetes Authors.
+Copyright 2025 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,10 +19,15 @@ package main
 import (
 	"context"
 	"flag"
+	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
+	"sync/atomic"
+	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sys/unix"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -38,6 +43,8 @@ const (
 var (
 	hostnameOverride string
 	kubeconfig       string
+	bindAddress      string
+	ready            atomic.Bool
 )
 
 func init() {
@@ -49,17 +56,53 @@ func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 
+	printVersion()
+	flag.VisitAll(func(f *flag.Flag) {
+		klog.Infof("FLAG: --%s=%q", f.Name, f.Value)
+	})
+
+	mux := http.NewServeMux()
+	// Add healthz handler
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if !ready.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+	// Add metrics handler
+	mux.Handle("/metrics", promhttp.Handler())
+	server := &http.Server{
+		Addr:              bindAddress,
+		Handler:           mux,
+		IdleTimeout:       120 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+	}
+
+	go func() {
+		_ = server.ListenAndServe()
+	}()
+
 	var config *rest.Config
 	var err error
 	if kubeconfig != "" {
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 	} else {
+		// creates the in-cluster config
 		config, err = rest.InClusterConfig()
 	}
 	if err != nil {
 		klog.Fatalf("can not create client-go configuration: %v", err)
 	}
 
+	// use protobuf for better performance at scale
+	// https://kubernetes.io/docs/reference/using-api/api-concepts/#alternate-representations-of-resources
+	config.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
+	config.ContentType = "application/vnd.kubernetes.protobuf"
+
+	// creates the clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		klog.Fatalf("can not create client-go client: %v", err)
@@ -67,11 +110,19 @@ func main() {
 
 	nodeName, err := nodeutil.GetHostname(hostnameOverride)
 	if err != nil {
-		klog.Fatalf("can not obtain the node name: %v", err)
+		klog.Fatalf("can not obtain the node name, use the hostname-override flag if you want to set it to a specific value: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// trap Ctrl+C and call cancel on the context
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+
+	// Enable signal handler
 	signalCh := make(chan os.Signal, 2)
+	defer func() {
+		close(signalCh)
+		cancel()
+	}()
 	signal.Notify(signalCh, os.Interrupt, unix.SIGINT)
 
 	dracpu, err := driver.Start(ctx, driverName, clientset, nodeName)
@@ -79,6 +130,8 @@ func main() {
 		klog.Fatalf("driver failed to start: %v", err)
 	}
 	defer dracpu.Stop()
+	ready.Store(true)
+	klog.Info("driver started")
 
 	select {
 	case <-signalCh:
@@ -87,4 +140,21 @@ func main() {
 	case <-ctx.Done():
 		klog.Infof("Exiting: context cancelled")
 	}
+}
+
+func printVersion() {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+	var vcsRevision, vcsTime string
+	for _, f := range info.Settings {
+		switch f.Key {
+		case "vcs.revision":
+			vcsRevision = f.Value
+		case "vcs.time":
+			vcsTime = f.Value
+		}
+	}
+	klog.Infof("dracpu go %s build: %s time: %s", info.GoVersion, vcsRevision, vcsTime)
 }
