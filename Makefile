@@ -45,9 +45,11 @@ update: ## runs go mod tidy
 	go mod tidy
 
 # get image name from directory we're building
+CLUSTER_NAME=dra-driver-cpu
 IMAGE_NAME=dra-driver-cpu
 # docker image registry, default to upstream
-STAGING_IMAGE_REGISTRY := us-central1-docker.pkg.dev/k8s-staging-images/dra-driver-cpu
+REGISTRY := us-central1-docker.pkg.dev/k8s-staging-images
+STAGING_IMAGE_NAME := ${REGISTRY}/${IMAGE_NAME}
 # tag based on date-sha
 GIT_VERSION := $(shell date +v%Y%m%d)-$(shell git rev-parse --short HEAD)
 ifneq ($(shell git status --porcelain),)
@@ -55,22 +57,35 @@ ifneq ($(shell git status --porcelain),)
 endif
 TAG ?= $(GIT_VERSION)
 # the full image tag
-IMAGE?=$(STAGING_IMAGE_REGISTRY)/$(IMAGE_NAME):$(TAG)
-IMAGE_LATEST?=$(STAGING_IMAGE_REGISTRY)/$(IMAGE_NAME):latest
+IMAGE_LATEST?=$(STAGING_IMAGE_NAME):latest
+IMAGE := ${STAGING_IMAGE_NAME}:${TAG}
 PLATFORMS?=linux/amd64
 
 # required to enable buildx
 export DOCKER_CLI_EXPERIMENTAL=enabled
 image: ## docker build load
-# docker buildx build --platform=${PLATFORMS} $(OUTPUT) --progress=$(PROGRESS) -t ${IMAGE} --pull $(EXTRA_BUILD_OPT) .
-	docker build . -t ${IMAGE} --load
+	docker build . -t ${STAGING_IMAGE_NAME} --load
 
 build-image: ## build image
 	docker buildx build . \
 		--platform="${PLATFORMS}" \
 		--tag="${IMAGE}" \
-		--tag="${IMAGE_LATEST}"
+		--tag="${IMAGE_LATEST}" \
+		--load
 
 push-image: build-image ## build and push image
 	docker push ${IMAGE}
 	docker push ${IMAGE_LATEST}
+
+kind-cluster:  ## create kind cluster
+	kind create cluster --name ${CLUSTER_NAME} --config hack/kind.yaml
+
+kind-uninstall-cpu-dra: ## remove cpu dra from kind cluster
+	kubectl delete -f install.yaml || true
+
+kind-install-cpu-dra: kind-uninstall-cpu-dra build-image ## install on cluster
+	kind load docker-image ${IMAGE_LATEST} --name ${CLUSTER_NAME}
+	kubectl apply -f install.yaml
+
+delete-kind-cluster: ## delete kind cluster
+	kind delete cluster --name ${CLUSTER_NAME}
