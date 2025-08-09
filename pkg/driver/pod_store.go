@@ -107,6 +107,17 @@ func (s *PodConfigStore) SetContainerState(podUID types.UID, state *ContainerCPU
 	}
 }
 
+// GetContainerState retrieves a container's CPU state.
+func (s *PodConfigStore) GetContainerState(podUID types.UID, containerName string) *ContainerCPUState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if podAssignments, ok := s.configs[podUID]; ok {
+		return podAssignments[containerName]
+	}
+	return nil
+}
+
 // RemoveContainerState removes a container's state from the store.
 func (s *PodConfigStore) RemoveContainerState(podUID types.UID, containerName string) {
 	s.mu.Lock()
