@@ -24,9 +24,11 @@ import (
 	"time"
 
 	"github.com/containerd/nri/pkg/stub"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
+	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/klog/v2"
 )
 
@@ -36,17 +38,34 @@ const (
 	maxAttempts = 5
 )
 
+// KubeletPlugin is an interface that describes the methods used from kubeletplugin.Helper.
+type KubeletPlugin interface {
+	PublishResources(context.Context, resourceslice.DriverResources) error
+	Stop()
+}
+
+type cdiManager interface {
+	AddDevice(deviceName string, envVar string) error
+	RemoveDevice(deviceName string) error
+}
+
+// CPUInfoProvider is an interface for getting CPU information.
+type CPUInfoProvider interface {
+	GetCPUInfos() ([]cpuinfo.CPUInfo, error)
+}
+
 // CPUDriver is the structure that holds all the driver runtime information.
 type CPUDriver struct {
 	driverName        string
 	nodeName          string
 	kubeClient        kubernetes.Interface
-	draPlugin         *kubeletplugin.Helper
+	draPlugin         KubeletPlugin
 	nriPlugin         stub.Stub
 	podConfigStore    *PodConfigStore
-	cdiMgr            *CdiManager
+	cdiMgr            cdiManager
 	cpuIDToDeviceName map[int]string
 	deviceNameToCPUID map[string]int
+	cpuInfoProvider   CPUInfoProvider
 }
 
 // Start creates and starts a new CPUDriver.
@@ -55,10 +74,11 @@ func Start(ctx context.Context, driverName string, kubeClient kubernetes.Interfa
 		driverName:        driverName,
 		nodeName:          nodeName,
 		kubeClient:        kubeClient,
-		podConfigStore:    NewPodConfigStore(),
 		cpuIDToDeviceName: make(map[int]string),
 		deviceNameToCPUID: make(map[string]int),
+		cpuInfoProvider:   cpuinfo.NewSystemCPUInfo(),
 	}
+	plugin.podConfigStore = NewPodConfigStore(plugin.cpuInfoProvider)
 
 	driverPluginPath := filepath.Join(kubeletPluginPath, driverName)
 	if err := os.MkdirAll(driverPluginPath, 0750); err != nil {
@@ -76,7 +96,7 @@ func Start(ctx context.Context, driverName string, kubeClient kubernetes.Interfa
 	}
 	plugin.draPlugin = d
 	err = wait.PollUntilContextTimeout(ctx, 1*time.Second, 30*time.Second, true, func(context.Context) (bool, error) {
-		status := plugin.draPlugin.RegistrationStatus()
+		status := d.RegistrationStatus()
 		if status == nil {
 			return false, nil
 		}

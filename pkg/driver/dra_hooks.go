@@ -31,15 +31,20 @@ import (
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
 )
 
-const maxDevicesPerSlice = 128
-
-// When true, hyperthreads of the same physical core are assigned consecutive device IDs.
-// This allows the DRA scheduler, which requests resources in contiguous blocks, to co-locate workloads on hyperthreads of the same core.
-const setConsecutiveDeviceIdToHyperthreads = true
+const (
+	// maxDevicesPerResourceSlice is the maximum number of devices that can be packed into a single
+	// ResourceSlice object. This is a hard limit defined in the Kubernetes API at
+	// https://github.com/kubernetes/kubernetes/blob/8e6d788887034b799f6c2a86991a68a080bb0576/pkg/apis/resource/types.go#L245
+	maxDevicesPerResourceSlice = 128
+	cpuDevicePrefix            = "cpudev"
+)
 
 // CreateCPUDeviceSlices creates Device objects based on the CPU topology.
-func (cp *CPUDriver) CreateCPUDeviceSlices() [][]resourceapi.Device {
-	cpus, err := cpuinfo.GetCPUInfos()
+// It groups CPUs by physical core to assign consecutive device IDs to hyperthreads.
+// This allows the DRA scheduler, which requests resources in contiguous blocks,
+// to co-locate workloads on hyperthreads of the same core.
+func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
+	cpus, err := cp.cpuInfoProvider.GetCPUInfos()
 	if err != nil {
 		klog.Errorf("error getting CPU topology: %v", err)
 		return nil
@@ -47,28 +52,22 @@ func (cp *CPUDriver) CreateCPUDeviceSlices() [][]resourceapi.Device {
 
 	processedCpus := make(map[int]bool)
 	var coreGroups [][]cpuinfo.CPUInfo
-	if setConsecutiveDeviceIdToHyperthreads {
-		cpuInfoMap := make(map[int]cpuinfo.CPUInfo)
-		for _, info := range cpus {
-			cpuInfoMap[info.CpuID] = info
-		}
+	cpuInfoMap := make(map[int]cpuinfo.CPUInfo)
+	for _, info := range cpus {
+		cpuInfoMap[info.CpuID] = info
+	}
 
-		for _, cpu := range cpus {
-			if processedCpus[cpu.CpuID] {
-				continue
-			}
-			if cpu.SiblingCpuID != -1 {
-				coreGroups = append(coreGroups, []cpuinfo.CPUInfo{cpu, cpuInfoMap[cpu.SiblingCpuID]})
-				processedCpus[cpu.CpuID] = true
-				processedCpus[cpu.SiblingCpuID] = true
-			} else {
-				coreGroups = append(coreGroups, []cpuinfo.CPUInfo{cpu})
-				processedCpus[cpu.CpuID] = true
-			}
+	for _, cpu := range cpus {
+		if processedCpus[cpu.CpuID] {
+			continue
 		}
-	} else {
-		for _, cpu := range cpus {
+		if cpu.SiblingCpuID != -1 {
+			coreGroups = append(coreGroups, []cpuinfo.CPUInfo{cpu, cpuInfoMap[cpu.SiblingCpuID]})
+			processedCpus[cpu.CpuID] = true
+			processedCpus[cpu.SiblingCpuID] = true
+		} else {
 			coreGroups = append(coreGroups, []cpuinfo.CPUInfo{cpu})
+			processedCpus[cpu.CpuID] = true
 		}
 	}
 
@@ -83,7 +82,8 @@ func (cp *CPUDriver) CreateCPUDeviceSlices() [][]resourceapi.Device {
 			numaNode := int64(cpu.NumaNode)
 			l3CacheID := int64(cpu.L3CacheID)
 			socketID := int64(cpu.SocketID)
-			deviceName := fmt.Sprintf("cpudev%d", devId)
+			coreType := cpu.CoreType.String()
+			deviceName := fmt.Sprintf("%s%d", cpuDevicePrefix, devId)
 			devId++
 			cp.cpuIDToDeviceName[cpu.CpuID] = deviceName
 			cp.deviceNameToCPUID[deviceName] = cpu.CpuID
@@ -93,7 +93,7 @@ func (cp *CPUDriver) CreateCPUDeviceSlices() [][]resourceapi.Device {
 					Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 						"dra.cpu/numaNode":  {IntValue: &numaNode},
 						"dra.cpu/l3CacheID": {IntValue: &l3CacheID},
-						"dra.cpu/coreType":  {StringValue: &cpu.CoreType},
+						"dra.cpu/coreType":  {StringValue: &coreType},
 						"dra.cpu/socketID":  {IntValue: &socketID},
 						// TODO(pravk03): Remove. Hack to align with NIC (DRANet). We need some standard attribute to align other resources with CPU.
 						"dra.net/numaNode": {IntValue: &numaNode},
@@ -105,59 +105,35 @@ func (cp *CPUDriver) CreateCPUDeviceSlices() [][]resourceapi.Device {
 		}
 	}
 
-	numDevices := len(cpus)
-	if numDevices <= maxDevicesPerSlice {
-		klog.Infof("Total devices (%d) is within limit (%d), creating a single resource slice.", numDevices, maxDevicesPerSlice)
-		var allDevices []resourceapi.Device
+	// Create one resource slice per NUMA node.
+	var allSlices [][]resourceapi.Device
 
-		// Sort NUMA node IDs to ensure a deterministic flattening order.
-		numaNodeIDs := make([]int, 0, len(devicesByNuma))
-		for id := range devicesByNuma {
-			numaNodeIDs = append(numaNodeIDs, int(id))
-		}
-		sort.Ints(numaNodeIDs)
+	// Sort NUMA node IDs to ensure a deterministic slice ordering.
+	numaNodeIDs := make([]int, 0, len(devicesByNuma))
+	for id := range devicesByNuma {
+		numaNodeIDs = append(numaNodeIDs, int(id))
+	}
+	sort.Ints(numaNodeIDs)
 
-		// Flatten the map's values into a single slice.
-		for _, id := range numaNodeIDs {
-			allDevices = append(allDevices, devicesByNuma[int64(id)]...)
-		}
-
-		if len(allDevices) == 0 {
+	for _, id := range numaNodeIDs {
+		numaDevices := devicesByNuma[int64(id)]
+		// If devices per NUMA node exceeds the limit, throw an error.
+		if len(numaDevices) > maxDevicesPerResourceSlice {
+			klog.Errorf("number of devices for NUMA node %d (%d) exceeds the slice limit of %d", id, len(numaDevices), maxDevicesPerResourceSlice)
 			return nil
 		}
-		return [][]resourceapi.Device{allDevices}
-	} else {
-		klog.Infof("Total devices (%d) exceeds limit (%d), creating one resource slice per NUMA node.", numDevices, maxDevicesPerSlice)
-		// Create one resource slice per NUMA node.
-		var allSlices [][]resourceapi.Device
-
-		// Sort NUMA node IDs to ensure a deterministic slice ordering.
-		numaNodeIDs := make([]int, 0, len(devicesByNuma))
-		for id := range devicesByNuma {
-			numaNodeIDs = append(numaNodeIDs, int(id))
+		if len(numaDevices) > 0 {
+			allSlices = append(allSlices, numaDevices)
 		}
-		sort.Ints(numaNodeIDs)
-
-		for _, id := range numaNodeIDs {
-			numaDevices := devicesByNuma[int64(id)]
-			// If devices per NUMA node exceeds the limit, throw an error.
-			if len(numaDevices) > maxDevicesPerSlice {
-				klog.Errorf("number of devices for NUMA node %d (%d) exceeds the slice limit of %d", id, len(numaDevices), maxDevicesPerSlice)
-				return nil
-			}
-			if len(numaDevices) > 0 {
-				allSlices = append(allSlices, numaDevices)
-			}
-		}
-		return allSlices
 	}
+	return allSlices
 }
 
 // PublishResources publishes ResourceSlice for CPU resources.
 func (cp *CPUDriver) PublishResources(ctx context.Context) {
 	klog.Infof("Publishing resources")
 
-	deviceChunks := cp.CreateCPUDeviceSlices()
+	deviceChunks := cp.createCPUDeviceSlices()
 	if deviceChunks == nil {
 		klog.Infof("No devices to publish or error occurred.")
 		return
