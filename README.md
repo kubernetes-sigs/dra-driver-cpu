@@ -46,11 +46,12 @@ The driver is deployed as a DaemonSet which contains two core components:
 
 ### Installation
 
-- Create a kind cluster
+- If needed, create a kind cluster. We have one in the repo, if needed, that
+  can be deplayed as follows:
   - `make kind-cluster`
 - Deploy the driver and all necessary RBAC configurations using the provided
   manifest
-  - `make install-cpu-dra`
+  - `kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/dra-driver-cpu/refs/heads/main/install.yaml`
 
 ### Example Usage
 
