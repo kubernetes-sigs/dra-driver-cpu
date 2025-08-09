@@ -180,6 +180,12 @@ func getCDIDeviceName(uid types.UID) string {
 func (cp *CPUDriver) prepareResourceClaim(_ context.Context, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
 	klog.Infof("prepareResourceClaim claim:%s/%s", claim.Namespace, claim.Name)
 
+	if claim.Status.Allocation == nil {
+		return kubeletplugin.PrepareResult{
+			Err: fmt.Errorf("claim %s/%s has no allocation", claim.Namespace, claim.Name),
+		}
+	}
+
 	claimCPUIDs := []int{}
 	for _, alloc := range claim.Status.Allocation.Devices.Results {
 		if alloc.Driver != cp.driverName {
@@ -193,13 +199,13 @@ func (cp *CPUDriver) prepareResourceClaim(_ context.Context, claim *resourceapi.
 		}
 		claimCPUIDs = append(claimCPUIDs, cpuID)
 	}
-	claimCPUSet := cpuset.New(claimCPUIDs...)
 
-	if claimCPUSet.IsEmpty() {
-		klog.Errorf("prepareResourceClaim claim:%s/%s has no CPU allocations", claim.Namespace, claim.Name)
+	if len(claimCPUIDs) == 0 {
+		klog.V(5).Infof("prepareResourceClaim claim:%s/%s has no CPU allocations for this driver", claim.Namespace, claim.Name)
 		return kubeletplugin.PrepareResult{}
 	}
 
+	claimCPUSet := cpuset.New(claimCPUIDs...)
 	deviceName := getCDIDeviceName(claim.UID)
 	envVar := fmt.Sprintf("%s_claim_%s=%s", cdiEnvVarPrefix, claim.Name, claimCPUSet.String())
 	if err := cp.cdiMgr.AddDevice(deviceName, envVar); err != nil {

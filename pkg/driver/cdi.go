@@ -30,8 +30,11 @@ const (
 	cdiSpecVersion  = "0.8.0"
 	cdiVendor       = "dra.k8s.io"
 	cdiClass        = "cpu"
-	cdiSpecDir      = "/var/run/cdi"
 	cdiEnvVarPrefix = "DRA_CPUSET"
+)
+
+var (
+	cdiSpecDir = "/var/run/cdi"
 )
 
 // CdiManager manages a single CDI JSON spec file using a mutex for thread safety.
