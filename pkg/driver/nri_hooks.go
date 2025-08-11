@@ -38,6 +38,8 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	klog.Infof("Synchronized state with the runtime (%d pods, %d containers)...",
 		len(pods), len(containers))
 
+	newPodConfigStore := NewPodConfigStore(cp.cpuInfoProvider)
+
 	for _, pod := range pods {
 		klog.Infof("Synchronize pod %s/%s UID %s", pod.Namespace, pod.Name, pod.Uid)
 		for _, container := range containers {
@@ -57,9 +59,10 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				klog.Infof("Synchronize(): Guaranteed CPUs found for pod %s/%s container %s with cpus: %v", pod.Namespace, pod.Name, container.Name, guaranteedCPUs.String())
 				state = NewContainerCPUState(CPUTypeGuaranteed, container.GetName(), types.UID(container.GetId()), guaranteedCPUs)
 			}
-			cp.podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
+			newPodConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
 		}
 	}
+	cp.podConfigStore = newPodConfigStore
 	return nil, nil
 }
 
@@ -73,8 +76,7 @@ func parseDRAEnvToCPUSet(envs []string) (cpuset.CPUSet, error) {
 
 		keyVal := strings.SplitN(env, "=", 2)
 		if len(keyVal) != 2 {
-			klog.Errorf("Malformed DRA env entry %q, expected format: %s_key=value", env, cdiEnvVarPrefix)
-			continue
+			return cpuset.New(), fmt.Errorf("malformed DRA env entry %q, expected format: %s_key=value", env, cdiEnvVarPrefix)
 		}
 		cpuSetValue := keyVal[1]
 
@@ -89,12 +91,16 @@ func parseDRAEnvToCPUSet(envs []string) (cpuset.CPUSet, error) {
 	return guaranteedCPUs, nil
 }
 
-func (cp *CPUDriver) updateSharedContainers() []*api.ContainerUpdate {
+func (cp *CPUDriver) getSharedContainerUpdates(currentContainerID types.UID) []*api.ContainerUpdate {
 	updates := []*api.ContainerUpdate{}
 	publicCPUs := cp.podConfigStore.GetPublicCPUs()
 	sharedCPUContainers := cp.podConfigStore.GetContainersWithSharedCPUs()
 	klog.Infof("Updating CPU allocation to: %v for containers without guaranteed CPUs", publicCPUs.String())
 	for _, containerUID := range sharedCPUContainers {
+		if containerUID == currentContainerID {
+			// Skip the current container as it is already coveed in container adjustment.
+			continue
+		}
 		containerUpdate := &api.ContainerUpdate{
 			ContainerId: string(containerUID),
 		}
@@ -116,25 +122,26 @@ func (cp *CPUDriver) CreateContainer(_ context.Context, pod *api.PodSandbox, ctr
 	}
 
 	var state *ContainerCPUState
+	containerId := types.UID(ctr.GetId())
 	if guaranteedCPUs.IsEmpty() {
-		state = NewContainerCPUState(CPUTypeShared, ctr.GetName(), types.UID(ctr.GetId()), cpuset.New())
+		state = NewContainerCPUState(CPUTypeShared, ctr.GetName(), containerId, cpuset.New())
 		publicCPUs := cp.podConfigStore.GetPublicCPUs()
 		klog.Infof("No guaranteed CPUs found in DRA env for pod %s/%s container %s. Using public CPUs %s", pod.Namespace, pod.Name, ctr.Name, publicCPUs.String())
 		adjust.SetLinuxCPUSetCPUs(publicCPUs.String())
 		cp.podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
 	} else {
-		state = NewContainerCPUState(CPUTypeGuaranteed, ctr.GetName(), types.UID(ctr.GetId()), guaranteedCPUs)
+		state = NewContainerCPUState(CPUTypeGuaranteed, ctr.GetName(), containerId, guaranteedCPUs)
 		klog.Infof("Guaranteed CPUs found for pod:%s container:%s with cpus:%v", pod.Name, ctr.Name, guaranteedCPUs.String())
 		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
 		cp.podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
 
 		// Remove the guaranteed CPUs from the containers with shared CPUs.
-		updates = cp.updateSharedContainers()
+		updates = cp.getSharedContainerUpdates(containerId)
 		setSharedCPUUpdateRequired(false)
 	}
 
 	if isSharedCPUUpdateRequired() {
-		updates = cp.updateSharedContainers()
+		updates = cp.getSharedContainerUpdates(containerId)
 		setSharedCPUUpdateRequired(false)
 	}
 

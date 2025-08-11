@@ -17,6 +17,7 @@ limitations under the License.
 package cpuinfo
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -26,6 +27,44 @@ import (
 
 	"k8s.io/utils/cpuset"
 )
+
+// CoreType is an enum for the type of CPU core.
+type CoreType int
+
+const (
+	// CoreTypeUndefined is the default zero value.
+	CoreTypeUndefined CoreType = iota
+	// CoreTypeStandard is a standard CPU core.
+	CoreTypeStandard
+	// CoreTypePerformance is a performance core (p-core).
+	CoreTypePerformance
+	// CoreTypeEfficiency is an efficiency core (e-core).
+	CoreTypeEfficiency
+)
+
+// String returns the string representation of a CoreType.
+func (c CoreType) String() string {
+	switch c {
+	case CoreTypeStandard:
+		return "standard"
+	case CoreTypePerformance:
+		return "p-core"
+	case CoreTypeEfficiency:
+		return "e-core"
+	default:
+		return ""
+	}
+}
+
+// MarshalJSON implements the json.Marshaler interface.
+func (c CoreType) MarshalJSON() ([]byte, error) {
+	s := c.String()
+	if s == "" {
+		// Omit the field if the type is undefined.
+		return nil, nil
+	}
+	return json.Marshal(s)
+}
 
 // CPUInfo holds information about a single CPU.
 type CPUInfo struct {
@@ -48,27 +87,39 @@ type CPUInfo struct {
 	SiblingCpuID int `json:"sibling"`
 
 	// Core Type (e-core or p-core)
-	CoreType string `json:"coreType"`
+	CoreType CoreType `json:"coreType,omitempty"`
 
 	// L3CacheID is the L3 cache ID
 	L3CacheID int64 `json:"l3CacheID"`
 }
 
+// SystemCPUInfo provides information about the CPUs on the system.
+type SystemCPUInfo struct{}
+
+// NewSystemCPUInfo creates a new SystemCPUInfo.
+func NewSystemCPUInfo() *SystemCPUInfo {
+	return &SystemCPUInfo{}
+}
+
 // GetCPUInfos returns a slice of CPUInfo structs, one for each logical CPU.
-func GetCPUInfos() ([]CPUInfo, error) {
+func (s *SystemCPUInfo) GetCPUInfos() ([]CPUInfo, error) {
 	filename := hostProc("cpuinfo")
 	lines, err := ReadLines(filename)
 	if err != nil {
 		return []CPUInfo{}, err
 	}
 
-	eCoreFilename := hostSys("devices/cpu_atom/cpus")
-	eCoreLines, err := ReadLines(eCoreFilename)
+	isHybrid := false
 	var eCoreCpus cpuset.CPUSet
-	if err == nil {
-		eCoreCpus, err = cpuset.Parse(eCoreLines[0])
-		if err != nil {
-			return []CPUInfo{}, err
+	eCoreFilename := hostSys("devices/cpu_atom/cpus")
+	if _, err := os.Stat(eCoreFilename); err == nil {
+		eCoreLines, err := ReadLines(eCoreFilename)
+		if err == nil {
+			isHybrid = true
+			eCoreCpus, err = cpuset.Parse(eCoreLines[0])
+			if err != nil {
+				return []CPUInfo{}, err
+			}
 		}
 	}
 
@@ -78,7 +129,7 @@ func GetCPUInfos() ([]CPUInfo, error) {
 		// `/proc/cpuinfo` uses empty lines to denote a new CPU block of data.
 		if strings.TrimSpace(line) == "" {
 			// Parse and reset CPU lines.
-			cpuInfo := parseCPUInfo(eCoreCpus, cpuInfoLines...)
+			cpuInfo := parseCPUInfo(isHybrid, eCoreCpus, cpuInfoLines...)
 			if cpuInfo != nil {
 				cpuInfos = append(cpuInfos, *cpuInfo)
 			}
@@ -89,18 +140,16 @@ func GetCPUInfos() ([]CPUInfo, error) {
 		}
 	}
 	if err := populateTopologyInfo(cpuInfos); err != nil {
-		// TODO(pkrishn): Handle this error better. We would have to surface this information upstream.
-		log.Printf("Warning: failed to populate NUMA info: %v", err)
+		return nil, fmt.Errorf("failed to populate topology info: %w", err)
 	}
 	if err := populateL3CacheIDs(cpuInfos); err != nil {
-		// TODO(pkrishn): Handle this error better. We would have to surface this information upstream.
-		log.Printf("Warning: failed to populate L3 cache IDs: %v", err)
+		return nil, fmt.Errorf("failed to populate L3 cache IDs: %w", err)
 	}
 	populateCpuSiblings(cpuInfos)
 	return cpuInfos, nil
 }
 
-func parseCPUInfo(eCoreCpus cpuset.CPUSet, lines ...string) *CPUInfo {
+func parseCPUInfo(isHybrid bool, eCoreCpus cpuset.CPUSet, lines ...string) *CPUInfo {
 	cpuInfo := &CPUInfo{
 		CpuID:                -1,
 		SocketID:             -1,
@@ -109,6 +158,7 @@ func parseCPUInfo(eCoreCpus cpuset.CPUSet, lines ...string) *CPUInfo {
 		NumaNodeAffinityMask: "",
 		L3CacheID:            -1,
 		SiblingCpuID:         -1,
+		CoreType:             CoreTypeUndefined,
 	}
 
 	if len(lines) == 0 {
@@ -135,9 +185,14 @@ func parseCPUInfo(eCoreCpus cpuset.CPUSet, lines ...string) *CPUInfo {
 		}
 	}
 
-	cpuInfo.CoreType = "p-core"
-	if eCoreCpus.Contains(cpuInfo.CpuID) {
-		cpuInfo.CoreType = "e-core"
+	if isHybrid {
+		if eCoreCpus.Contains(cpuInfo.CpuID) {
+			cpuInfo.CoreType = CoreTypeEfficiency
+		} else {
+			cpuInfo.CoreType = CoreTypePerformance
+		}
+	} else {
+		cpuInfo.CoreType = CoreTypeStandard
 	}
 
 	if cpuInfo.CpuID < 0 || cpuInfo.SocketID < 0 || cpuInfo.CoreID < 0 {
@@ -298,8 +353,19 @@ func populateCpuSiblings(cpuInfos []CPUInfo) {
 }
 
 func formatAffinityMask(mask string) string {
-	newMask := strings.ReplaceAll(mask, ",", "")
-	newMask = strings.TrimSpace(newMask)
+	if strings.TrimSpace(mask) == "" {
+		return "0x0"
+	}
+	parts := strings.Split(mask, ",")
+	// Reverse the parts to handle the kernel's little-endian word order.
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	newMask := strings.Join(parts, "")
+	newMask = strings.TrimLeft(newMask, "0")
+	if newMask == "" {
+		return "0x0"
+	}
 	return "0x" + newMask
 }
 

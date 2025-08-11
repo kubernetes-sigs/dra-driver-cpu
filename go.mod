@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/containerd/nri v0.9.0
 	github.com/prometheus/client_golang v1.22.0
+	github.com/stretchr/testify v1.10.0
 	golang.org/x/sys v0.33.0
 	k8s.io/api v0.33.2
 	k8s.io/apimachinery v0.33.2

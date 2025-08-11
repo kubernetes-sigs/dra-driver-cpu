@@ -18,7 +18,6 @@ package driver
 import (
 	"sync"
 
-	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/cpuset"
@@ -65,9 +64,9 @@ type PodConfigStore struct {
 }
 
 // NewPodConfigStore creates a new PodConfigStore.
-func NewPodConfigStore() *PodConfigStore {
+func NewPodConfigStore(provider CPUInfoProvider) *PodConfigStore {
 	cpuIDs := []int{}
-	cpuInfo, err := cpuinfo.GetCPUInfos()
+	cpuInfo, err := provider.GetCPUInfos()
 	if err != nil {
 		klog.Fatalf("Fatal error getting CPU topology: %v", err)
 	}
@@ -106,6 +105,17 @@ func (s *PodConfigStore) SetContainerState(podUID types.UID, state *ContainerCPU
 	} else {
 		klog.Infof("Set PodUID:%v Container:%s to Shared", podUID, state.containerName)
 	}
+}
+
+// GetContainerState retrieves a container's CPU state.
+func (s *PodConfigStore) GetContainerState(podUID types.UID, containerName string) *ContainerCPUState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if podAssignments, ok := s.configs[podUID]; ok {
+		return podAssignments[containerName]
+	}
+	return nil
 }
 
 // RemoveContainerState removes a container's state from the store.
@@ -151,7 +161,6 @@ func (s *PodConfigStore) GetContainersWithSharedCPUs() []types.UID {
 			}
 		}
 	}
-
 	return sharedCPUContainers
 }
 
