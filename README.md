@@ -46,23 +46,21 @@ The driver is deployed as a DaemonSet which contains two core components:
 
 ### Installation
 
-- Create a kind cluster
-  - `kind create cluster --config kind.yaml`
+- If needed, create a kind cluster. We have one in the repo, if needed, that
+  can be deplayed as follows:
+  - `make kind-cluster`
 - Deploy the driver and all necessary RBAC configurations using the provided
   manifest
-  - `kubectl apply -f install.yaml`
+  - `kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/dra-driver-cpu/refs/heads/main/install.yaml`
 
 ### Example Usage
 
-- Create a DeviceClass: This tells Kubernetes how to find the resources provided
-  by this driver.
-  - `kubectl apply -f examples/sample_device_class.yaml`
 - Create a ResourceClaim: This requests a specific number of exclusive CPUs from
   the driver.
-  - `kubectl apply -f examples/sample_cpu_resource_claims.yaml`
+  - `kubectl apply -f hack/examples/sample_cpu_resource_claims.yaml`
 - Create a Pod: Reference the ResourceClaim in your pod spec to receive the
   allocated CPUs.
-  - `kubectl apply -f examples/sample_pod_with_cpu_resource_claim.yaml`
+  - `kubectl apply -f hack/examples/sample_pod_with_cpu_resource_claim.yaml`
 
 ## Community, discussion, contribution, and support
 
