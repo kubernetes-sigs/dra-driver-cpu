@@ -204,8 +204,9 @@ func (cp *CPUDriver) prepareResourceClaim(_ context.Context, claim *resourceapi.
 	}
 
 	claimCPUSet := cpuset.New(claimCPUIDs...)
+	cp.cpuAllocationStore.AddResourceClaimAllocation(claim.UID, claimCPUSet)
 	deviceName := getCDIDeviceName(claim.UID)
-	envVar := fmt.Sprintf("%s_claim_%s=%s", cdiEnvVarPrefix, claim.Name, claimCPUSet.String())
+	envVar := fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claim.UID, claimCPUSet.String())
 	if err := cp.cdiMgr.AddDevice(deviceName, envVar); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
@@ -228,7 +229,7 @@ func (cp *CPUDriver) prepareResourceClaim(_ context.Context, claim *resourceapi.
 }
 
 // UnprepareResourceClaims is called by the kubelet to unprepare the resources for a claim.
-func (np *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubeletplugin.NamespacedObject) (map[types.UID]error, error) {
+func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubeletplugin.NamespacedObject) (map[types.UID]error, error) {
 	klog.Infof("UnprepareResourceClaims is called: number of claims: %d", len(claims))
 
 	result := make(map[types.UID]error)
@@ -239,7 +240,7 @@ func (np *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 
 	for _, claim := range claims {
 		klog.Infof("UnprepareResourceClaims claim:%+v", claim)
-		err := np.unprepareResourceClaim(ctx, claim)
+		err := cp.unprepareResourceClaim(ctx, claim)
 		result[claim.UID] = err
 		if err != nil {
 			klog.Infof("error unpreparing resources for claim %s/%s : %v", claim.Namespace, claim.Name, err)
@@ -249,6 +250,7 @@ func (np *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 }
 
 func (cp *CPUDriver) unprepareResourceClaim(_ context.Context, claim kubeletplugin.NamespacedObject) error {
+	cp.cpuAllocationStore.RemoveResourceClaimAllocation(claim.UID)
 	// Remove the device from the CDI spec file using the manager.
 	return cp.cdiMgr.RemoveDevice(getCDIDeviceName(claim.UID))
 }
