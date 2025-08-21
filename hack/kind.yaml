@@ -17,6 +17,7 @@ featureGates:
   DynamicResourceAllocation: true
   DRAResourceClaimDeviceStatus: true
   DRAConsumableCapacity: true
+  DRAExtendedResource: true
 nodes:
 - role: control-plane
   image: kindest/node:v1.34.0
