@@ -29,7 +29,7 @@ func newPodConfigStore(t *testing.T) (*PodConfigStore, cpuset.CPUSet) {
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	var infos []cpuinfo.CPUInfo
 	for _, cpuID := range allCPUs.UnsortedList() {
-		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NumaNode: 0})
+		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
 	}
 	mockProvider := &mockCPUInfoProvider{cpuInfos: infos}
 	store := NewPodConfigStore(mockProvider)
