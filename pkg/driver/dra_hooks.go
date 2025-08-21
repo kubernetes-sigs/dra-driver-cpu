@@ -22,7 +22,7 @@ import (
 	"sort"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
-	resourceapi "k8s.io/api/resource/v1beta1"
+	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
@@ -89,17 +89,15 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 			cp.deviceNameToCPUID[deviceName] = cpu.CpuID
 			cpuDevice := resourceapi.Device{
 				Name: deviceName,
-				Basic: &resourceapi.BasicDevice{
-					Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-						"dra.cpu/numaNode":  {IntValue: &numaNode},
-						"dra.cpu/l3CacheID": {IntValue: &l3CacheID},
-						"dra.cpu/coreType":  {StringValue: &coreType},
-						"dra.cpu/socketID":  {IntValue: &socketID},
-						// TODO(pravk03): Remove. Hack to align with NIC (DRANet). We need some standard attribute to align other resources with CPU.
-						"dra.net/numaNode": {IntValue: &numaNode},
-					},
-					Capacity: make(map[resourceapi.QualifiedName]resourceapi.DeviceCapacity),
+				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+					"dra.cpu/numaNode":  {IntValue: &numaNode},
+					"dra.cpu/l3CacheID": {IntValue: &l3CacheID},
+					"dra.cpu/coreType":  {StringValue: &coreType},
+					"dra.cpu/socketID":  {IntValue: &socketID},
+					// TODO(pravk03): Remove. Hack to align with NIC (DRANet). We need some standard attribute to align other resources with CPU.
+					"dra.net/numaNode": {IntValue: &numaNode},
 				},
+				Capacity: make(map[resourceapi.QualifiedName]resourceapi.DeviceCapacity),
 			}
 			devicesByNuma[numaNode] = append(devicesByNuma[numaNode], cpuDevice)
 		}
@@ -253,4 +251,9 @@ func (np *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 func (cp *CPUDriver) unprepareResourceClaim(_ context.Context, claim kubeletplugin.NamespacedObject) error {
 	// Remove the device from the CDI spec file using the manager.
 	return cp.cdiMgr.RemoveDevice(getCDIDeviceName(claim.UID))
+}
+
+func (cp *CPUDriver) HandleError(_ context.Context, err error, msg string) {
+	// TODO: Implement this function
+	klog.Error("HandleError error:", err, "msg:", msg)
 }
