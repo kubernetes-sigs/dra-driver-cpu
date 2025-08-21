@@ -52,32 +52,35 @@ type cdiManager interface {
 // CPUInfoProvider is an interface for getting CPU information.
 type CPUInfoProvider interface {
 	GetCPUInfos() ([]cpuinfo.CPUInfo, error)
+	GetCPUTopology() (*cpuinfo.CPUTopology, error)
 }
 
 // CPUDriver is the structure that holds all the driver runtime information.
 type CPUDriver struct {
-	driverName         string
-	nodeName           string
-	kubeClient         kubernetes.Interface
-	draPlugin          KubeletPlugin
-	nriPlugin          stub.Stub
-	podConfigStore     *PodConfigStore
-	cdiMgr             cdiManager
-	cpuIDToDeviceName  map[int]string
-	deviceNameToCPUID  map[string]int
-	cpuInfoProvider    CPUInfoProvider
-	cpuAllocationStore *CPUAllocationStore
+	driverName           string
+	nodeName             string
+	kubeClient           kubernetes.Interface
+	draPlugin            KubeletPlugin
+	nriPlugin            stub.Stub
+	podConfigStore       *PodConfigStore
+	cpuAllocationStore   *CPUAllocationStore
+	cdiMgr               cdiManager
+	cpuInfoProvider      CPUInfoProvider
+	deviceNameToCPUID    map[string]int
+	deviceNameToSocketID map[string]int
+	cpuDeviceMode        string
 }
 
 // Start creates and starts a new CPUDriver.
-func Start(ctx context.Context, driverName string, kubeClient kubernetes.Interface, nodeName string) (*CPUDriver, error) {
+func Start(ctx context.Context, driverName string, kubeClient kubernetes.Interface, nodeName string, cpuDeviceMode string) (*CPUDriver, error) {
 	plugin := &CPUDriver{
-		driverName:        driverName,
-		nodeName:          nodeName,
-		kubeClient:        kubeClient,
-		cpuIDToDeviceName: make(map[int]string),
-		deviceNameToCPUID: make(map[string]int),
-		cpuInfoProvider:   cpuinfo.NewSystemCPUInfo(),
+		driverName:           driverName,
+		nodeName:             nodeName,
+		kubeClient:           kubeClient,
+		deviceNameToCPUID:    make(map[string]int),
+		deviceNameToSocketID: make(map[string]int),
+		cpuInfoProvider:      cpuinfo.NewSystemCPUInfo(),
+		cpuDeviceMode:        cpuDeviceMode,
 	}
 	plugin.cpuAllocationStore = NewCPUAllocationStore(plugin.cpuInfoProvider)
 	plugin.podConfigStore = NewPodConfigStore()

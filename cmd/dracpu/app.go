@@ -44,12 +44,15 @@ var (
 	hostnameOverride string
 	kubeconfig       string
 	bindAddress      string
+	cpuDeviceMode    string
 	ready            atomic.Bool
 )
 
 func init() {
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
 	flag.StringVar(&hostnameOverride, "hostname-override", "", "If non-empty, will be used as the name of the Node that kube-network-policies is running on. If unset, the node name is assumed to be the same as the node's hostname.")
+	flag.StringVar(&cpuDeviceMode, "cpu-device-mode", "grouped", "Sets the mode for exposing CPU devices. 'grouped' exposes a single device for a group of CPUs (currently grouping by socket). 'individual' exposes each CPU as a separate device.")
+	// TODO: We can add a --cpu-grouping-strategy flag to specify how the CPUs should be grouped (e.g., 'socket', 'l3cache', 'numa').
 }
 
 func main() {
@@ -125,7 +128,11 @@ func main() {
 	}()
 	signal.Notify(signalCh, os.Interrupt, unix.SIGINT)
 
-	dracpu, err := driver.Start(ctx, driverName, clientset, nodeName)
+	if cpuDeviceMode != "grouped" && cpuDeviceMode != "individual" {
+		klog.Fatalf("invalid value for --cpu-device-mode: %s", cpuDeviceMode)
+	}
+
+	dracpu, err := driver.Start(ctx, driverName, clientset, nodeName, cpuDeviceMode)
 	if err != nil {
 		klog.Fatalf("driver failed to start: %v", err)
 	}

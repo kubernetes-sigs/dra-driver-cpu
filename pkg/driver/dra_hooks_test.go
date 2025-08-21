@@ -91,39 +91,39 @@ func (m *mockCPUInfoProvider) GetCPUInfos() ([]cpuinfo.CPUInfo, error) {
 var (
 	// Sibling CPUs are non-consecutive: (0,2), (1,3)
 	mockCPUInfos_SingleSocket_4CPUS_HT = []cpuinfo.CPUInfo{
-		{CpuID: 0, CoreID: 0, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 2},
-		{CpuID: 1, CoreID: 1, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 3},
-		{CpuID: 2, CoreID: 0, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 0},
-		{CpuID: 3, CoreID: 1, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 1},
+		{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 2},
+		{CpuID: 1, CoreID: 1, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 3},
+		{CpuID: 2, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 0},
+		{CpuID: 3, CoreID: 1, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 1},
 	}
 	mockCPUInfos_SingleSocket_4CPUs_HT_Off = []cpuinfo.CPUInfo{
-		{CpuID: 0, CoreID: 0, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1},
-		{CpuID: 1, CoreID: 1, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1},
-		{CpuID: 2, CoreID: 2, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1},
-		{CpuID: 3, CoreID: 3, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1},
+		{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1},
+		{CpuID: 1, CoreID: 1, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1},
+		{CpuID: 2, CoreID: 2, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1},
+		{CpuID: 3, CoreID: 3, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1},
 	}
 	// P-core sibling is non-consecutive: (0,2)
 	mockCPUInfos_SingleSocket_Hybrid_HT = []cpuinfo.CPUInfo{
-		{CpuID: 0, CoreID: 0, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 2},
-		{CpuID: 1, CoreID: 1, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypeEfficiency, SiblingCpuID: 3},
-		{CpuID: 2, CoreID: 0, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 0},
-		{CpuID: 3, CoreID: 1, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypeEfficiency, SiblingCpuID: 1},
+		{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 2},
+		{CpuID: 1, CoreID: 1, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypeEfficiency, SiblingCpuID: 3},
+		{CpuID: 2, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 0},
+		{CpuID: 3, CoreID: 1, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypeEfficiency, SiblingCpuID: 1},
 	}
 	// 2 sockets, 2 cores/socket, HT on. Total 8 logical CPUs.
 	mockCPUInfos_DualSocket_4CPUsPerSocket_HT = []cpuinfo.CPUInfo{
-		{CpuID: 0, CoreID: 0, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 4},
-		{CpuID: 1, CoreID: 1, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 5},
-		{CpuID: 2, CoreID: 2, SocketID: 1, NumaNode: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 6},
-		{CpuID: 3, CoreID: 3, SocketID: 1, NumaNode: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 7},
-		{CpuID: 4, CoreID: 0, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 0},
-		{CpuID: 5, CoreID: 1, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 1},
-		{CpuID: 6, CoreID: 2, SocketID: 1, NumaNode: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 2},
-		{CpuID: 7, CoreID: 3, SocketID: 1, NumaNode: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 3},
+		{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 4},
+		{CpuID: 1, CoreID: 1, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 5},
+		{CpuID: 2, CoreID: 2, SocketID: 1, NUMANodeID: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 6},
+		{CpuID: 3, CoreID: 3, SocketID: 1, NUMANodeID: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 7},
+		{CpuID: 4, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 0},
+		{CpuID: 5, CoreID: 1, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 1},
+		{CpuID: 6, CoreID: 2, SocketID: 1, NUMANodeID: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 2},
+		{CpuID: 7, CoreID: 3, SocketID: 1, NUMANodeID: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 3},
 	}
 	mockCPUInfos_ExceedsSliceLimit = func() []cpuinfo.CPUInfo {
 		var infos []cpuinfo.CPUInfo
 		for i := 0; i < maxDevicesPerResourceSlice+1; i++ {
-			infos = append(infos, cpuinfo.CPUInfo{CpuID: i, CoreID: i, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1})
+			infos = append(infos, cpuinfo.CPUInfo{CpuID: i, CoreID: i, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1})
 		}
 		return infos
 	}()
@@ -255,7 +255,7 @@ func TestPublishResources(t *testing.T) {
 					}
 					require.NotNil(t, cpuInfo, "could not find matching cpuInfo for device %s", device.Name)
 
-					numaNode := int64(cpuInfo.NumaNode)
+					numaNode := int64(cpuInfo.NUMANodeID)
 					l3CacheID := int64(cpuInfo.L3CacheID)
 					coreType := cpuInfo.CoreType.String()
 					socketID := int64(cpuInfo.SocketID)

@@ -77,8 +77,8 @@ type CPUInfo struct {
 	// SocketID is the physical socket ID
 	SocketID int `json:"socketID"`
 
-	// NumaNode is the NUMA node ID, unique within each SocketID
-	NumaNode int `json:"numaNode"`
+	// NUMANodeID is the NUMA node ID, unique within each SocketID
+	NUMANodeID int `json:"numanodeID"`
 
 	// NUMA Node Affinity Mask
 	NumaNodeAffinityMask string `json:"numaNodeAffinityMask"`
@@ -91,6 +91,27 @@ type CPUInfo struct {
 
 	// L3CacheID is the L3 cache ID
 	L3CacheID int64 `json:"l3CacheID"`
+
+	// TODO: FIX
+	UncoreCacheID int `json:"uncoreCacheID"`
+}
+
+// CPUDetails is a map from CPU ID to Core ID, Socket ID, and NUMA ID.
+type CPUDetails map[int]CPUInfo
+
+// CPUTopology contains details of node cpu, where :
+// CPU  - logical CPU, cadvisor - thread
+// Core - physical CPU, cadvisor - Core
+// Socket - socket, cadvisor - Socket
+// NUMA Node - NUMA cell, cadvisor - Node
+// UncoreCache - Split L3 Cache Topology, cadvisor
+type CPUTopology struct {
+	NumCPUs        int
+	NumCores       int
+	NumUncoreCache int
+	NumSockets     int
+	NumNUMANodes   int
+	CPUDetails     CPUDetails
 }
 
 // SystemCPUInfo provides information about the CPUs on the system.
@@ -99,6 +120,42 @@ type SystemCPUInfo struct{}
 // NewSystemCPUInfo creates a new SystemCPUInfo.
 func NewSystemCPUInfo() *SystemCPUInfo {
 	return &SystemCPUInfo{}
+}
+
+// GetCPUTopology returns the CPUTopology of the system.
+func (s *SystemCPUInfo) GetCPUTopology() (*CPUTopology, error) {
+	cpuInfos, err := s.GetCPUInfos()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get CPU infos: %w", err)
+	}
+
+	cpuDetails := make(CPUDetails)
+	sockets := make(map[int]struct{})
+	numaNodes := make(map[int]struct{})
+	cores := make(map[string]struct{})
+	l3Caches := make(map[int64]struct{})
+
+	for i := range cpuInfos {
+		info := cpuInfos[i]
+		cpuDetails[info.CpuID] = info
+		sockets[info.SocketID] = struct{}{}
+		numaNodes[info.NUMANodeID] = struct{}{}
+		// A core is unique by socket and core id
+		coreKey := fmt.Sprintf("%d-%d", info.SocketID, info.CoreID)
+		cores[coreKey] = struct{}{}
+		if info.L3CacheID != -1 {
+			l3Caches[info.L3CacheID] = struct{}{}
+		}
+	}
+
+	return &CPUTopology{
+		NumCPUs:        len(cpuInfos),
+		NumCores:       len(cores),
+		NumSockets:     len(sockets),
+		NumNUMANodes:   len(numaNodes),
+		NumUncoreCache: len(l3Caches),
+		CPUDetails:     cpuDetails,
+	}, nil
 }
 
 // GetCPUInfos returns a slice of CPUInfo structs, one for each logical CPU.
@@ -139,6 +196,14 @@ func (s *SystemCPUInfo) GetCPUInfos() ([]CPUInfo, error) {
 			cpuInfoLines = append(cpuInfoLines, line)
 		}
 	}
+	// Process the last block of cpu info.
+	if len(cpuInfoLines) > 0 {
+		cpuInfo := parseCPUInfo(isHybrid, eCoreCpus, cpuInfoLines...)
+		if cpuInfo != nil {
+			cpuInfos = append(cpuInfos, *cpuInfo)
+		}
+	}
+
 	if err := populateTopologyInfo(cpuInfos); err != nil {
 		return nil, fmt.Errorf("failed to populate topology info: %w", err)
 	}
@@ -154,7 +219,7 @@ func parseCPUInfo(isHybrid bool, eCoreCpus cpuset.CPUSet, lines ...string) *CPUI
 		CpuID:                -1,
 		SocketID:             -1,
 		CoreID:               -1,
-		NumaNode:             -1,
+		NUMANodeID:           -1,
 		NumaNodeAffinityMask: "",
 		L3CacheID:            -1,
 		SiblingCpuID:         -1,
@@ -294,7 +359,7 @@ func populateTopologyInfo(cpuInfos []CPUInfo) error {
 				if err != nil {
 					continue // Should not happen with a well-formed sysfs
 				}
-				cpuInfos[i].NumaNode = int(nodeID)
+				cpuInfos[i].NUMANodeID = int(nodeID)
 				foundNode = true
 
 				//  Get NUMA Affinity Mask (from cache if possible)
@@ -433,4 +498,217 @@ func combinePath(value string, combineWith ...string) string {
 		copy(all[1:], combineWith)
 		return filepath.Join(all...)
 	}
+}
+
+func (d CPUDetails) KeepOnly(cpus cpuset.CPUSet) CPUDetails {
+	result := CPUDetails{}
+	for cpu, info := range d {
+		if cpus.Contains(cpu) {
+			result[cpu] = info
+		}
+	}
+	return result
+}
+
+// CPUs returns all of the logical CPU IDs in this CPUDetails.
+func (d CPUDetails) CPUs() cpuset.CPUSet {
+	var cpuIDs []int
+	for cpuID := range d {
+		cpuIDs = append(cpuIDs, cpuID)
+	}
+	return cpuset.New(cpuIDs...)
+}
+
+// CPUsInNUMANodes returns all of the logical CPU IDs associated with the given
+// NUMANode IDs in this CPUDetails.
+func (d CPUDetails) CPUsInNUMANodes(ids ...int) cpuset.CPUSet {
+	var cpuIDs []int
+	for _, id := range ids {
+		for cpu, info := range d {
+			if info.NUMANodeID == id {
+				cpuIDs = append(cpuIDs, cpu)
+			}
+		}
+	}
+	return cpuset.New(cpuIDs...)
+}
+
+// CPUsInCores returns all of the logical CPU IDs associated with the given
+// core IDs in this CPUDetails.
+func (d CPUDetails) CPUsInCores(ids ...int) cpuset.CPUSet {
+	var cpuIDs []int
+	for _, id := range ids {
+		for cpu, info := range d {
+			if info.CoreID == id {
+				cpuIDs = append(cpuIDs, cpu)
+			}
+		}
+	}
+	return cpuset.New(cpuIDs...)
+}
+
+// CPUsInSockets returns all of the logical CPU IDs associated with the given
+// socket IDs in this CPUDetails.
+func (d CPUDetails) CPUsInSockets(ids ...int) cpuset.CPUSet {
+	var cpuIDs []int
+	for _, id := range ids {
+		for cpu, info := range d {
+			if info.SocketID == id {
+				cpuIDs = append(cpuIDs, cpu)
+			}
+		}
+	}
+	return cpuset.New(cpuIDs...)
+}
+
+// CPUsInUncoreCaches returns all the logical CPU IDs associated with the given
+// UnCoreCache IDs in this CPUDetails
+func (d CPUDetails) CPUsInUncoreCaches(ids ...int) cpuset.CPUSet {
+	var cpuIDs []int
+	for _, id := range ids {
+		for cpu, info := range d {
+			if info.UncoreCacheID == id {
+				cpuIDs = append(cpuIDs, cpu)
+			}
+		}
+	}
+	return cpuset.New(cpuIDs...)
+}
+
+// NUMANodes returns all of the NUMANode IDs associated with the CPUs in this
+// CPUDetails.
+func (d CPUDetails) NUMANodes() cpuset.CPUSet {
+	var numaNodeIDs []int
+	for _, info := range d {
+		numaNodeIDs = append(numaNodeIDs, info.NUMANodeID)
+	}
+	return cpuset.New(numaNodeIDs...)
+}
+
+// Sockets returns all of the socket IDs associated with the CPUs in this
+// CPUDetails.
+func (d CPUDetails) Sockets() cpuset.CPUSet {
+	var socketIDs []int
+	for _, info := range d {
+		socketIDs = append(socketIDs, info.SocketID)
+	}
+	return cpuset.New(socketIDs...)
+}
+
+// UnCoresInNUMANodes returns all of the uncore IDs associated with the given
+// NUMANode IDs in this CPUDetails.
+func (d CPUDetails) UncoreInNUMANodes(ids ...int) cpuset.CPUSet {
+	var unCoreIDs []int
+	for _, id := range ids {
+		for _, info := range d {
+			if info.NUMANodeID == id {
+				unCoreIDs = append(unCoreIDs, info.UncoreCacheID)
+			}
+		}
+	}
+	return cpuset.New(unCoreIDs...)
+}
+
+// SocketsInNUMANodes returns all of the logical Socket IDs associated with the
+// given NUMANode IDs in this CPUDetails.
+func (d CPUDetails) SocketsInNUMANodes(ids ...int) cpuset.CPUSet {
+	var socketIDs []int
+	for _, id := range ids {
+		for _, info := range d {
+			if info.NUMANodeID == id {
+				socketIDs = append(socketIDs, info.SocketID)
+			}
+		}
+	}
+	return cpuset.New(socketIDs...)
+}
+
+// CoresInSockets returns all of the core IDs associated with the given socket
+// IDs in this CPUDetails.
+func (d CPUDetails) CoresInSockets(ids ...int) cpuset.CPUSet {
+	var coreIDs []int
+	for _, id := range ids {
+		for _, info := range d {
+			if info.SocketID == id {
+				coreIDs = append(coreIDs, info.CoreID)
+			}
+		}
+	}
+	return cpuset.New(coreIDs...)
+}
+
+// NUMANodesInSockets returns all of the logical NUMANode IDs associated with
+// the given socket IDs in this CPUDetails.
+func (d CPUDetails) NUMANodesInSockets(ids ...int) cpuset.CPUSet {
+	var numaNodeIDs []int
+	for _, id := range ids {
+		for _, info := range d {
+			if info.SocketID == id {
+				numaNodeIDs = append(numaNodeIDs, info.NUMANodeID)
+			}
+		}
+	}
+	return cpuset.New(numaNodeIDs...)
+}
+
+// CoresInNUMANodes returns all of the core IDs associated with the given
+// NUMANode IDs in this CPUDetails.
+func (d CPUDetails) CoresInNUMANodes(ids ...int) cpuset.CPUSet {
+	var coreIDs []int
+	for _, id := range ids {
+		for _, info := range d {
+			if info.NUMANodeID == id {
+				coreIDs = append(coreIDs, info.CoreID)
+			}
+		}
+	}
+	return cpuset.New(coreIDs...)
+}
+
+// CoresNeededInUncoreCache returns either the full list of all available unique core IDs associated with the given
+// UnCoreCache IDs in this CPUDetails or subset that matches the ask.
+func (d CPUDetails) CoresNeededInUncoreCache(numCoresNeeded int, ids ...int) cpuset.CPUSet {
+	coreIDs := d.coresInUncoreCache(ids...)
+	if coreIDs.Size() <= numCoresNeeded {
+		return coreIDs
+	}
+	tmpCoreIDs := coreIDs.List()
+	return cpuset.New(tmpCoreIDs[:numCoresNeeded]...)
+}
+
+// Helper function that just gets the cores
+func (d CPUDetails) coresInUncoreCache(ids ...int) cpuset.CPUSet {
+	var coreIDs []int
+	for _, id := range ids {
+		for _, info := range d {
+			if info.UncoreCacheID == id {
+				coreIDs = append(coreIDs, info.CoreID)
+			}
+		}
+	}
+	return cpuset.New(coreIDs...)
+}
+
+func (t *CPUTopology) CPUsPerCore() int {
+	if t.NumCores == 0 {
+		return 0
+	}
+	return t.NumCPUs / t.NumCores
+}
+
+func (t *CPUTopology) CPUsPerSocket() int {
+	if t.NumSockets == 0 {
+		return 0
+	}
+	return t.NumCPUs / t.NumSockets
+}
+
+func (t *CPUTopology) CPUsPerUncore() int {
+	if t.NumUncoreCache == 0 {
+		// Avoid division by zero. If there are no uncore caches, then
+		// no CPUs can be in one.
+		return 0
+	}
+	// Note: this is an approximation that assumes all uncore caches have the same number of CPUs.
+	return t.NumCPUs / t.NumUncoreCache
 }
