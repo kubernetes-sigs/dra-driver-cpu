@@ -102,7 +102,7 @@ spec:
       serviceAccountName: dracpu
       hostPID: true
       initContainers:
-      - name: enable-nri
+      - name: enable-nri-and-cdi
         image: busybox:stable
         volumeMounts:
         - mountPath: /etc
@@ -117,14 +117,36 @@ spec:
           set -o pipefail
           set -o nounset
           set -x
-          if grep -q "io.containerd.nri.v1.nri" /etc/containerd/config.toml
+          CONFIG_CHANGED=false
+          CONTAINERD_CONFIG_PATH="/etc/containerd/config.toml"
+          # --- Enable CDI ---
+          if grep -q '^\s*enable_cdi\s*=\s*true' "$CONTAINERD_CONFIG_PATH"; then
+            echo "containerd config already has CDI enabled; taking no action"
+          else
+            echo "containerd config does not have CDI enabled, thus enabling it";
+            sed -i '/\[plugins\."io\.containerd\.grpc\.v1\.cri"\]/a \  enable_cdi = true' "$CONTAINERD_CONFIG_PATH"
+            CONFIG_CHANGED=true
+          fi
+          # --- CDI Spec Dirs Configuration ---
+          if grep -q '^\s*cdi_spec_dirs\s*=' "$CONTAINERD_CONFIG_PATH"; then
+            echo "containerd config already configures cdi_spec_dirs; taking no action"
+          else
+            echo "containerd config does not configure cdi_spec_dirs, thus setting it";
+            sed -i '/\[plugins\."io\.containerd\.grpc\.v1\.cri"\]/a \  cdi_spec_dirs = ["/etc/cdi", "/var/run/cdi"]' "$CONTAINERD_CONFIG_PATH"
+            CONFIG_CHANGED=true
+          fi
+          # --- Enable NRI ---
+          if grep -q "io.containerd.nri.v1.nri" "$CONTAINERD_CONFIG_PATH"
           then
              echo "containerd config contains NRI reference already; taking no action"
           else
              echo "containerd config does not mention NRI, thus enabling it";
-             printf '%s\n' "[plugins.\"io.containerd.nri.v1.nri\"]" "  disable = false" "  disable_connections = false" "  plugin_config_path = \"/etc/nri/conf.d\"" "  plugin_path = \"/opt/nri/plugins\"" "  plugin_registration_timeout = \"5s\"" "  plugin_request_timeout = \"5s\"" "  socket_path = \"/var/run/nri/nri.sock\"" >> /etc/containerd/config.toml
-             echo "restarting containerd"
-             nsenter -t 1 -m -u -i -n -p -- systemctl restart containerd
+             printf '%s\n' "[plugins.\"io.containerd.nri.v1.nri\"]" "  disable = false" "  disable_connections = false" "  plugin_config_path = \"/etc/nri/conf.d\"" "  plugin_path = \"/opt/nri/plugins\"" "  plugin_registration_timeout = \"5s\"" "  plugin_request_timeout = \"5s\"" "  socket_path = \"/var/run/nri/nri.sock\"" >> "$CONTAINERD_CONFIG_PATH"
+             CONFIG_CHANGED=true
+          fi
+          if [ "$CONFIG_CHANGED" = true ]; then
+            echo "restarting containerd"
+            nsenter -t 1 -m -u -i -n -p -- systemctl restart containerd
           fi
       containers:
       - name: dracpu
@@ -179,7 +201,7 @@ spec:
           path: /var/run/cdi
           type: DirectoryOrCreate
 ---
-apiVersion: resource.k8s.io/v1beta1
+apiVersion: resource.k8s.io/v1
 kind: DeviceClass
 metadata:
   name: dra.cpu
