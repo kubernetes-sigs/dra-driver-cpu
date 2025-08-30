@@ -23,7 +23,7 @@ import (
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/stretchr/testify/require"
-	resourceapi "k8s.io/api/resource/v1beta1"
+	resourceapi "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
@@ -260,10 +260,10 @@ func TestPublishResources(t *testing.T) {
 					coreType := cpuInfo.CoreType.String()
 					socketID := int64(cpuInfo.SocketID)
 
-					require.Equal(t, &numaNode, device.Basic.Attributes["dra.cpu/numaNode"].IntValue)
-					require.Equal(t, &l3CacheID, device.Basic.Attributes["dra.cpu/l3CacheID"].IntValue)
-					require.Equal(t, &coreType, device.Basic.Attributes["dra.cpu/coreType"].StringValue)
-					require.Equal(t, &socketID, device.Basic.Attributes["dra.cpu/socketID"].IntValue)
+					require.Equal(t, &numaNode, device.Attributes["dra.cpu/numaNode"].IntValue)
+					require.Equal(t, &l3CacheID, device.Attributes["dra.cpu/l3CacheID"].IntValue)
+					require.Equal(t, &coreType, device.Attributes["dra.cpu/coreType"].StringValue)
+					require.Equal(t, &socketID, device.Attributes["dra.cpu/socketID"].IntValue)
 				}
 			}
 		})
