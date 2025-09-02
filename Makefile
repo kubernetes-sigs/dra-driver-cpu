@@ -80,12 +80,45 @@ push-image: build-image ## build and push image
 kind-cluster:  ## create kind cluster
 	kind create cluster --name ${CLUSTER_NAME} --config hack/kind.yaml
 
+kind-load-image:  ## load the current container image into kind
+	kind load docker-image ${IMAGE} ${IMAGE_LATEST} --name ${CLUSTER_NAME}
+
 kind-uninstall-cpu-dra: ## remove cpu dra from kind cluster
 	kubectl delete -f install.yaml || true
 
-kind-install-cpu-dra: kind-uninstall-cpu-dra build-image ## install on cluster
-	kind load docker-image ${IMAGE_LATEST} --name ${CLUSTER_NAME}
+kind-install-cpu-dra: kind-uninstall-cpu-dra build-image kind-load-image ## install on cluster
 	kubectl apply -f install.yaml
 
 delete-kind-cluster: ## delete kind cluster
 	kind delete cluster --name ${CLUSTER_NAME}
+
+ci-kind-install: kind-uninstall-cpu-dra build-image kind-load-image ## install on CI cluster
+	kubectl create -f hack/ci/install-ci.yaml
+	hack/ci/wait-resourcelices.sh
+
+ci-manifests: install.yaml install-yq ## create the CI install manifests
+	@cd hack/ci && ../../bin/yq e -s '"_" + (.kind | downcase) + "-" + .metadata.name + ".yaml"' ../../install.yaml
+	@# need to make kind load docker-image working as expected: see https://kind.sigs.k8s.io/docs/user/quick-start/#loading-an-image-into-your-cluster
+	@bin/yq -i '.spec.template.spec.containers[0].imagePullPolicy = "IfNotPresent"' hack/ci/_daemonset-dracpu.yaml
+	@bin/yq -i '.spec.template.spec.containers[0].image = "${IMAGE}"' hack/ci/_daemonset-dracpu.yaml
+	@bin/yq -i '.spec.template.metadata.labels["build"] = "${GIT_VERSION}"' hack/ci/_daemonset-dracpu.yaml
+	@bin/yq '.' \
+		hack/ci/_clusterrole-dracpu.yaml \
+		hack/ci/_serviceaccount-dracpu.yaml \
+		hack/ci/_clusterrolebinding-dracpu.yaml \
+		hack/ci/_daemonset-dracpu.yaml \
+		hack/ci/_deviceclass-dra.cpu.yaml \
+		> hack/ci/install-ci.yaml
+
+test-e2e-base:
+	go test -v ./test/e2e/
+
+# dependencies
+.PHONY:
+install-yq: ## make sure the yq tool is available locally
+	@# TODO: generalize platform/os?
+	@if [ ! -f bin/yq ]; then\
+	       mkdir -p bin;\
+	       curl -L https://github.com/mikefarah/yq/releases/download/v4.47.1/yq_linux_amd64 -o bin/yq;\
+               chmod 0755 bin/yq;\
+	fi
