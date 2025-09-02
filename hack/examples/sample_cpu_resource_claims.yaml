@@ -6,8 +6,9 @@ spec:
   devices:
     requests:
     - name: req-dummy
-      deviceClassName: dra.cpu
-      count: 4
+      exactly:
+        deviceClassName: dra.cpu
+        count: 4
 ---
 apiVersion: resource.k8s.io/v1
 kind:  ResourceClaim
@@ -17,5 +18,6 @@ spec:
   devices:
     requests:
     - name: req-dummy-2
-      deviceClassName: dra.cpu
-      count: 6
+      exactly:
+        deviceClassName: dra.cpu
+        count: 6
