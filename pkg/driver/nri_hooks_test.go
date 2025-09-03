@@ -28,57 +28,67 @@ import (
 	"k8s.io/utils/cpuset"
 )
 
-func TestParseDRAEnvToCPUSet(t *testing.T) {
+func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 	testCases := []struct {
-		name                string
-		envs                []string
-		expectedCPUSet      cpuset.CPUSet
-		expectedErrorString string
+		name                  string
+		envs                  []string
+		expectedAllocations   map[types.UID]cpuset.CPUSet
+		expectedErrorContains string
 	}{
 		{
-			name:           "single valid env",
-			envs:           []string{fmt.Sprintf("%s_claim_my-claim=%s", cdiEnvVarPrefix, "0-1")},
-			expectedCPUSet: cpuset.New(0, 1),
+			name: "single valid env",
+			envs: []string{fmt.Sprintf("%s_claim-uid-1=%s", cdiEnvVarPrefix, "0-1")},
+			expectedAllocations: map[types.UID]cpuset.CPUSet{
+				"claim-uid-1": cpuset.New(0, 1),
+			},
 		},
 		{
 			name: "multiple valid envs",
 			envs: []string{
-				fmt.Sprintf("%s_claim_claim1=%s", cdiEnvVarPrefix, "0,1"),
-				fmt.Sprintf("%s_claim_claim2=%s", cdiEnvVarPrefix, "2,3"),
+				fmt.Sprintf("%s_claim-uid-1=%s", cdiEnvVarPrefix, "0,1"),
+				fmt.Sprintf("%s_claim-uid-2=%s", cdiEnvVarPrefix, "2,3"),
 			},
-			expectedCPUSet: cpuset.New(0, 1, 2, 3),
+			expectedAllocations: map[types.UID]cpuset.CPUSet{
+				"claim-uid-1": cpuset.New(0, 1),
+				"claim-uid-2": cpuset.New(2, 3),
+			},
 		},
 		{
-			name:           "no relevant envs",
-			envs:           []string{"OTHER_ENV=value"},
-			expectedCPUSet: cpuset.New(),
+			name:                "no relevant envs",
+			envs:                []string{"OTHER_ENV=value"},
+			expectedAllocations: map[types.UID]cpuset.CPUSet{},
 		},
 		{
-			name:                "malformed env - no equals",
-			envs:                []string{fmt.Sprintf("%s_claim_my-claim", cdiEnvVarPrefix)},
-			expectedErrorString: "malformed DRA env entry",
+			name:                  "malformed env - no equals",
+			envs:                  []string{fmt.Sprintf("%s_claim-uid-1", cdiEnvVarPrefix)},
+			expectedErrorContains: "malformed DRA env entry",
 		},
 		{
-			name:                "malformed env - invalid cpuset",
-			envs:                []string{fmt.Sprintf("%s_claim_my-claim=%s", cdiEnvVarPrefix, "a-b")},
-			expectedErrorString: "failed to parse cpuset value",
+			name:                  "malformed env - invalid cpuset",
+			envs:                  []string{fmt.Sprintf("%s_claim-uid-1=%s", cdiEnvVarPrefix, "a-b")},
+			expectedErrorContains: "failed to parse cpuset value",
 		},
 		{
-			name:           "empty env",
-			envs:           []string{},
-			expectedCPUSet: cpuset.New(),
+			name:                "empty env",
+			envs:                []string{},
+			expectedAllocations: map[types.UID]cpuset.CPUSet{},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			set, err := parseDRAEnvToCPUSet(tc.envs)
-			if tc.expectedErrorString != "" {
+			allocations, err := parseDRAEnvToClaimAllocations(tc.envs)
+			if tc.expectedErrorContains != "" {
 				require.Error(t, err)
-				require.ErrorContains(t, err, tc.expectedErrorString)
+				require.Contains(t, err.Error(), tc.expectedErrorContains)
 			} else {
 				require.NoError(t, err)
-				require.True(t, set.Equals(tc.expectedCPUSet))
+				require.Equal(t, len(tc.expectedAllocations), len(allocations))
+				for uid, expectedCpus := range tc.expectedAllocations {
+					actualCpus, ok := allocations[uid]
+					require.True(t, ok)
+					require.True(t, expectedCpus.Equals(actualCpus))
+				}
 			}
 		})
 	}
@@ -87,6 +97,7 @@ func TestParseDRAEnvToCPUSet(t *testing.T) {
 func TestCreateContainer(t *testing.T) {
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	pod := &api.PodSandbox{Id: "pod-id-1", Name: "my-pod", Namespace: "my-ns", Uid: "pod-uid-1"}
+	claimUID := "claim-uid-1"
 
 	var infos []cpuinfo.CPUInfo
 	for _, cpuID := range allCPUs.UnsortedList() {
@@ -95,10 +106,10 @@ func TestCreateContainer(t *testing.T) {
 	mockProvider := &mockCPUInfoProvider{cpuInfos: infos}
 
 	// newTestContainer is a local helper to simplify test case definitions.
-	newTestContainer := func(cpus string) *api.Container {
+	newTestContainer := func(claimUID, cpus string) *api.Container {
 		var envs []string
 		if cpus != "" {
-			envs = append(envs, fmt.Sprintf("%s_claim_my-claim=%s", cdiEnvVarPrefix, cpus))
+			envs = append(envs, fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, cpus))
 		}
 		return &api.Container{
 			Id:           "ctr-id-1",
@@ -110,99 +121,117 @@ func TestCreateContainer(t *testing.T) {
 
 	testCases := []struct {
 		name                        string
-		initialStore                *PodConfigStore
+		podConfigStore              *PodConfigStore
+		cpuAllocationStore          *CPUAllocationStore
 		container                   *api.Container
 		sharedCPUUpdateRequired     bool
 		expectedContainerAdjustment *api.ContainerAdjustment
-		expectedContianerUpdates    []*api.ContainerUpdate
+		expectedContainerUpdates    []*api.ContainerUpdate
 		expectedUpdateRequired      bool
 	}{
 		{
-			name:         "guaranteed container triggers container adjustment with cpu's in resource claim",
-			initialStore: NewPodConfigStore(mockProvider),
-			container:    newTestContainer("0-3"),
+			name:               "guaranteed container triggers container adjustment with cpus in resource claim",
+			podConfigStore:     NewPodConfigStore(),
+			cpuAllocationStore: NewCPUAllocationStore(mockProvider),
+			container:          newTestContainer(claimUID, "0-3"),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-3"}}},
 			},
-			expectedContianerUpdates: []*api.ContainerUpdate{},
+			expectedContainerUpdates: []*api.ContainerUpdate{},
 			expectedUpdateRequired:   false,
 		},
 		{
-			name:         "shared container triggers container adjustment with public cpus",
-			initialStore: NewPodConfigStore(mockProvider),
-			container:    newTestContainer(""),
+			name:               "shared container triggers container adjustment with all cpus",
+			podConfigStore:     NewPodConfigStore(),
+			cpuAllocationStore: NewCPUAllocationStore(mockProvider),
+			container:          newTestContainer("", ""),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
 			},
-			expectedContianerUpdates: []*api.ContainerUpdate{},
+			expectedContainerUpdates: []*api.ContainerUpdate{},
 			expectedUpdateRequired:   false,
 		},
 		{
 			name: "guaranteed container triggers container adjustment and update for other shared container",
-			initialStore: func() *PodConfigStore {
-				s := NewPodConfigStore(mockProvider)
-				s.SetContainerState("non-guaranteed-pod-1", NewContainerCPUState(CPUTypeShared, "shared-ctr-1", "1234", allCPUs))
-				s.SetContainerState("non-guaranteed-pod-2", NewContainerCPUState(CPUTypeShared, "shared-ctr-2", "5678", allCPUs))
-				return s
+			podConfigStore: func() *PodConfigStore {
+				store := NewPodConfigStore()
+				store.SetContainerState("shared-pod-1", NewContainerState("shared-ctr-1", "shared-uid-1", nil))
+				store.SetContainerState("shared-pod-2", NewContainerState("shared-ctr-2", "shared-uid-2", nil))
+				return store
 			}(),
-			container: newTestContainer("0-1"),
+			cpuAllocationStore: func() *CPUAllocationStore {
+				store := NewCPUAllocationStore(mockProvider)
+				store.AddResourceClaimAllocation(types.UID(claimUID), cpuset.New(2, 3))
+				return store
+			}(),
+			container: newTestContainer(claimUID, "2-3"),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
-				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1"}}},
+				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-3"}}},
 			},
-			expectedContianerUpdates: []*api.ContainerUpdate{
+			expectedContainerUpdates: []*api.ContainerUpdate{
 				{
-					ContainerId: "1234",
-					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-7"}}},
+					ContainerId: "shared-uid-1",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1,4-7"}}},
 				},
 				{
-					ContainerId: "5678",
-					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-7"}}},
+					ContainerId: "shared-uid-2",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1,4-7"}}},
 				},
 			},
 			expectedUpdateRequired: false,
 		},
 		{
 			name: "shared container triggers updates for all other shared containers when update is pending",
-			initialStore: func() *PodConfigStore {
-				s := NewPodConfigStore(mockProvider)
-				s.SetContainerState("other-pod", NewContainerCPUState(CPUTypeShared, "shared-ctr", "1234", cpuset.New(0, 1)))
-				return s
+			podConfigStore: func() *PodConfigStore {
+				store := NewPodConfigStore()
+				store.SetContainerState("other-pod", NewContainerState("shared-ctr", "shared-uid-1", nil))
+				return store
 			}(),
-			container:               newTestContainer(""),
+			cpuAllocationStore:      NewCPUAllocationStore(mockProvider),
+			container:               newTestContainer("", ""),
 			sharedCPUUpdateRequired: true,
 			expectedContainerAdjustment: &api.ContainerAdjustment{
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
 			},
-			expectedContianerUpdates: []*api.ContainerUpdate{
+			expectedContainerUpdates: []*api.ContainerUpdate{
 				{
-					ContainerId: "1234",
+					ContainerId: "shared-uid-1",
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
 				},
 			},
-			expectedUpdateRequired: false, // Flag should be reset
+			expectedUpdateRequired: false,
 		},
 		{
-			name:         "guaranteed container with malformed env falls back to shared",
-			initialStore: NewPodConfigStore(mockProvider),
-			container:    newTestContainer("invalid"),
+			name:               "guaranteed container with malformed env falls back to shared",
+			podConfigStore:     NewPodConfigStore(),
+			cpuAllocationStore: NewCPUAllocationStore(mockProvider),
+			container: &api.Container{
+				Id:           "ctr-id-1",
+				PodSandboxId: pod.Id,
+				Name:         "my-ctr",
+				Env:          []string{fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, "a-b")},
+			},
 			expectedContainerAdjustment: &api.ContainerAdjustment{
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
 			},
-			expectedContianerUpdates: []*api.ContainerUpdate{},
+			expectedContainerUpdates: []*api.ContainerUpdate{},
 			expectedUpdateRequired:   false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			driver := &CPUDriver{podConfigStore: tc.initialStore, cpuInfoProvider: mockProvider}
 			setSharedCPUUpdateRequired(tc.sharedCPUUpdateRequired)
 
+			driver := &CPUDriver{
+				podConfigStore:     tc.podConfigStore,
+				cpuAllocationStore: tc.cpuAllocationStore,
+			}
 			adjust, updates, err := driver.CreateContainer(context.Background(), pod, tc.container)
 			require.NoError(t, err)
 
 			require.Equal(t, tc.expectedContainerAdjustment, adjust)
-			require.ElementsMatch(t, tc.expectedContianerUpdates, updates)
+			require.ElementsMatch(t, tc.expectedContainerUpdates, updates)
 			require.Equal(t, tc.expectedUpdateRequired, isSharedCPUUpdateRequired())
 		})
 	}
@@ -221,46 +250,36 @@ func TestRemoveContainer(t *testing.T) {
 
 	testCases := []struct {
 		name                   string
-		initialStore           *PodConfigStore
+		driver                 *CPUDriver
 		removePod              bool
 		expectedUpdateRequired bool
 	}{
 		{
 			name: "Remove guaranteed container sets update required for shared containers",
-			initialStore: func() *PodConfigStore {
-				s := NewPodConfigStore(mockProvider)
-				s.SetContainerState(types.UID(pod1.Uid), NewContainerCPUState(CPUTypeGuaranteed, ctr1.Name, types.UID(ctr1.Id), cpuset.New(0, 1)))
-				return s
+			driver: func() *CPUDriver {
+				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(mockProvider), cpuInfoProvider: mockProvider}
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id), []types.UID{"claim-uid-1"}))
+				return driver
 			}(),
 			removePod:              false,
 			expectedUpdateRequired: true,
 		},
 		{
 			name: "Remove non-guaranteed container does not set update required",
-			initialStore: func() *PodConfigStore {
-				s := NewPodConfigStore(mockProvider)
-				s.SetContainerState(types.UID(pod1.Uid), NewContainerCPUState(CPUTypeShared, ctr1.Name, types.UID(ctr1.Id), cpuset.New(0, 1, 2, 3)))
-				return s
+			driver: func() *CPUDriver {
+				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(mockProvider), cpuInfoProvider: mockProvider}
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id), nil))
+				return driver
 			}(),
 			removePod:              false,
 			expectedUpdateRequired: false,
 		},
 		{
-			name: "Remove guaranteed pod sets update required for shared containers",
-			initialStore: func() *PodConfigStore {
-				s := NewPodConfigStore(mockProvider)
-				s.SetContainerState(types.UID(pod1.Uid), NewContainerCPUState(CPUTypeGuaranteed, ctr1.Name, types.UID(ctr1.Id), cpuset.New(0, 1)))
-				return s
-			}(),
-			removePod:              true,
-			expectedUpdateRequired: true,
-		},
-		{
-			name: "Remove non-guaranteed pod does not set update required",
-			initialStore: func() *PodConfigStore {
-				s := NewPodConfigStore(mockProvider)
-				s.SetContainerState(types.UID(pod1.Uid), NewContainerCPUState(CPUTypeGuaranteed, ctr1.Name, types.UID(ctr1.Id), cpuset.New(0, 1, 2, 3)))
-				return s
+			name: "Remove pod with guaranteed container sets update required",
+			driver: func() *CPUDriver {
+				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(mockProvider), cpuInfoProvider: mockProvider}
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id), []types.UID{"claim-uid-1"}))
+				return driver
 			}(),
 			removePod:              true,
 			expectedUpdateRequired: true,
@@ -269,14 +288,13 @@ func TestRemoveContainer(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			driver := &CPUDriver{podConfigStore: tc.initialStore, cpuInfoProvider: mockProvider}
-			setSharedCPUUpdateRequired(false) // Reset before each test
+			setSharedCPUUpdateRequired(false)
 
 			var err error
 			if tc.removePod {
-				err = driver.RemovePodSandbox(context.Background(), pod1)
+				err = tc.driver.RemovePodSandbox(context.Background(), pod1)
 			} else {
-				err = driver.RemoveContainer(context.Background(), pod1, ctr1)
+				err = tc.driver.RemoveContainer(context.Background(), pod1, ctr1)
 			}
 			require.NoError(t, err)
 
@@ -297,41 +315,37 @@ func TestNRISynchronize(t *testing.T) {
 	pod2 := &api.PodSandbox{Id: "pod-id-2", Name: "my-pod-2", Namespace: "my-ns", Uid: "pod-uid-2"}
 
 	testCases := []struct {
-		name               string
-		initialStore       *PodConfigStore
-		runtimePods        []*api.PodSandbox
-		runtimeCtrs        []*api.Container
-		expectStoreCleared bool
-		expectedError      bool
+		name          string
+		driver        *CPUDriver
+		runtimePods   []*api.PodSandbox
+		runtimeCtrs   []*api.Container
+		expectedError bool
 	}{
 		{
 			name: "empty runtime state clears the store",
-			initialStore: func() *PodConfigStore {
-				s := NewPodConfigStore(mockProvider)
-				s.SetContainerState(types.UID(pod1.Uid), NewContainerCPUState(CPUTypeGuaranteed, "stale-ctr", "stale-id", cpuset.New(0)))
-				return s
+			driver: func() *CPUDriver {
+				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(mockProvider), cpuInfoProvider: mockProvider}
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState("stale-ctr", "stale-id", []types.UID{"stale-claim"}))
+				return driver
 			}(),
-			runtimePods:        []*api.PodSandbox{},
-			runtimeCtrs:        []*api.Container{},
-			expectStoreCleared: true,
+			runtimePods: []*api.PodSandbox{},
+			runtimeCtrs: []*api.Container{},
 		},
 		{
-			name:         "mixed containers across multiple pods",
-			initialStore: NewPodConfigStore(mockProvider),
-			runtimePods:  []*api.PodSandbox{pod1, pod2},
+			name:        "mixed containers across multiple pods",
+			driver:      &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(mockProvider), cpuInfoProvider: mockProvider},
+			runtimePods: []*api.PodSandbox{pod1, pod2},
 			runtimeCtrs: []*api.Container{
-				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim_A=%s", cdiEnvVarPrefix, "0,1")}},
+				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
 				{Id: "p1-shared", PodSandboxId: pod1.Id, Name: "shared-ctr"},
 				{Id: "p2-shared", PodSandboxId: pod2.Id, Name: "shared-ctr"},
 			},
-			expectStoreCleared: false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			driver := &CPUDriver{podConfigStore: tc.initialStore, cpuInfoProvider: mockProvider}
-			_, err := driver.Synchronize(context.Background(), tc.runtimePods, tc.runtimeCtrs)
+			_, err := tc.driver.Synchronize(context.Background(), tc.runtimePods, tc.runtimeCtrs)
 
 			if tc.expectedError {
 				require.Error(t, err)
@@ -339,18 +353,15 @@ func TestNRISynchronize(t *testing.T) {
 			}
 			require.NoError(t, err)
 
-			if tc.expectStoreCleared {
-				require.Empty(t, driver.podConfigStore.configs)
-			} else {
-				// Verify that the store has been populated
-				for _, pod := range tc.runtimePods {
-					for _, container := range tc.runtimeCtrs {
-						if container.PodSandboxId != pod.Id {
-							continue
-						}
-						state := driver.podConfigStore.GetContainerState(types.UID(pod.Uid), container.Name)
-						require.NotNil(t, state)
+			// Verify that the store has been populated correctly
+			require.Equal(t, len(tc.runtimePods), len(tc.driver.podConfigStore.configs))
+			for _, pod := range tc.runtimePods {
+				for _, container := range tc.runtimeCtrs {
+					if container.PodSandboxId != pod.Id {
+						continue
 					}
+					state := tc.driver.podConfigStore.GetContainerState(types.UID(pod.Uid), container.Name)
+					require.NotNil(t, state)
 				}
 			}
 		})

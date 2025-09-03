@@ -56,16 +56,17 @@ type CPUInfoProvider interface {
 
 // CPUDriver is the structure that holds all the driver runtime information.
 type CPUDriver struct {
-	driverName        string
-	nodeName          string
-	kubeClient        kubernetes.Interface
-	draPlugin         KubeletPlugin
-	nriPlugin         stub.Stub
-	podConfigStore    *PodConfigStore
-	cdiMgr            cdiManager
-	cpuIDToDeviceName map[int]string
-	deviceNameToCPUID map[string]int
-	cpuInfoProvider   CPUInfoProvider
+	driverName         string
+	nodeName           string
+	kubeClient         kubernetes.Interface
+	draPlugin          KubeletPlugin
+	nriPlugin          stub.Stub
+	podConfigStore     *PodConfigStore
+	cdiMgr             cdiManager
+	cpuIDToDeviceName  map[int]string
+	deviceNameToCPUID  map[string]int
+	cpuInfoProvider    CPUInfoProvider
+	cpuAllocationStore *CPUAllocationStore
 }
 
 // Start creates and starts a new CPUDriver.
@@ -78,7 +79,8 @@ func Start(ctx context.Context, driverName string, kubeClient kubernetes.Interfa
 		deviceNameToCPUID: make(map[string]int),
 		cpuInfoProvider:   cpuinfo.NewSystemCPUInfo(),
 	}
-	plugin.podConfigStore = NewPodConfigStore(plugin.cpuInfoProvider)
+	plugin.cpuAllocationStore = NewCPUAllocationStore(plugin.cpuInfoProvider)
+	plugin.podConfigStore = NewPodConfigStore()
 
 	driverPluginPath := filepath.Join(kubeletPluginPath, driverName)
 	if err := os.MkdirAll(driverPluginPath, 0750); err != nil {

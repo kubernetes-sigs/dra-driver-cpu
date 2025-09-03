@@ -38,7 +38,8 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	klog.Infof("Synchronized state with the runtime (%d pods, %d containers)...",
 		len(pods), len(containers))
 
-	newPodConfigStore := NewPodConfigStore(cp.cpuInfoProvider)
+	cpuAllocationStore := NewCPUAllocationStore(cp.cpuInfoProvider)
+	podConfigStore := NewPodConfigStore()
 
 	for _, pod := range pods {
 		klog.Infof("Synchronize pod %s/%s UID %s", pod.Namespace, pod.Name, pod.Uid)
@@ -46,65 +47,79 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			if container.PodSandboxId != pod.Id {
 				continue
 			}
-			guaranteedCPUs, err := parseDRAEnvToCPUSet(container.Env)
+			claimAllocations, err := parseDRAEnvToClaimAllocations(container.Env)
 			if err != nil {
 				klog.Errorf("Error parsing DRA env for container %s in pod %s/%s: %v", container.Name, pod.Namespace, pod.Name, err)
+				continue
 			}
-
-			var state *ContainerCPUState
-			if guaranteedCPUs.IsEmpty() {
-				klog.Infof("Synchronize(): No guaranteed CPUs found in DRA env for pod %s/%s container %s", pod.Namespace, pod.Name, container.Name)
-				state = NewContainerCPUState(CPUTypeShared, container.GetName(), types.UID(container.GetId()), cpuset.New())
+			containerUID := types.UID(container.GetId())
+			var state *ContainerState
+			if len(claimAllocations) == 0 {
+				state = NewContainerState(container.GetName(), containerUID, nil)
 			} else {
-				klog.Infof("Synchronize(): Guaranteed CPUs found for pod %s/%s container %s with cpus: %v", pod.Namespace, pod.Name, container.Name, guaranteedCPUs.String())
-				state = NewContainerCPUState(CPUTypeGuaranteed, container.GetName(), types.UID(container.GetId()), guaranteedCPUs)
+				allGuaranteedCPUs := cpuset.New()
+				claimUIDs := []types.UID{}
+				for uid, cpus := range claimAllocations {
+					allGuaranteedCPUs = allGuaranteedCPUs.Union(cpus)
+					claimUIDs = append(claimUIDs, uid)
+					cpuAllocationStore.AddResourceClaimAllocation(uid, cpus)
+				}
+				klog.Infof("Synchronize: Found guaranteed CPUs for pod %s/%s container %s with cpus: %v", pod.Namespace, pod.Name, container.Name, allGuaranteedCPUs.String())
+				state = NewContainerState(container.GetName(), containerUID, claimUIDs)
 			}
-			newPodConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
+			podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
 		}
 	}
-	cp.podConfigStore = newPodConfigStore
+	cp.podConfigStore = podConfigStore
+	cp.cpuAllocationStore = cpuAllocationStore
 	return nil, nil
 }
 
-func parseDRAEnvToCPUSet(envs []string) (cpuset.CPUSet, error) {
-	guaranteedCPUs := cpuset.New()
+func parseDRAEnvToClaimAllocations(envs []string) (map[types.UID]cpuset.CPUSet, error) {
+	allocations := make(map[types.UID]cpuset.CPUSet)
 	for _, env := range envs {
 		if !strings.HasPrefix(env, cdiEnvVarPrefix) {
 			continue
 		}
 		klog.Infof("Parsing DRA env entry: %q", env)
-
-		keyVal := strings.SplitN(env, "=", 2)
-		if len(keyVal) != 2 {
-			return cpuset.New(), fmt.Errorf("malformed DRA env entry %q, expected format: %s_key=value", env, cdiEnvVarPrefix)
+		parts := strings.SplitN(env, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("malformed DRA env entry %q", env)
 		}
-		cpuSetValue := keyVal[1]
-
-		parsedSet, err := cpuset.Parse(cpuSetValue)
-		if err != nil {
-			return cpuset.New(), fmt.Errorf("failed to parse cpuset value %q from env %q: %w", cpuSetValue, env, err)
-		}
-
-		guaranteedCPUs = guaranteedCPUs.Union(parsedSet)
-	}
-
-	return guaranteedCPUs, nil
-}
-
-func (cp *CPUDriver) getSharedContainerUpdates(currentContainerID types.UID) []*api.ContainerUpdate {
-	updates := []*api.ContainerUpdate{}
-	publicCPUs := cp.podConfigStore.GetPublicCPUs()
-	sharedCPUContainers := cp.podConfigStore.GetContainersWithSharedCPUs()
-	klog.Infof("Updating CPU allocation to: %v for containers without guaranteed CPUs", publicCPUs.String())
-	for _, containerUID := range sharedCPUContainers {
-		if containerUID == currentContainerID {
-			// Skip the current container as it is already coveed in container adjustment.
+		key, value := parts[0], parts[1]
+		var claimUID types.UID
+		if strings.HasPrefix(key, cdiEnvVarPrefix+"_") {
+			uidStr := strings.TrimPrefix(key, cdiEnvVarPrefix+"_")
+			claimUID = types.UID(uidStr)
+		} else {
 			continue
 		}
+
+		parsedSet, err := cpuset.Parse(value)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse cpuset value %q from env %q: %w", value, env, err)
+		}
+		allocations[claimUID] = parsedSet
+	}
+
+	return allocations, nil
+}
+
+func (cp *CPUDriver) getSharedContainerUpdates(excludeID types.UID) []*api.ContainerUpdate {
+	updates := []*api.ContainerUpdate{}
+	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
+	sharedCPUContainers := cp.podConfigStore.GetSharedCPUContainerUIDs()
+	klog.Infof("Updating CPU allocation to: %v for containers without guaranteed CPUs", sharedCPUs.String())
+	for _, containerUID := range sharedCPUContainers {
+		if containerUID == excludeID {
+			// Skip the container being created as it is already covered in the container adjustment.
+			continue
+		}
+
 		containerUpdate := &api.ContainerUpdate{
 			ContainerId: string(containerUID),
 		}
-		containerUpdate.SetLinuxCPUSetCPUs(publicCPUs.String())
+		containerUpdate.SetLinuxCPUSetCPUs(sharedCPUs.String())
 		updates = append(updates, containerUpdate)
 	}
 	return updates
@@ -114,27 +129,40 @@ func (cp *CPUDriver) getSharedContainerUpdates(currentContainerID types.UID) []*
 func (cp *CPUDriver) CreateContainer(_ context.Context, pod *api.PodSandbox, ctr *api.Container) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
 	klog.Infof("CreateContainer Pod:%s/%s PodUID:%s Container:%s ContainerID:%s", pod.Namespace, pod.Name, pod.Uid, ctr.Name, ctr.Id)
 	adjust := &api.ContainerAdjustment{}
-	updates := []*api.ContainerUpdate{}
+	var updates []*api.ContainerUpdate
 
-	guaranteedCPUs, err := parseDRAEnvToCPUSet(ctr.Env)
+	claimAllocations, err := parseDRAEnvToClaimAllocations(ctr.Env)
 	if err != nil {
 		klog.Errorf("Error parsing DRA env for container %s in pod %s/%s: %v", ctr.Name, pod.Namespace, pod.Name, err)
 	}
 
-	var state *ContainerCPUState
 	containerId := types.UID(ctr.GetId())
-	if guaranteedCPUs.IsEmpty() {
-		state = NewContainerCPUState(CPUTypeShared, ctr.GetName(), containerId, cpuset.New())
-		publicCPUs := cp.podConfigStore.GetPublicCPUs()
-		klog.Infof("No guaranteed CPUs found in DRA env for pod %s/%s container %s. Using public CPUs %s", pod.Namespace, pod.Name, ctr.Name, publicCPUs.String())
-		adjust.SetLinuxCPUSetCPUs(publicCPUs.String())
-		cp.podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
-	} else {
-		state = NewContainerCPUState(CPUTypeGuaranteed, ctr.GetName(), containerId, guaranteedCPUs)
-		klog.Infof("Guaranteed CPUs found for pod:%s container:%s with cpus:%v", pod.Name, ctr.Name, guaranteedCPUs.String())
-		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
-		cp.podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
+	podUID := types.UID(pod.GetUid())
 
+	if len(claimAllocations) == 0 {
+		// This is a shared container.
+		state := NewContainerState(ctr.GetName(), containerId, nil)
+		cp.podConfigStore.SetContainerState(podUID, state)
+
+		sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
+		klog.Infof("No guaranteed CPUs found in DRA env for pod %s/%s container %s. Using shared CPUs %s", pod.Namespace, pod.Name, ctr.Name, sharedCPUs.String())
+		adjust.SetLinuxCPUSetCPUs(sharedCPUs.String())
+
+		if isSharedCPUUpdateRequired() {
+			updates = cp.getSharedContainerUpdates(containerId)
+			setSharedCPUUpdateRequired(false)
+		}
+	} else {
+		guaranteedCPUs := cpuset.New()
+		claimUIDs := []types.UID{}
+		for uid, cpus := range claimAllocations {
+			guaranteedCPUs = guaranteedCPUs.Union(cpus)
+			claimUIDs = append(claimUIDs, uid)
+		}
+		klog.Infof("Guaranteed CPUs found for pod:%s container:%s with cpus:%v", pod.Name, ctr.Name, guaranteedCPUs.String())
+		state := NewContainerState(ctr.GetName(), containerId, claimUIDs)
+		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
+		cp.podConfigStore.SetContainerState(podUID, state)
 		// Remove the guaranteed CPUs from the containers with shared CPUs.
 		updates = cp.getSharedContainerUpdates(containerId)
 		setSharedCPUUpdateRequired(false)
@@ -163,12 +191,14 @@ func isSharedCPUUpdateRequired() bool {
 // RemoveContainer handles container removal requests from the NRI.
 func (cp *CPUDriver) RemoveContainer(_ context.Context, pod *api.PodSandbox, ctr *api.Container) error {
 	klog.Infof("RemoveContainer Pod:%s/%s PodUID:%s Container:%s ContainerID:%s", pod.Namespace, pod.Name, pod.Uid, ctr.Name, ctr.Id)
+	podUID := types.UID(pod.GetUid())
+	containerState := cp.podConfigStore.GetContainerState(podUID, ctr.GetName())
 	// TODO(pravk03): If a container with guaranteed CPUs is removed, we need to update the CPU assignment of other containers with shared CPUs.
 	// There isn't a way to do that in this call. It would only be updated the next time CreateContainer() gets called.
-	if cp.podConfigStore.IsContainerGuaranteed(types.UID(pod.Uid), ctr.Name) {
+	if containerState != nil && containerState.IsGuaranteed() {
 		setSharedCPUUpdateRequired(true)
 	}
-	cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
+	cp.podConfigStore.RemoveContainerState(podUID, ctr.GetName())
 	return nil
 }
 

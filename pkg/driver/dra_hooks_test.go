@@ -271,6 +271,7 @@ func TestPublishResources(t *testing.T) {
 }
 
 func TestPrepareResourceClaims(t *testing.T) {
+	mockProvider := &mockCPUInfoProvider{cpuInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
 	baseCPUDriver := func() *CPUDriver {
 		return &CPUDriver{
 			driverName: testDriverName,
@@ -278,12 +279,13 @@ func TestPrepareResourceClaims(t *testing.T) {
 				"cpudev0": 0,
 				"cpudev1": 1,
 			},
+			cpuAllocationStore: NewCPUAllocationStore(mockProvider),
 		}
 	}
 
-	successClaimUID := types.UID("claim-1")
-	successCDIDeviceName := getCDIDeviceName(successClaimUID)
-	successCDIQualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, successCDIDeviceName)
+	claimUID := types.UID("claim-1")
+	cdiDeviceName := getCDIDeviceName(claimUID)
+	cdiQualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, cdiDeviceName)
 
 	testCases := []struct {
 		name                    string
@@ -302,7 +304,7 @@ func TestPrepareResourceClaims(t *testing.T) {
 			driver: baseCPUDriver(),
 			claims: []*resourceapi.ResourceClaim{
 				{
-					ObjectMeta: metav1.ObjectMeta{UID: successClaimUID, Name: "my-claim"},
+					ObjectMeta: metav1.ObjectMeta{UID: claimUID, Name: "my-claim"},
 					Status: resourceapi.ResourceClaimStatus{
 						Allocation: &resourceapi.AllocationResult{
 							Devices: resourceapi.DeviceAllocationResult{
@@ -317,11 +319,11 @@ func TestPrepareResourceClaims(t *testing.T) {
 			},
 			expectedResultsCount:    1,
 			expectedCdiDevicesCount: 1,
-			expectedCdiDevice:       successCDIDeviceName,
-			expectedCdiEnvVar:       fmt.Sprintf("%s_claim_%s=%s", cdiEnvVarPrefix, "my-claim", "0-1"),
+			expectedCdiDevice:       cdiDeviceName,
+			expectedCdiEnvVar:       fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, "0-1"),
 			expectedPreparedDevices: []kubeletplugin.Device{
-				{PoolName: testNodeName, DeviceName: "cpudev0", CDIDeviceIDs: []string{successCDIQualifiedName}},
-				{PoolName: testNodeName, DeviceName: "cpudev1", CDIDeviceIDs: []string{successCDIQualifiedName}},
+				{PoolName: testNodeName, DeviceName: "cpudev0", CDIDeviceIDs: []string{cdiQualifiedName}},
+				{PoolName: testNodeName, DeviceName: "cpudev1", CDIDeviceIDs: []string{cdiQualifiedName}},
 			},
 		},
 		{
@@ -468,7 +470,11 @@ func TestUnprepareResourceClaims(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockCdiMgr := newMockCdiMgr()
 			mockCdiMgr.removeError = tc.cdiRemoveError
-			cp := &CPUDriver{cdiMgr: mockCdiMgr}
+			mockProvider := &mockCPUInfoProvider{cpuInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
+			cp := &CPUDriver{
+				cdiMgr:             mockCdiMgr,
+				cpuAllocationStore: NewCPUAllocationStore(mockProvider),
+			}
 
 			unpreparedClaims, err := cp.UnprepareResourceClaims(context.Background(), tc.claims)
 			require.NoError(t, err)
