@@ -30,6 +30,7 @@ import (
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/cpuset"
 )
 
 const (
@@ -67,10 +68,11 @@ type CPUDriver struct {
 	deviceNameToCPUID  map[string]int
 	cpuInfoProvider    CPUInfoProvider
 	cpuAllocationStore *CPUAllocationStore
+	reservedCPUs       cpuset.CPUSet
 }
 
 // Start creates and starts a new CPUDriver.
-func Start(ctx context.Context, driverName string, kubeClient kubernetes.Interface, nodeName string) (*CPUDriver, error) {
+func Start(ctx context.Context, driverName string, kubeClient kubernetes.Interface, nodeName string, reservedCPUs cpuset.CPUSet) (*CPUDriver, error) {
 	plugin := &CPUDriver{
 		driverName:        driverName,
 		nodeName:          nodeName,
@@ -78,8 +80,9 @@ func Start(ctx context.Context, driverName string, kubeClient kubernetes.Interfa
 		cpuIDToDeviceName: make(map[int]string),
 		deviceNameToCPUID: make(map[string]int),
 		cpuInfoProvider:   cpuinfo.NewSystemCPUInfo(),
+		reservedCPUs:      reservedCPUs,
 	}
-	plugin.cpuAllocationStore = NewCPUAllocationStore(plugin.cpuInfoProvider)
+	plugin.cpuAllocationStore = NewCPUAllocationStore(plugin.cpuInfoProvider, reservedCPUs)
 	plugin.podConfigStore = NewPodConfigStore()
 
 	driverPluginPath := filepath.Join(kubeletPluginPath, driverName)

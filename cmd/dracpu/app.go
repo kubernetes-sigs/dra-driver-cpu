@@ -34,6 +34,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	nodeutil "k8s.io/component-helpers/node/util"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/cpuset"
 )
 
 const (
@@ -44,12 +45,14 @@ var (
 	hostnameOverride string
 	kubeconfig       string
 	bindAddress      string
+	reservedCPUs     string
 	ready            atomic.Bool
 )
 
 func init() {
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
 	flag.StringVar(&hostnameOverride, "hostname-override", "", "If non-empty, will be used as the name of the Node that kube-network-policies is running on. If unset, the node name is assumed to be the same as the node's hostname.")
+	flag.StringVar(&reservedCPUs, "reserved-cpus", "", "cpuset of CPUs to reserve. These CPUs are excluded from the ResourceSlice and will not be allocated to workloads. This configuration serves the same purpose as `kubeReserved` and `systemReserved` flags in Kubelet to reserve CPUs for system daemons (https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/#kube-reserved). In order for CPU accounting to work correctly, the number of CPUs being reserved with this flag should match the kubelet settings (`kubeReserved` + `systemReserved`).")
 }
 
 func main() {
@@ -60,6 +63,11 @@ func main() {
 	flag.VisitAll(func(f *flag.Flag) {
 		klog.Infof("FLAG: --%s=%q", f.Name, f.Value)
 	})
+
+	reservedCPUSet, err := cpuset.Parse(reservedCPUs)
+	if err != nil {
+		klog.Fatalf("failed to parse reserved CPUs: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	// Add healthz handler
@@ -86,7 +94,6 @@ func main() {
 	}()
 
 	var config *rest.Config
-	var err error
 	if kubeconfig != "" {
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 	} else {
@@ -125,7 +132,7 @@ func main() {
 	}()
 	signal.Notify(signalCh, os.Interrupt, unix.SIGINT)
 
-	dracpu, err := driver.Start(ctx, driverName, clientset, nodeName)
+	dracpu, err := driver.Start(ctx, driverName, clientset, nodeName, reservedCPUSet)
 	if err != nil {
 		klog.Fatalf("driver failed to start: %v", err)
 	}

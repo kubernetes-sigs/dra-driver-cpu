@@ -44,30 +44,42 @@ const (
 // This allows the DRA scheduler, which requests resources in contiguous blocks,
 // to co-locate workloads on hyperthreads of the same core.
 func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
-	cpus, err := cp.cpuInfoProvider.GetCPUInfos()
+	allCPUs, err := cp.cpuInfoProvider.GetCPUInfos()
 	if err != nil {
 		klog.Errorf("error getting CPU topology: %v", err)
 		return nil
 	}
 
+	reservedCPUs := make(map[int]bool)
+	for _, cpuID := range cp.reservedCPUs.List() {
+		reservedCPUs[cpuID] = true
+	}
+
+	var availableCPUs []cpuinfo.CPUInfo
+	for _, cpu := range allCPUs {
+		if !reservedCPUs[cpu.CpuID] {
+			availableCPUs = append(availableCPUs, cpu)
+		}
+	}
+
 	processedCpus := make(map[int]bool)
 	var coreGroups [][]cpuinfo.CPUInfo
 	cpuInfoMap := make(map[int]cpuinfo.CPUInfo)
-	for _, info := range cpus {
+	for _, info := range allCPUs {
 		cpuInfoMap[info.CpuID] = info
 	}
 
-	for _, cpu := range cpus {
+	for _, cpu := range availableCPUs {
 		if processedCpus[cpu.CpuID] {
 			continue
 		}
-		if cpu.SiblingCpuID != -1 {
+		if cpu.SiblingCpuID == -1 || reservedCPUs[cpu.SiblingCpuID] {
+			coreGroups = append(coreGroups, []cpuinfo.CPUInfo{cpu})
+			processedCpus[cpu.CpuID] = true
+		} else {
 			coreGroups = append(coreGroups, []cpuinfo.CPUInfo{cpu, cpuInfoMap[cpu.SiblingCpuID]})
 			processedCpus[cpu.CpuID] = true
 			processedCpus[cpu.SiblingCpuID] = true
-		} else {
-			coreGroups = append(coreGroups, []cpuinfo.CPUInfo{cpu})
-			processedCpus[cpu.CpuID] = true
 		}
 	}
 
