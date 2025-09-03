@@ -52,7 +52,7 @@ var (
 func init() {
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
 	flag.StringVar(&hostnameOverride, "hostname-override", "", "If non-empty, will be used as the name of the Node that kube-network-policies is running on. If unset, the node name is assumed to be the same as the node's hostname.")
-	flag.StringVar(&reservedCPUs, "reserved-cpus", "", "cpuset of CPUs to reserve. These CPUs are excluded from the ResourceSlice and will not be allocated to workloads. This configuration serves the same purpose as `kubeReserved` and `systemReserved` flags in Kubelet to reserve CPUs for system daemons (https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/#kube-reserved). In order for CPU accounting to work correctly, the number of CPUs being reserved with this flag should match the kubelet settings (`kubeReserved` + `systemReserved`).")
+	flag.StringVar(&reservedCPUs, "reserved-cpus", "", "cpuset of CPUs to be excluded from ResourceSlice.")
 }
 
 func main() {
@@ -132,7 +132,12 @@ func main() {
 	}()
 	signal.Notify(signalCh, os.Interrupt, unix.SIGINT)
 
-	dracpu, err := driver.Start(ctx, driverName, clientset, nodeName, reservedCPUSet)
+	driverConfig := &driver.Config{
+		DriverName:   driverName,
+		NodeName:     nodeName,
+		ReservedCPUs: reservedCPUSet,
+	}
+	dracpu, err := driver.Start(ctx, clientset, driverConfig)
 	if err != nil {
 		klog.Fatalf("driver failed to start: %v", err)
 	}

@@ -123,13 +123,13 @@ func TestGetSharedCPUContainerUIDs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := NewPodConfigStore()
 			tc.setup(store)
-			gotUIDs := store.GetSharedCPUContainerUIDs()
+			gotUIDs := store.GetContainersWithSharedCPUs()
 			require.ElementsMatch(t, tc.wantUIDs, gotUIDs)
 		})
 	}
 }
 
-func TestIsPodGuaranteed(t *testing.T) {
+func TestPodHasExclusiveCPUAllocation(t *testing.T) {
 	guaranteedState := NewContainerState("guaranteed-ctr", "gid1", []types.UID{"claim-uid-1"})
 	sharedState := NewContainerState("shared-ctr", "sid1", nil)
 
@@ -185,7 +185,7 @@ func TestIsPodGuaranteed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := NewPodConfigStore()
 			tc.setup(store)
-			gotGuaranteed := store.IsPodGuaranteed(tc.podUID)
+			gotGuaranteed := store.PodHasExclusiveCPUAllocation(tc.podUID)
 			require.Equal(t, tc.wantGuaranteed, gotGuaranteed)
 		})
 	}

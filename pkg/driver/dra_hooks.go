@@ -119,9 +119,6 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 		}
 	}
 
-	// Create one resource slice per NUMA node.
-	var allSlices [][]resourceapi.Device
-
 	// Sort NUMA node IDs to ensure a deterministic slice ordering.
 	numaNodeIDs := make([]int, 0, len(devicesByNuma))
 	for id := range devicesByNuma {
@@ -129,9 +126,25 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 	}
 	sort.Ints(numaNodeIDs)
 
+	var allSlices [][]resourceapi.Device
+	// If the total number of available CPUs is small enough, group them into a single resource slice.
+	// Otherwise, create one slice per NUMA node.
+	if len(availableCPUs) <= maxDevicesPerResourceSlice {
+		var allDevices []resourceapi.Device
+		for _, id := range numaNodeIDs {
+			allDevices = append(allDevices, devicesByNuma[int64(id)]...)
+		}
+		if len(allDevices) > 0 {
+			allSlices = append(allSlices, allDevices)
+		}
+		return allSlices
+	}
+
+	// Create one slice per NUMA node.
 	for _, id := range numaNodeIDs {
 		numaDevices := devicesByNuma[int64(id)]
-		// If devices per NUMA node exceeds the limit, throw an error.
+		// If devices per NUMA node exceeds the limit, we currently throw an error.
+		// TODO(pravk03) - We would need to handle this better. We can do smaller splits within a NUMA node.
 		if len(numaDevices) > maxDevicesPerResourceSlice {
 			klog.Errorf("number of devices for NUMA node %d (%d) exceeds the slice limit of %d", id, len(numaDevices), maxDevicesPerResourceSlice)
 			return nil

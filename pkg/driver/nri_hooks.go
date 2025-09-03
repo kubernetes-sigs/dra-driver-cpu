@@ -108,7 +108,7 @@ func parseDRAEnvToClaimAllocations(envs []string) (map[types.UID]cpuset.CPUSet, 
 func (cp *CPUDriver) getSharedContainerUpdates(excludeID types.UID) []*api.ContainerUpdate {
 	updates := []*api.ContainerUpdate{}
 	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
-	sharedCPUContainers := cp.podConfigStore.GetSharedCPUContainerUIDs()
+	sharedCPUContainers := cp.podConfigStore.GetContainersWithSharedCPUs()
 	klog.Infof("Updating CPU allocation to: %v for containers without guaranteed CPUs", sharedCPUs.String())
 	for _, containerUID := range sharedCPUContainers {
 		if containerUID == excludeID {
@@ -195,7 +195,7 @@ func (cp *CPUDriver) RemoveContainer(_ context.Context, pod *api.PodSandbox, ctr
 	containerState := cp.podConfigStore.GetContainerState(podUID, ctr.GetName())
 	// TODO(pravk03): If a container with guaranteed CPUs is removed, we need to update the CPU assignment of other containers with shared CPUs.
 	// There isn't a way to do that in this call. It would only be updated the next time CreateContainer() gets called.
-	if containerState != nil && containerState.IsGuaranteed() {
+	if containerState != nil && containerState.HasExclusiveCPUAllocation() {
 		setSharedCPUUpdateRequired(true)
 	}
 	cp.podConfigStore.RemoveContainerState(podUID, ctr.GetName())
@@ -219,7 +219,7 @@ func (cp *CPUDriver) RemovePodSandbox(_ context.Context, pod *api.PodSandbox) er
 	klog.Infof("RemovePodSandbox Pod %s/%s UID %s", pod.Namespace, pod.Name, pod.Uid)
 	// TODO(pravk03): If a pod with guaranteed CPUs is removed, we need to update the CPU assignment of other containers with shared CPUs.
 	// There isn't a way to do that in this call. It would only be updated the next time CreateContainer() gets called.
-	if cp.podConfigStore.IsPodGuaranteed(types.UID(pod.Uid)) {
+	if cp.podConfigStore.PodHasExclusiveCPUAllocation(types.UID(pod.Uid)) {
 		setSharedCPUUpdateRequired(true)
 	}
 	cp.podConfigStore.DeletePodState(types.UID(pod.Uid))

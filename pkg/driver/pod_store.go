@@ -23,8 +23,11 @@ import (
 
 // ContainerState holds the allocation type and all claim assignments for a container.
 type ContainerState struct {
-	containerName     string
-	containerUID      types.UID
+	// containerName is used as the primary key for efficient lookups within the PodConfigStore.
+	containerName string
+	// containerUID is used by the container runtime to apply updates to a container.
+	containerUID types.UID
+	// resourceClaimUIDs is a list of resource claims associated with this container.
 	resourceClaimUIDs []types.UID
 }
 
@@ -99,15 +102,15 @@ func (s *PodConfigStore) DeletePodState(podUID types.UID) {
 	delete(s.configs, podUID)
 }
 
-// GetSharedCPUContainerUIDs returns a list of container UIDs that have shared CPU allocation.
+// GetContainersWithSharedCPUs returns a list of container UIDs that have shared CPU allocation.
 // TODO(pravk03): Cache this and return from this function in O(1)
-func (s *PodConfigStore) GetSharedCPUContainerUIDs() []types.UID {
+func (s *PodConfigStore) GetContainersWithSharedCPUs() []types.UID {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	sharedCPUContainers := []types.UID{}
 	for _, podAssignments := range s.configs {
 		for _, state := range podAssignments {
-			if !state.IsGuaranteed() {
+			if !state.HasExclusiveCPUAllocation() {
 				sharedCPUContainers = append(sharedCPUContainers, state.containerUID)
 			}
 		}
@@ -115,18 +118,18 @@ func (s *PodConfigStore) GetSharedCPUContainerUIDs() []types.UID {
 	return sharedCPUContainers
 }
 
-// IsGuaranteed returns true if the container has a guaranteed CPU allocation.
-func (cs *ContainerState) IsGuaranteed() bool {
+// HasExclusiveCPUAllocation returns true if the container has associated resource claims.
+func (cs *ContainerState) HasExclusiveCPUAllocation() bool {
 	return len(cs.resourceClaimUIDs) > 0
 }
 
-// IsPodGuaranteed returns true if any container in the pod has a guaranteed CPU allocation.
-func (s *PodConfigStore) IsPodGuaranteed(podUID types.UID) bool {
+// PodHasExclusiveCPUAllocation returns true if any container in the pod has exclusive CPU allocation.
+func (s *PodConfigStore) PodHasExclusiveCPUAllocation(podUID types.UID) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if podAssignments, ok := s.configs[podUID]; ok {
 		for _, state := range podAssignments {
-			if state.IsGuaranteed() {
+			if state.HasExclusiveCPUAllocation() {
 				return true
 			}
 		}

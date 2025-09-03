@@ -53,6 +53,7 @@ func NewCPUAllocationStore(provider CPUInfoProvider, reservedCPUs cpuset.CPUSet)
 }
 
 // AddResourceClaimAllocation adds a new resource claim allocation to the store.
+// TODO(pravk03): Keep track of all allocated CPUs here so that GetSharedCPUs() can return in O(1).
 func (s *CPUAllocationStore) AddResourceClaimAllocation(claimUID types.UID, cpus cpuset.CPUSet) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -80,4 +81,12 @@ func (s *CPUAllocationStore) GetSharedCPUs() cpuset.CPUSet {
 		allocatedCPUs = allocatedCPUs.Union(cpus)
 	}
 	return s.availableCPUs.Difference(allocatedCPUs)
+}
+
+// GetResourceClaimAllocation returns the cpuset for a given resource claim.
+func (s *CPUAllocationStore) GetResourceClaimAllocation(claimUID types.UID) (cpuset.CPUSet, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cpus, ok := s.resourceClaimAllocations[claimUID]
+	return cpus, ok
 }
