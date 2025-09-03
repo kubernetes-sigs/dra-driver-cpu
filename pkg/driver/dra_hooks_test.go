@@ -121,10 +121,38 @@ var (
 		{CpuID: 6, CoreID: 2, SocketID: 1, NumaNode: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 2},
 		{CpuID: 7, CoreID: 3, SocketID: 1, NumaNode: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 3},
 	}
-	mockCPUInfos_ExceedsSliceLimit = func() []cpuinfo.CPUInfo {
+	mockCPUInfos_SingleNUMANodeExceedsSliceLimit = func() []cpuinfo.CPUInfo {
 		var infos []cpuinfo.CPUInfo
 		for i := 0; i < maxDevicesPerResourceSlice+1; i++ {
 			infos = append(infos, cpuinfo.CPUInfo{CpuID: i, CoreID: i, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1})
+		}
+		return infos
+	}()
+	mockCPUInfos_DualSocket_120CPUsPerSocket_HT = func() []cpuinfo.CPUInfo {
+		var infos []cpuinfo.CPUInfo
+		numCores := 120
+		for socketID := 0; socketID < 2; socketID++ {
+			for coreID := 0; coreID < numCores/2; coreID++ {
+				baseCpuID := socketID * numCores
+				infos = append(infos, cpuinfo.CPUInfo{
+					CpuID:        baseCpuID + coreID*2,
+					CoreID:       coreID,
+					SocketID:     socketID,
+					NumaNode:     socketID,
+					CoreType:     cpuinfo.CoreTypePerformance,
+					SiblingCpuID: baseCpuID + coreID*2 + 1,
+				})
+
+				// Create the second logical CPU (thread 1) on the same core
+				infos = append(infos, cpuinfo.CPUInfo{
+					CpuID:        baseCpuID + coreID*2 + 1,
+					CoreID:       coreID,
+					SocketID:     socketID,
+					NumaNode:     socketID,
+					CoreType:     cpuinfo.CoreTypePerformance,
+					SiblingCpuID: baseCpuID + coreID*2,
+				})
+			}
 		}
 		return infos
 	}()
@@ -132,59 +160,66 @@ var (
 
 func TestCreateCPUDeviceSlices(t *testing.T) {
 	testCases := []struct {
-		name                    string
-		cpuInfos                []cpuinfo.CPUInfo
-		cpuInfoErr              error
-		reservedCPUs            cpuset.CPUSet
-		expectedSlices          int
-		expectedDevicesPerSlice map[int]int // NUMA node -> num devices
-		expectNilSlices         bool
+		name                       string
+		cpuInfos                   []cpuinfo.CPUInfo
+		cpuInfoErr                 error
+		reservedCPUs               cpuset.CPUSet
+		expectedSlices             int
+		expectedDevicesPerNUMANode map[int]int
+		expectNilSlices            bool
 	}{
 		{
-			name:                    "single socket, HT on, no reserved",
-			cpuInfos:                mockCPUInfos_SingleSocket_4CPUS_HT,
-			reservedCPUs:            cpuset.New(),
-			expectedSlices:          1,
-			expectedDevicesPerSlice: map[int]int{0: 4},
+			name:                       "single socket, HT on, no reserved",
+			cpuInfos:                   mockCPUInfos_SingleSocket_4CPUS_HT,
+			reservedCPUs:               cpuset.New(),
+			expectedSlices:             1,
+			expectedDevicesPerNUMANode: map[int]int{0: 4},
 		},
 		{
-			name:                    "single socket, HT on, 2 CPUs reserved",
-			cpuInfos:                mockCPUInfos_SingleSocket_4CPUS_HT,
-			reservedCPUs:            cpuset.New(0, 2),
-			expectedSlices:          1,
-			expectedDevicesPerSlice: map[int]int{0: 2},
+			name:                       "single socket, HT on, 2 CPUs reserved",
+			cpuInfos:                   mockCPUInfos_SingleSocket_4CPUS_HT,
+			reservedCPUs:               cpuset.New(0, 2),
+			expectedSlices:             1,
+			expectedDevicesPerNUMANode: map[int]int{0: 2},
 		},
 		{
-			name:                    "dual socket, HT on, 1 CPU reserved",
-			cpuInfos:                mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
-			reservedCPUs:            cpuset.New(0),
-			expectedSlices:          2,
-			expectedDevicesPerSlice: map[int]int{0: 3, 1: 4},
+			name:                       "dual socket, HT on, 1 CPU reserved",
+			cpuInfos:                   mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			reservedCPUs:               cpuset.New(0),
+			expectedSlices:             1, // 1 slice with CPUs from all the NUMA nodes
+			expectedDevicesPerNUMANode: map[int]int{0: 3, 1: 4},
 		},
 		{
-			name:                    "no devices",
-			cpuInfos:                []cpuinfo.CPUInfo{},
-			reservedCPUs:            cpuset.New(),
-			expectedSlices:          0,
-			expectedDevicesPerSlice: map[int]int{},
+			name:                       "machine exceeds slice limit. dual socket, HT on, 2 CPU reserved",
+			cpuInfos:                   mockCPUInfos_DualSocket_120CPUsPerSocket_HT,
+			reservedCPUs:               cpuset.New(0, 1),
+			expectedSlices:             2, // 1 slice per NUMA node
+			expectedDevicesPerNUMANode: map[int]int{0: 118, 1: 120},
 		},
 		{
-			name:                    "single socket, HT OFF, no CPUs reserved",
-			cpuInfos:                mockCPUInfos_SingleSocket_4CPUs_HT_Off,
-			reservedCPUs:            cpuset.New(),
-			expectedSlices:          1,
-			expectedDevicesPerSlice: map[int]int{0: 4},
+			name:                       "no devices",
+			cpuInfos:                   []cpuinfo.CPUInfo{},
+			reservedCPUs:               cpuset.New(),
+			expectedSlices:             0,
+			expectedDevicesPerNUMANode: map[int]int{},
 		},
 		{
-			name:                    "all cpus reserved",
-			cpuInfos:                mockCPUInfos_SingleSocket_4CPUS_HT,
-			reservedCPUs:            cpuset.New(0, 1, 2, 3),
-			expectedSlices:          0,
-			expectedDevicesPerSlice: map[int]int{},
+			name:                       "single socket, HT OFF, no CPUs reserved",
+			cpuInfos:                   mockCPUInfos_SingleSocket_4CPUs_HT_Off,
+			reservedCPUs:               cpuset.New(),
+			expectedSlices:             1,
+			expectedDevicesPerNUMANode: map[int]int{0: 4},
+		},
+		{
+			name:                       "all cpus reserved",
+			cpuInfos:                   mockCPUInfos_SingleSocket_4CPUS_HT,
+			reservedCPUs:               cpuset.New(0, 1, 2, 3),
+			expectedSlices:             0,
+			expectedDevicesPerNUMANode: map[int]int{},
 		},
 		{
 			name:            "exceeds slice limit",
-			cpuInfos:        mockCPUInfos_ExceedsSliceLimit,
+			cpuInfos:        mockCPUInfos_SingleNUMANodeExceedsSliceLimit,
 			reservedCPUs:    cpuset.New(),
 			expectNilSlices: true,
 		},
@@ -229,17 +264,22 @@ func TestCreateCPUDeviceSlices(t *testing.T) {
 				}
 
 				cpuIDToDeviceName := make(map[int]string)
-				numaNodeToSlice := make(map[int][]resourceapi.Device)
+
 				seenCPUIDs := make(map[int]bool)
+				devicesPerNumaInSlices := make(map[int]int)
 
 				for _, slice := range slices {
 					require.NotEmpty(t, slice)
-					numaNode := *slice[0].Attributes["dra.cpu/numaNode"].IntValue
-					numaNodeToSlice[int(numaNode)] = slice
+
+					// If we expect more than one slice, all devices in a slice should belong to the same NUMA node.
+					if tc.expectedSlices > 1 {
+						numaNode := *slice[0].Attributes["dra.cpu/numaNode"].IntValue
+						for _, device := range slice {
+							require.Equal(t, numaNode, *device.Attributes["dra.cpu/numaNode"].IntValue)
+						}
+					}
 
 					for _, device := range slice {
-						require.Equal(t, numaNode, *device.Attributes["dra.cpu/numaNode"].IntValue)
-
 						cpuID := int(*device.Attributes["dra.cpu/cpuID"].IntValue)
 						require.False(t, seenCPUIDs[cpuID], "duplicate cpuID found in slices: %d", cpuID)
 						seenCPUIDs[cpuID] = true
@@ -253,15 +293,13 @@ func TestCreateCPUDeviceSlices(t *testing.T) {
 						require.Equal(t, info.CoreType.String(), *device.Attributes["dra.cpu/coreType"].StringValue)
 
 						cpuIDToDeviceName[cpuID] = device.Name
+						devicesPerNumaInSlices[info.NumaNode]++
 					}
 				}
 
-				require.Len(t, numaNodeToSlice, len(tc.expectedDevicesPerSlice))
-
-				for numaNode, numDevices := range tc.expectedDevicesPerSlice {
-					slice, ok := numaNodeToSlice[numaNode]
-					require.True(t, ok, "slice for numa node %d not found", numaNode)
-					require.Len(t, slice, numDevices)
+				require.Equal(t, len(tc.expectedDevicesPerNUMANode), len(devicesPerNumaInSlices))
+				for numaNode, numDevices := range tc.expectedDevicesPerNUMANode {
+					require.Equal(t, numDevices, devicesPerNumaInSlices[numaNode], "mismatch in device count for numa node %d", numaNode)
 				}
 
 				// Test if hyperthreads are given successive device names
@@ -328,12 +366,20 @@ func TestPublishResources(t *testing.T) {
 			expectedDevices:   len(mockCPUInfos_SingleSocket_Hybrid_HT),
 		},
 		{
-			name:              "dual socket, HT on, realistic numbering",
+			name:              "dual socket, 4 CPUs per socker, HT on",
 			cpuInfos:          mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 			reservedCPUs:      cpuset.New(),
 			expectPublish:     true,
-			expectedNumSlices: 2, // One slice per NUMA node
+			expectedNumSlices: 1, // We should create just one slice with all cpus from both the NUMA nodes.
 			expectedDevices:   len(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
+		},
+		{
+			name:              "dual socket, 120 CPUs per socker, HT on",
+			cpuInfos:          mockCPUInfos_DualSocket_120CPUsPerSocket_HT,
+			reservedCPUs:      cpuset.New(),
+			expectPublish:     true,
+			expectedNumSlices: 2, // We should create just 2 slices as number of CPUs on the machine exceeds 128.
+			expectedDevices:   len(mockCPUInfos_DualSocket_120CPUsPerSocket_HT),
 		},
 		{
 			name:          "no devices to publish",
@@ -358,7 +404,7 @@ func TestPublishResources(t *testing.T) {
 		},
 		{
 			name:              "error because devices on one NUMA > maxDevicesPerResourceSlice",
-			cpuInfos:          mockCPUInfos_ExceedsSliceLimit,
+			cpuInfos:          mockCPUInfos_SingleNUMANodeExceedsSliceLimit,
 			reservedCPUs:      cpuset.New(),
 			expectPublish:     false,
 			expectedNumSlices: 0,
