@@ -25,18 +25,48 @@ import (
 	"k8s.io/utils/cpuset"
 )
 
-func newTestCPUAllocationStore() (*CPUAllocationStore, cpuset.CPUSet) {
+func newTestCPUAllocationStore(reserved cpuset.CPUSet) (*CPUAllocationStore, cpuset.CPUSet) {
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	var infos []cpuinfo.CPUInfo
 	for _, cpuID := range allCPUs.UnsortedList() {
 		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NumaNode: 0})
 	}
 	mockProvider := &mockCPUInfoProvider{cpuInfos: infos}
-	return NewCPUAllocationStore(mockProvider), allCPUs
+	return NewCPUAllocationStore(mockProvider, reserved), allCPUs
+}
+
+func TestNewCPUAllocationStore(t *testing.T) {
+	testCases := []struct {
+		name               string
+		reservedCPUs       cpuset.CPUSet
+		expectedAllCPUs    cpuset.CPUSet
+		expectedSharedCPUs cpuset.CPUSet
+	}{
+		{
+			name:               "no reserved cpus",
+			reservedCPUs:       cpuset.New(),
+			expectedAllCPUs:    cpuset.New(0, 1, 2, 3, 4, 5, 6, 7),
+			expectedSharedCPUs: cpuset.New(0, 1, 2, 3, 4, 5, 6, 7),
+		},
+		{
+			name:               "with reserved cpus",
+			reservedCPUs:       cpuset.New(0, 1),
+			expectedAllCPUs:    cpuset.New(2, 3, 4, 5, 6, 7),
+			expectedSharedCPUs: cpuset.New(2, 3, 4, 5, 6, 7),
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _ := newTestCPUAllocationStore(tc.reservedCPUs)
+			require.NotNil(t, store)
+			require.True(t, store.availableCPUs.Equals(tc.expectedAllCPUs))
+			require.True(t, store.GetSharedCPUs().Equals(tc.expectedSharedCPUs))
+		})
+	}
 }
 
 func TestCPUAllocationStoreResourceClaimAllocation(t *testing.T) {
-	store, _ := newTestCPUAllocationStore()
+	store, _ := newTestCPUAllocationStore(cpuset.New())
 	claimUID := types.UID("claim-uid-1")
 	cpus := cpuset.New(0, 1)
 
@@ -54,16 +84,18 @@ func TestCPUAllocationStoreResourceClaimAllocation(t *testing.T) {
 }
 
 func TestCPUAllocationStoreGetSharedCPUs(t *testing.T) {
-	store, allCPUs := newTestCPUAllocationStore()
+	reserved := cpuset.New(0)
+	store, allCPUs := newTestCPUAllocationStore(reserved)
+	available := allCPUs.Difference(reserved)
 
 	// No allocations
-	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
+	require.True(t, store.GetSharedCPUs().Equals(available))
 
 	// With allocations
 	claimUID1 := types.UID("claim-uid-1")
 	cpus1 := cpuset.New(1, 2)
 	store.AddResourceClaimAllocation(claimUID1, cpus1)
-	expectedShared := allCPUs.Difference(cpus1)
+	expectedShared := available.Difference(cpus1)
 	require.True(t, store.GetSharedCPUs().Equals(expectedShared))
 
 	claimUID2 := types.UID("claim-uid-2")

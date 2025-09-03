@@ -27,12 +27,13 @@ import (
 // CPUAllocationStore is the single source of truth for CPU allocations.
 type CPUAllocationStore struct {
 	mu                       sync.RWMutex
-	allCPUs                  cpuset.CPUSet
+	availableCPUs            cpuset.CPUSet
+	reservedCPUs             cpuset.CPUSet
 	resourceClaimAllocations map[types.UID]cpuset.CPUSet
 }
 
 // NewCPUAllocationStore creates a new CPUAllocationStore.
-func NewCPUAllocationStore(provider CPUInfoProvider) *CPUAllocationStore {
+func NewCPUAllocationStore(provider CPUInfoProvider, reservedCPUs cpuset.CPUSet) *CPUAllocationStore {
 	cpuIDs := []int{}
 	cpuInfo, err := provider.GetCPUInfos()
 	if err != nil {
@@ -41,9 +42,12 @@ func NewCPUAllocationStore(provider CPUInfoProvider) *CPUAllocationStore {
 	for _, cpu := range cpuInfo {
 		cpuIDs = append(cpuIDs, cpu.CpuID)
 	}
-	allCPUs := cpuset.New(cpuIDs...)
+	allCPUsSet := cpuset.New(cpuIDs...)
+	availableCPUs := allCPUsSet.Difference(reservedCPUs)
+
 	return &CPUAllocationStore{
-		allCPUs:                  allCPUs,
+		availableCPUs:            availableCPUs,
+		reservedCPUs:             reservedCPUs,
 		resourceClaimAllocations: make(map[types.UID]cpuset.CPUSet),
 	}
 }
@@ -75,5 +79,5 @@ func (s *CPUAllocationStore) GetSharedCPUs() cpuset.CPUSet {
 	for _, cpus := range s.resourceClaimAllocations {
 		allocatedCPUs = allocatedCPUs.Union(cpus)
 	}
-	return s.allCPUs.Difference(allocatedCPUs)
+	return s.availableCPUs.Difference(allocatedCPUs)
 }

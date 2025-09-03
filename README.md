@@ -25,6 +25,12 @@ The driver is deployed as a DaemonSet which contains two core components:
   - It dynamically updates the shared pool as guaranteed containers are created
     or removed, ensuring efficient use of resources.
 
+## Configuration
+
+The driver can be configured with the following command-line flag:
+
+- `--reserved-cpus`: Specifies a set of CPUs to be reserved for system and kubelet processes. These CPUs will not be allocatable by the DRA driver. The value is a cpuset, e.g., `0-1`.
+
 ## Feature Support
 
 ### Currently Supported
