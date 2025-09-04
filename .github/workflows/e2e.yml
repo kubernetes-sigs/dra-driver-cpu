@@ -24,7 +24,7 @@ jobs:
     - name: Kind version check
       run: kind version
     - name: Create and setup K8S kind cluster
-      run: make kind-cluster kind-load-image
+      run: make kind-cluster kind-load-image ci-kind-load-image
     - name: Prepare CI manifests
       run: make ci-manifests
     - name: Deploy DRA CPU Driver plugin

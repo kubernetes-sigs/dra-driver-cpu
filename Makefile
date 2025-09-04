@@ -50,6 +50,7 @@ IMAGE_NAME=dra-driver-cpu
 # docker image registry, default to upstream
 REGISTRY := us-central1-docker.pkg.dev/k8s-staging-images
 STAGING_IMAGE_NAME := ${REGISTRY}/${IMAGE_NAME}
+TESTING_IMAGE_NAME := ${REGISTRY}/${IMAGE_NAME}-test
 # tag based on date-sha
 GIT_VERSION := $(shell date +v%Y%m%d)-$(shell git rev-parse --short HEAD)
 ifneq ($(shell git status --porcelain),)
@@ -59,6 +60,7 @@ TAG ?= $(GIT_VERSION)
 # the full image tag
 IMAGE_LATEST?=$(STAGING_IMAGE_NAME):latest
 IMAGE := ${STAGING_IMAGE_NAME}:${TAG}
+IMAGE_TESTING := "${TESTING_IMAGE_NAME}:${TAG}"
 PLATFORMS?=linux/amd64
 
 # required to enable buildx
@@ -80,7 +82,7 @@ push-image: build-image ## build and push image
 kind-cluster:  ## create kind cluster
 	kind create cluster --name ${CLUSTER_NAME} --config hack/kind.yaml
 
-kind-load-image:  ## load the current container image into kind
+kind-load-image: build-image  ## load the current container image into kind
 	kind load docker-image ${IMAGE} ${IMAGE_LATEST} --name ${CLUSTER_NAME}
 
 kind-uninstall-cpu-dra: ## remove cpu dra from kind cluster
@@ -94,7 +96,11 @@ delete-kind-cluster: ## delete kind cluster
 
 ci-kind-install: kind-uninstall-cpu-dra build-image kind-load-image ## install on CI cluster
 	kubectl create -f hack/ci/install-ci.yaml
+	kubectl label node ${CLUSTER_NAME}-worker node-role.kubernetes.io/worker=''
 	hack/ci/wait-resourcelices.sh
+
+ci-kind-load-image: build-test-image  ## load the testing container image into kind
+	kind load docker-image ${IMAGE_TESTING} --name ${CLUSTER_NAME}
 
 ci-manifests: install.yaml install-yq ## create the CI install manifests
 	@cd hack/ci && ../../bin/yq e -s '"_" + (.kind | downcase) + "-" + .metadata.name + ".yaml"' ../../install.yaml
@@ -110,8 +116,21 @@ ci-manifests: install.yaml install-yq ## create the CI install manifests
 		hack/ci/_deviceclass-dra.cpu.yaml \
 		> hack/ci/install-ci.yaml
 
-test-e2e-base:
-	go test -v ./test/e2e/
+build-test-image: ## build tests image
+	docker buildx build . \
+		--file test/image/Dockerfile \
+		--platform="${PLATFORMS}" \
+		--tag="${REGISTRY}/${IMAGE_NAME}-test:${TAG}" \
+		--load
+
+test-dracputester: ## build helper to serve as entry point and report cpu allocation
+	go build -v -o "$(OUT_DIR)/dracputester" ./test/image/dracputester
+
+test-dracpuinfo: ## build helper to expose hardware info in the internal dracpu format
+	go build -v -o "$(OUT_DIR)/dracpuinfo" ./test/image/dracpuinfo
+
+test-e2e-base: ## run e2e test base suite
+	env DRACPUINFO_IMAGE="$(IMAGE_TESTING)" go test -v ./test/e2e/ --ginkgo.v
 
 # dependencies
 .PHONY:
