@@ -130,7 +130,7 @@ test-dracpuinfo: ## build helper to expose hardware info in the internal dracpu 
 	go build -v -o "$(OUT_DIR)/dracpuinfo" ./test/image/dracpuinfo
 
 test-e2e-base: ## run e2e test base suite
-	env DRACPUINFO_IMAGE="$(IMAGE_TESTING)" go test -v ./test/e2e/ --ginkgo.v
+	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TESTING) go test -v ./test/e2e/ --ginkgo.v
 
 # dependencies
 .PHONY:
