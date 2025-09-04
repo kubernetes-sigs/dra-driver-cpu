@@ -38,8 +38,8 @@ build-dracpu: ## build dracpu
 clean: ## clean
 	rm -rf "$(OUT_DIR)/"
 
-test: ## run tests
-	CGO_ENABLED=1 go test -v -race -count 1 ./...
+test-unit: ## run tests
+	CGO_ENABLED=1 go test -v -race -count 1 ./pkg/...
 
 update: ## runs go mod tidy
 	go mod tidy
