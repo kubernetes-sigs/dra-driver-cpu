@@ -66,6 +66,25 @@ func (c CoreType) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s)
 }
 
+func (c *CoreType) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	key := strings.ToLower(s)
+	switch s {
+	case "standard":
+		*c = CoreTypeStandard
+	case "p-core":
+		*c = CoreTypePerformance
+	case "e-core":
+		*c = CoreTypeEfficiency
+	default:
+		return fmt.Errorf("unknown core type: %q", key)
+	}
+	return nil
+}
+
 // CPUInfo holds information about a single CPU.
 type CPUInfo struct {
 	// CpuID is the enumerated CPU ID
