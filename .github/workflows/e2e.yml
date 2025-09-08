@@ -1,0 +1,33 @@
+name: CI E2E
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  e2e-base:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup golang
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+    - name: Build container image
+      run: make build-image
+    - name: Kind version check
+      run: kind version
+    - name: Create and setup K8S kind cluster
+      run: make kind-cluster kind-load-image ci-kind-load-image
+    - name: Prepare CI manifests
+      run: make ci-manifests
+    - name: Deploy DRA CPU Driver plugin
+      run: make ci-kind-install
+    - name: run E2E tests
+      run: KUBECONFIG=${HOME}/.kube/config make test-e2e-base
