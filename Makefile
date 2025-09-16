@@ -46,10 +46,11 @@ update: ## runs go mod tidy
 
 # get image name from directory we're building
 CLUSTER_NAME=dra-driver-cpu
+STAGING_REPO_NAME=dra-driver-cpu
 IMAGE_NAME=dra-driver-cpu
 # docker image registry, default to upstream
 REGISTRY := us-central1-docker.pkg.dev/k8s-staging-images
-STAGING_IMAGE_NAME := ${REGISTRY}/${IMAGE_NAME}
+STAGING_IMAGE_NAME := ${REGISTRY}/${STAGING_REPO_NAME}/${IMAGE_NAME}
 TESTING_IMAGE_NAME := ${REGISTRY}/${IMAGE_NAME}-test
 # tag based on date-sha
 GIT_VERSION := $(shell date +v%Y%m%d)-$(shell git rev-parse --short HEAD)
