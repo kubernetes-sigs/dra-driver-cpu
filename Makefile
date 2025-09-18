@@ -67,6 +67,8 @@ STAGING_REPO_NAME=dra-driver-cpu
 IMAGE_NAME=dra-driver-cpu
 # docker image registry, default to upstream
 REGISTRY := us-central1-docker.pkg.dev/k8s-staging-images
+# this is an intentionally non-existent registry to be used only by local CI using the local image loading
+REGISTRY_CI := dev.kind.local/ci
 STAGING_IMAGE_NAME := ${REGISTRY}/${STAGING_REPO_NAME}/${IMAGE_NAME}
 TESTING_IMAGE_NAME := ${REGISTRY}/${IMAGE_NAME}-test
 # tag based on date-sha
@@ -79,6 +81,8 @@ TAG ?= $(GIT_VERSION)
 IMAGE_LATEST?=$(STAGING_IMAGE_NAME):latest
 IMAGE := ${STAGING_IMAGE_NAME}:${TAG}
 IMAGE_TESTING := "${TESTING_IMAGE_NAME}:${TAG}"
+IMAGE_CI := ${REGISTRY_CI}/${IMAGE_NAME}:${TAG}
+IMAGE_TEST := ${REGISTRY_CI}/${IMAGE_NAME}-test:${TAG}
 # target platform(s)
 PLATFORMS?=linux/amd64
 
@@ -92,8 +96,11 @@ build-image: ## build image
 		--platform="${PLATFORMS}" \
 		--tag="${IMAGE}" \
 		--tag="${IMAGE_LATEST}" \
+		--tag="${IMAGE_CI}" \
 		--load
 
+# no need to push the test image
+# never push the CI image! it intentionally refers to a non-existing registry
 push-image: build-image ## build and push image
 	docker push ${IMAGE}
 	docker push ${IMAGE_LATEST}
@@ -113,33 +120,33 @@ kind-install-cpu-dra: kind-uninstall-cpu-dra build-image kind-load-image ## inst
 delete-kind-cluster: ## delete kind cluster
 	kind delete cluster --name ${CLUSTER_NAME}
 
-ci-kind-install: kind-uninstall-cpu-dra build-image kind-load-image ## install on CI cluster
-	kubectl create -f hack/ci/install-ci.yaml
+ci-kind-setup: ci-manifests build-image build-test-image ## setup a CI cluster from scratch
+	kind create cluster --name ${CLUSTER_NAME} --config hack/ci/kind-ci.yaml
 	kubectl label node ${CLUSTER_NAME}-worker node-role.kubernetes.io/worker=''
+	kind load docker-image --name ${CLUSTER_NAME} ${IMAGE_CI} ${IMAGE_TEST}
+	kubectl create -f hack/ci/install-ci.yaml
 	hack/ci/wait-resourcelices.sh
 
-ci-kind-load-image: build-test-image  ## load the testing container image into kind
-	kind load docker-image ${IMAGE_TESTING} --name ${CLUSTER_NAME}
-
 ci-manifests: install.yaml install-yq ## create the CI install manifests
-	@cd hack/ci && $(YQ) e -s '"_" + (.kind | downcase) + "-" + .metadata.name + ".yaml"' ../../install.yaml
+	@cd hack/ci && $(YQ) e -s '(.kind | downcase) + "-" + .metadata.name + ".part.yaml"' ../../install.yaml
 	@# need to make kind load docker-image working as expected: see https://kind.sigs.k8s.io/docs/user/quick-start/#loading-an-image-into-your-cluster
-	@$(YQ) -i '.spec.template.spec.containers[0].imagePullPolicy = "IfNotPresent"' hack/ci/_daemonset-dracpu.yaml
-	@$(YQ) -i '.spec.template.spec.containers[0].image = "${IMAGE}"' hack/ci/_daemonset-dracpu.yaml
-	@$(YQ) -i '.spec.template.metadata.labels["build"] = "${GIT_VERSION}"' hack/ci/_daemonset-dracpu.yaml
+	@$(YQ) -i '.spec.template.spec.containers[0].imagePullPolicy = "IfNotPresent"' hack/ci/daemonset-dracpu.part.yaml
+	@$(YQ) -i '.spec.template.spec.containers[0].image = "${IMAGE_CI}"' hack/ci/daemonset-dracpu.part.yaml
+	@$(YQ) -i '.spec.template.metadata.labels["build"] = "${GIT_VERSION}"' hack/ci/daemonset-dracpu.part.yaml
 	@$(YQ) '.' \
-		hack/ci/_clusterrole-dracpu.yaml \
-		hack/ci/_serviceaccount-dracpu.yaml \
-		hack/ci/_clusterrolebinding-dracpu.yaml \
-		hack/ci/_daemonset-dracpu.yaml \
-		hack/ci/_deviceclass-dra.cpu.yaml \
+		hack/ci/clusterrole-dracpu.part.yaml \
+		hack/ci/serviceaccount-dracpu.part.yaml \
+		hack/ci/clusterrolebinding-dracpu.part.yaml \
+		hack/ci/daemonset-dracpu.part.yaml \
+		hack/ci/deviceclass-dra.cpu.part.yaml \
 		> hack/ci/install-ci.yaml
+	@rm hack/ci/*.part.yaml
 
 build-test-image: ## build tests image
 	docker buildx build . \
 		--file test/image/Dockerfile \
 		--platform="${PLATFORMS}" \
-		--tag="${REGISTRY}/${IMAGE_NAME}-test:${TAG}" \
+		--tag="${IMAGE_TEST}" \
 		--load
 
 test-dracputester: ## build helper to serve as entry point and report cpu allocation
@@ -149,7 +156,7 @@ test-dracpuinfo: ## build helper to expose hardware info in the internal dracpu 
 	go build -v -o "$(OUT_DIR)/dracpuinfo" ./test/image/dracpuinfo
 
 test-e2e-base: ## run e2e test base suite
-	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TESTING) go test -v ./test/e2e/ --ginkgo.v
+	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) go test -v ./test/e2e/ --ginkgo.v
 
 lint:  ## run the linter against the codebase
 	$(GOLANGCI_LINT) run ./...
