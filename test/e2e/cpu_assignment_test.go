@@ -64,6 +64,7 @@ var _ = ginkgo.Describe("CPU Assignment", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 	var targetNodeCPUInfo discovery.DRACPUInfo
 	var availableCPUs cpuset.CPUSet
 	var dracpuTesterImage string
+	var reservedCPUs cpuset.CPUSet
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
 		// early cheap check before to create the Fixture, so we use GinkgoLogr directly
@@ -72,6 +73,12 @@ var _ = ginkgo.Describe("CPU Assignment", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		ginkgo.GinkgoLogr.Info("discovery image", "pullSpec", dracpuTesterImage)
 
 		var err error
+		if reservedCPUVal := os.Getenv("DRACPU_E2E_RESERVED_CPUS"); len(reservedCPUVal) > 0 {
+			reservedCPUs, err = cpuset.Parse(reservedCPUVal)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			ginkgo.GinkgoLogr.Info("reserved CPUs", "value", reservedCPUs.String())
+		}
+
 		rootFxt, err = fixture.ForGinkgo()
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create root fixture: %v", err)
 		infraFxt := rootFxt.WithPrefix("infra")
@@ -97,8 +104,9 @@ var _ = ginkgo.Describe("CPU Assignment", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs from discovery pod: %v", err)
 		gomega.Expect(json.Unmarshal([]byte(data), &targetNodeCPUInfo)).To(gomega.Succeed())
 
-		availableCPUs = makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
-		rootFxt.Log.Info("checking worker node", "coreCount", len(targetNodeCPUInfo.CPUs), "availableCPUs", availableCPUs.String(), "nodeName", infoPod.Spec.NodeName)
+		allocatableCPUs := makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
+		availableCPUs = allocatableCPUs.Difference(reservedCPUs)
+		rootFxt.Log.Info("checking worker node", "nodeName", infoPod.Spec.NodeName, "coreCount", len(targetNodeCPUInfo.CPUs), "allocatableCPUs", allocatableCPUs.String(), "availableCPUs", availableCPUs.String())
 	})
 
 	ginkgo.When("setting resource claims", func() {
@@ -160,7 +168,7 @@ var _ = ginkgo.Describe("CPU Assignment", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				sharedPodPre, err = e2epod.CreateSync(ctx, fxt.K8SClientset, sharedPodPre)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create tester pod: %v", err)
 
-				ginkgo.By("checking the best-effort reference pod has access to all the node CPUs through the shared pool")
+				ginkgo.By("checking the best-effort reference pod has access to all the non-reserved node CPUs through the shared pool")
 				sharedAllocPre := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, sharedPodPre)
 				rootFxt.Log.Info("checking shared allocation", "pod", identifyPod(sharedPodPre), "cpuAllocated", sharedAllocPre.CPUAssigned.String())
 				unallocatedCPUs := availableCPUs.Difference(sharedAllocPre.CPUAssigned)
