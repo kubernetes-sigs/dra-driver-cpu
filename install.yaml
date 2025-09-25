@@ -169,9 +169,6 @@ spec:
           mountPath: /var/lib/kubelet/plugins_registry
         - name: nri-plugin
           mountPath: /var/run/nri
-        - name: pod-resources-socket
-          mountPath: /var/lib/kubelet/pod-resources
-          readOnly: true
         - name: cdi-dir
           mountPath: /var/run/cdi
       volumes:
@@ -193,9 +190,6 @@ spec:
       - name: etc
         hostPath:
           path: /etc
-      - name: pod-resources-socket
-        hostPath:
-          path: /var/lib/kubelet/pod-resources
       - name: cdi-dir
         hostPath:
           path: /var/run/cdi
