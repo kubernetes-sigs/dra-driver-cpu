@@ -31,6 +31,10 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
+func By(format string, args ...any) {
+	ginkgo.By(fmt.Sprintf(format, args...))
+}
+
 type Fixture struct {
 	Prefix       string
 	K8SClientset kubernetes.Interface

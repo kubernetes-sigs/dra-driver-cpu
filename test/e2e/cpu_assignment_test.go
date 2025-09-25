@@ -126,13 +126,13 @@ var _ = ginkgo.Describe("CPU Assignment", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 			// TODO: check and ensure cpumanager configuration?
 
 			ginkgo.JustBeforeEach(func(ctx context.Context) {
-				ginkgo.By(fmt.Sprintf("checking the target nodes has at least %d allocatable cpus", minCPUCountForExclusiveAllocation))
+				fixture.By("checking the target nodes has at least %d allocatable cpus", minCPUCountForExclusiveAllocation)
 				if len(targetNodeCPUInfo.CPUs) < minCPUCountForExclusiveAllocation {
 					ginkgo.Skip(fmt.Sprintf("exclusive allocation tests require at least %d cpus in the worker node", minCPUCountForExclusiveAllocation))
 				}
 
 				cpuCount := 2
-				ginkgo.By(fmt.Sprintf("creating a resource claim for %d cpus", cpuCount))
+				fixture.By("creating a resource claim for %d cpus", cpuCount)
 
 				claim := resourcev1.ResourceClaim{
 					ObjectMeta: metav1.ObjectMeta{
@@ -163,47 +163,49 @@ var _ = ginkgo.Describe("CPU Assignment", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				ginkgo.By("creating a best-effort reference pod")
 
 				var err error
-				sharedPodPre := makeTesterPodBestEffort(fxt.Namespace.Name, dracpuTesterImage)
-				sharedPodPre = pinPodToNode(sharedPodPre, targetNode.Name)
-				sharedPodPre, err = e2epod.CreateSync(ctx, fxt.K8SClientset, sharedPodPre)
+
+				fixture.By("creating a best-effort reference pod")
+				shrPod1 := makeTesterPodBestEffort(fxt.Namespace.Name, dracpuTesterImage)
+				shrPod1 = pinPodToNode(shrPod1, targetNode.Name)
+				shrPod1, err = e2epod.CreateSync(ctx, fxt.K8SClientset, shrPod1)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create tester pod: %v", err)
 
-				ginkgo.By("checking the best-effort reference pod has access to all the non-reserved node CPUs through the shared pool")
-				sharedAllocPre := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, sharedPodPre)
-				rootFxt.Log.Info("checking shared allocation", "pod", identifyPod(sharedPodPre), "cpuAllocated", sharedAllocPre.CPUAssigned.String())
+				fixture.By("checking the best-effort reference pod %s has access to all the non-reserved node CPUs through the shared pool", identifyPod(shrPod1))
+				sharedAllocPre := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, shrPod1)
+				fxt.Log.Info("checking shared allocation", "pod", identifyPod(shrPod1), "cpuAllocated", sharedAllocPre.CPUAssigned.String(), "cpuAffinity", sharedAllocPre.CPUAffinity.String())
 				unallocatedCPUs := availableCPUs.Difference(sharedAllocPre.CPUAssigned)
 				gomega.Expect(unallocatedCPUs.Size()).To(gomega.BeZero(), "available CPUs not in the shared pool: %v", unallocatedCPUs.String())
 
-				ginkgo.By("creating a guaranteed pod getting exclusive CPUs from the resource claim")
+				fixture.By("creating a guaranteed pod getting exclusive CPUs from the resource claim")
 				exclPod := makeTesterPodWithExclusiveCPUClaim(fxt.Namespace.Name, dracpuTesterImage, exclCPUClaim)
 				exclPod = pinPodToNode(exclPod, targetNode.Name)
 				exclPod, err = e2epod.CreateSync(ctx, fxt.K8SClientset, exclPod)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create tester pod: %v", err)
 
-				ginkgo.By("checking the pod with exclusive CPUs has access to amount of CPUs requested in the claim")
-				gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get the CPUs allocated to tester pod %s/%s", exclPod.Namespace, exclPod.Name)
+				fixture.By("checking the pod %s with exclusive CPUs has access to amount of CPUs requested in the claim", identifyPod(exclPod))
+				gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get the CPUs allocated to tester pod %s", identifyPod(exclPod))
 				exclusiveAlloc := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, exclPod)
 				gomega.Expect(int64(exclusiveAlloc.CPUAssigned.Size())).To(gomega.Equal(exclCPUClaim.Spec.Devices.Requests[0].Exactly.Count))
-				rootFxt.Log.Info("checking exclusive allocation", "pod", identifyPod(exclPod), "cpus", exclusiveAlloc.CPUAssigned.String())
+				fxt.Log.Info("checking exclusive allocation", "pod", identifyPod(exclPod), "cpus", exclusiveAlloc.CPUAssigned.String(), "sharedPool", sharedAllocPre.CPUAssigned.String(), "unallocated", unallocatedCPUs.String())
 
-				ginkgo.By("checking the shared pool does not include anymore the exclusively allocated CPUs")
+				fixture.By("checking the shared pool does not include anymore the exclusively allocated CPUs")
 				expectedSharedCPUs := availableCPUs.Difference(exclusiveAlloc.CPUAssigned)
 
-				ginkgo.By("creating a second best-effort reference pod")
-				sharedPodPost := makeTesterPodBestEffort(fxt.Namespace.Name, dracpuTesterImage)
-				sharedPodPost = pinPodToNode(sharedPodPost, targetNode.Name)
-				sharedPodPost, err = e2epod.CreateSync(ctx, fxt.K8SClientset, sharedPodPost)
+				fixture.By("creating a second best-effort reference pod")
+				shrPod2 := makeTesterPodBestEffort(fxt.Namespace.Name, dracpuTesterImage)
+				shrPod2 = pinPodToNode(shrPod2, targetNode.Name)
+				shrPod2, err = e2epod.CreateSync(ctx, fxt.K8SClientset, shrPod2)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create the second tester pod: %v", err)
 
 				ginkgo.By("checking the second best-effort pod has access to all the non-exclusively-allocated node CPUs through the shared pool")
-				sharedAllocPost := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, sharedPodPost)
-				rootFxt.Log.Info("checking shared allocation", "pod", identifyPod(sharedPodPost), "cpuAllocated", sharedAllocPost.CPUAssigned.String())
+				sharedAllocPost := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, shrPod2)
+				rootFxt.Log.Info("checking shared allocation", "pod", identifyPod(shrPod2), "cpuAllocated", sharedAllocPost.CPUAssigned.String())
 				gomega.Expect(expectedSharedCPUs.Equals(sharedAllocPost.CPUAssigned)).To(gomega.BeTrue(), "the second best-effort tester pod does not have the expected shared CPUs: %v got: %v", expectedSharedCPUs.String(), sharedAllocPost.CPUAssigned.String())
 
 				ginkgo.By("checking the CPU pool of the best-effort pod created before the pod with CPU resource claims")
 				gomega.Eventually(func() error {
-					sharedAllocPreUpdated := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, sharedPodPre)
-					rootFxt.Log.Info("checking shared allocation", "pod", identifyPod(sharedPodPre), "cpuAllocated", sharedAllocPreUpdated.CPUAssigned.String())
+					sharedAllocPreUpdated := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, shrPod1)
+					rootFxt.Log.Info("checking shared allocation", "pod", identifyPod(shrPod1), "cpuAllocated", sharedAllocPreUpdated.CPUAssigned.String())
 					if !expectedSharedCPUs.Equals(sharedAllocPreUpdated.CPUAssigned) {
 						return fmt.Errorf("shared CPUs mismatch: expected %v got %v", expectedSharedCPUs.String(), sharedAllocPreUpdated.CPUAssigned.String())
 					}
