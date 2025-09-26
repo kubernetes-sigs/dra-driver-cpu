@@ -34,6 +34,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	nodeutil "k8s.io/component-helpers/node/util"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/cpuset"
 )
 
 const (
@@ -44,12 +45,14 @@ var (
 	hostnameOverride string
 	kubeconfig       string
 	bindAddress      string
+	reservedCPUs     string
 	ready            atomic.Bool
 )
 
 func init() {
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
 	flag.StringVar(&hostnameOverride, "hostname-override", "", "If non-empty, will be used as the name of the Node that kube-network-policies is running on. If unset, the node name is assumed to be the same as the node's hostname.")
+	flag.StringVar(&reservedCPUs, "reserved-cpus", "", "cpuset of CPUs to be excluded from ResourceSlice.")
 }
 
 func main() {
@@ -60,6 +63,11 @@ func main() {
 	flag.VisitAll(func(f *flag.Flag) {
 		klog.Infof("FLAG: --%s=%q", f.Name, f.Value)
 	})
+
+	reservedCPUSet, err := cpuset.Parse(reservedCPUs)
+	if err != nil {
+		klog.Fatalf("failed to parse reserved CPUs: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	// Add healthz handler
@@ -86,7 +94,6 @@ func main() {
 	}()
 
 	var config *rest.Config
-	var err error
 	if kubeconfig != "" {
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 	} else {
@@ -125,7 +132,12 @@ func main() {
 	}()
 	signal.Notify(signalCh, os.Interrupt, unix.SIGINT)
 
-	dracpu, err := driver.Start(ctx, driverName, clientset, nodeName)
+	driverConfig := &driver.Config{
+		DriverName:   driverName,
+		NodeName:     nodeName,
+		ReservedCPUs: reservedCPUSet,
+	}
+	dracpu, err := driver.Start(ctx, clientset, driverConfig)
 	if err != nil {
 		klog.Fatalf("driver failed to start: %v", err)
 	}

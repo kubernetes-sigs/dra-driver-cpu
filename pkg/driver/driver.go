@@ -30,6 +30,7 @@ import (
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/cpuset"
 )
 
 const (
@@ -56,39 +57,50 @@ type CPUInfoProvider interface {
 
 // CPUDriver is the structure that holds all the driver runtime information.
 type CPUDriver struct {
-	driverName        string
-	nodeName          string
-	kubeClient        kubernetes.Interface
-	draPlugin         KubeletPlugin
-	nriPlugin         stub.Stub
-	podConfigStore    *PodConfigStore
-	cdiMgr            cdiManager
-	cpuIDToDeviceName map[int]string
-	deviceNameToCPUID map[string]int
-	cpuInfoProvider   CPUInfoProvider
+	driverName         string
+	nodeName           string
+	kubeClient         kubernetes.Interface
+	draPlugin          KubeletPlugin
+	nriPlugin          stub.Stub
+	podConfigStore     *PodConfigStore
+	cdiMgr             cdiManager
+	cpuIDToDeviceName  map[int]string
+	deviceNameToCPUID  map[string]int
+	cpuInfoProvider    CPUInfoProvider
+	cpuAllocationStore *CPUAllocationStore
+	reservedCPUs       cpuset.CPUSet
+}
+
+// Config is the configuration for the CPUDriver.
+type Config struct {
+	DriverName   string
+	NodeName     string
+	ReservedCPUs cpuset.CPUSet
 }
 
 // Start creates and starts a new CPUDriver.
-func Start(ctx context.Context, driverName string, kubeClient kubernetes.Interface, nodeName string) (*CPUDriver, error) {
+func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) (*CPUDriver, error) {
 	plugin := &CPUDriver{
-		driverName:        driverName,
-		nodeName:          nodeName,
-		kubeClient:        kubeClient,
+		driverName:        config.DriverName,
+		nodeName:          config.NodeName,
+		kubeClient:        clientset,
 		cpuIDToDeviceName: make(map[int]string),
 		deviceNameToCPUID: make(map[string]int),
 		cpuInfoProvider:   cpuinfo.NewSystemCPUInfo(),
+		reservedCPUs:      config.ReservedCPUs,
 	}
-	plugin.podConfigStore = NewPodConfigStore(plugin.cpuInfoProvider)
+	plugin.cpuAllocationStore = NewCPUAllocationStore(plugin.cpuInfoProvider, config.ReservedCPUs)
+	plugin.podConfigStore = NewPodConfigStore()
 
-	driverPluginPath := filepath.Join(kubeletPluginPath, driverName)
+	driverPluginPath := filepath.Join(kubeletPluginPath, config.DriverName)
 	if err := os.MkdirAll(driverPluginPath, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create plugin path %s: %w", driverPluginPath, err)
 	}
 
 	kubeletOpts := []kubeletplugin.Option{
-		kubeletplugin.DriverName(driverName),
-		kubeletplugin.NodeName(nodeName),
-		kubeletplugin.KubeClient(kubeClient),
+		kubeletplugin.DriverName(config.DriverName),
+		kubeletplugin.NodeName(config.NodeName),
+		kubeletplugin.KubeClient(clientset),
 	}
 	d, err := kubeletplugin.Start(ctx, plugin, kubeletOpts...)
 	if err != nil {
@@ -106,7 +118,7 @@ func Start(ctx context.Context, driverName string, kubeClient kubernetes.Interfa
 		return nil, err
 	}
 
-	cdiMgr, err := NewCdiManager(driverName)
+	cdiMgr, err := NewCdiManager(config.DriverName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CDI manager: %w", err)
 	}
@@ -114,12 +126,12 @@ func Start(ctx context.Context, driverName string, kubeClient kubernetes.Interfa
 
 	// register the NRI plugin
 	nriOpts := []stub.Option{
-		stub.WithPluginName(driverName),
+		stub.WithPluginName(config.DriverName),
 		stub.WithPluginIdx("00"),
 		// https://github.com/containerd/nri/pull/173
 		// Otherwise it silently exits the program
 		stub.WithOnClose(func() {
-			klog.Infof("%s NRI plugin closed", driverName)
+			klog.Infof("%s NRI plugin closed", config.DriverName)
 		}),
 	}
 	stub, err := stub.New(plugin, nriOpts...)

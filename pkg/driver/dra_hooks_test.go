@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
+	"k8s.io/utils/cpuset"
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
 )
 
@@ -120,10 +121,38 @@ var (
 		{CpuID: 6, CoreID: 2, SocketID: 1, NumaNode: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 2},
 		{CpuID: 7, CoreID: 3, SocketID: 1, NumaNode: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 3},
 	}
-	mockCPUInfos_ExceedsSliceLimit = func() []cpuinfo.CPUInfo {
+	mockCPUInfos_SingleNUMANodeExceedsSliceLimit = func() []cpuinfo.CPUInfo {
 		var infos []cpuinfo.CPUInfo
 		for i := 0; i < maxDevicesPerResourceSlice+1; i++ {
 			infos = append(infos, cpuinfo.CPUInfo{CpuID: i, CoreID: i, SocketID: 0, NumaNode: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1})
+		}
+		return infos
+	}()
+	mockCPUInfos_DualSocket_120CPUsPerSocket_HT = func() []cpuinfo.CPUInfo {
+		var infos []cpuinfo.CPUInfo
+		numCores := 120
+		for socketID := 0; socketID < 2; socketID++ {
+			for coreID := 0; coreID < numCores/2; coreID++ {
+				baseCpuID := socketID * numCores
+				infos = append(infos, cpuinfo.CPUInfo{
+					CpuID:        baseCpuID + coreID*2,
+					CoreID:       coreID,
+					SocketID:     socketID,
+					NumaNode:     socketID,
+					CoreType:     cpuinfo.CoreTypePerformance,
+					SiblingCpuID: baseCpuID + coreID*2 + 1,
+				})
+
+				// Create the second logical CPU (thread 1) on the same core
+				infos = append(infos, cpuinfo.CPUInfo{
+					CpuID:        baseCpuID + coreID*2 + 1,
+					CoreID:       coreID,
+					SocketID:     socketID,
+					NumaNode:     socketID,
+					CoreType:     cpuinfo.CoreTypePerformance,
+					SiblingCpuID: baseCpuID + coreID*2,
+				})
+			}
 		}
 		return infos
 	}()
@@ -131,66 +160,116 @@ var (
 
 func TestPublishResources(t *testing.T) {
 	testCases := []struct {
-		name              string
-		cpuInfos          []cpuinfo.CPUInfo
-		cpuInfoErr        error
-		publishError      error
-		expectPublish     bool
-		expectedNumSlices int
-		expectedDevices   int
+		name                       string
+		cpuInfos                   []cpuinfo.CPUInfo
+		cpuInfoErr                 error
+		publishError               error
+		reservedCPUs               cpuset.CPUSet
+		expectPublish              bool
+		expectedNumSlices          int
+		expectedDevices            int
+		expectedDevicesPerNUMANode map[int]int
 	}{
 		{
-			name:              "single socket, HT on",
-			cpuInfos:          mockCPUInfos_SingleSocket_4CPUS_HT,
-			expectPublish:     true,
-			expectedNumSlices: 1,
-			expectedDevices:   len(mockCPUInfos_SingleSocket_4CPUS_HT),
+			name:                       "single socket, HT on",
+			cpuInfos:                   mockCPUInfos_SingleSocket_4CPUS_HT,
+			reservedCPUs:               cpuset.New(),
+			expectPublish:              true,
+			expectedNumSlices:          1,
+			expectedDevices:            len(mockCPUInfos_SingleSocket_4CPUS_HT),
+			expectedDevicesPerNUMANode: map[int]int{0: 4},
 		},
 		{
-			name:              "single socket, HT off",
-			cpuInfos:          mockCPUInfos_SingleSocket_4CPUs_HT_Off,
-			expectPublish:     true,
-			expectedNumSlices: 1,
-			expectedDevices:   len(mockCPUInfos_SingleSocket_4CPUs_HT_Off),
+			name:                       "dual socket, HT on, 1 CPU reserved",
+			cpuInfos:                   mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			reservedCPUs:               cpuset.New(0),
+			expectPublish:              true,
+			expectedNumSlices:          1, // 1 slice with CPUs from all the NUMA nodes
+			expectedDevices:            len(mockCPUInfos_DualSocket_4CPUsPerSocket_HT) - 1,
+			expectedDevicesPerNUMANode: map[int]int{0: 3, 1: 4},
 		},
 		{
-			name:              "single socket, hybrid",
-			cpuInfos:          mockCPUInfos_SingleSocket_Hybrid_HT,
-			expectPublish:     true,
-			expectedNumSlices: 1,
-			expectedDevices:   len(mockCPUInfos_SingleSocket_Hybrid_HT),
+			name:                       "single socket, HT off",
+			cpuInfos:                   mockCPUInfos_SingleSocket_4CPUs_HT_Off,
+			reservedCPUs:               cpuset.New(),
+			expectPublish:              true,
+			expectedNumSlices:          1,
+			expectedDevices:            len(mockCPUInfos_SingleSocket_4CPUs_HT_Off),
+			expectedDevicesPerNUMANode: map[int]int{0: 4},
 		},
 		{
-			name:              "dual socket, HT on, realistic numbering",
-			cpuInfos:          mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
-			expectPublish:     true,
-			expectedNumSlices: 2, // One slice per NUMA node
-			expectedDevices:   len(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
+			name:                       "single socket, hybrid",
+			cpuInfos:                   mockCPUInfos_SingleSocket_Hybrid_HT,
+			reservedCPUs:               cpuset.New(),
+			expectPublish:              true,
+			expectedNumSlices:          1,
+			expectedDevices:            len(mockCPUInfos_SingleSocket_Hybrid_HT),
+			expectedDevicesPerNUMANode: map[int]int{0: 4},
+		},
+		{
+			name:                       "dual socket, 4 CPUs per socker, HT on",
+			cpuInfos:                   mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			reservedCPUs:               cpuset.New(),
+			expectPublish:              true,
+			expectedNumSlices:          1, // We should create just one slice with all cpus from both the NUMA nodes.
+			expectedDevices:            len(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
+			expectedDevicesPerNUMANode: map[int]int{0: 4, 1: 4},
+		},
+		{
+			name:                       "dual socket, 120 CPUs per socker, HT on",
+			cpuInfos:                   mockCPUInfos_DualSocket_120CPUsPerSocket_HT,
+			reservedCPUs:               cpuset.New(),
+			expectPublish:              true,
+			expectedNumSlices:          2, // We should create 2 slices as number of CPUs on the machine exceeds 128.
+			expectedDevices:            len(mockCPUInfos_DualSocket_120CPUsPerSocket_HT),
+			expectedDevicesPerNUMANode: map[int]int{0: 120, 1: 120},
 		},
 		{
 			name:          "no devices to publish",
 			cpuInfos:      []cpuinfo.CPUInfo{},
+			reservedCPUs:  cpuset.New(),
 			expectPublish: false,
 		},
 		{
 			name:          "error getting cpu info",
 			cpuInfoErr:    fmt.Errorf("cpuinfo error"),
+			reservedCPUs:  cpuset.New(),
 			expectPublish: false,
 		},
 		{
 			name:              "error publishing",
 			cpuInfos:          mockCPUInfos_SingleSocket_4CPUS_HT,
 			publishError:      fmt.Errorf("publish error"),
+			reservedCPUs:      cpuset.New(),
 			expectPublish:     true,
 			expectedNumSlices: 1,
 			expectedDevices:   len(mockCPUInfos_SingleSocket_4CPUS_HT),
 		},
 		{
 			name:              "error because devices on one NUMA > maxDevicesPerResourceSlice",
-			cpuInfos:          mockCPUInfos_ExceedsSliceLimit,
+			cpuInfos:          mockCPUInfos_SingleNUMANodeExceedsSliceLimit,
+			reservedCPUs:      cpuset.New(),
 			expectPublish:     false,
 			expectedNumSlices: 0,
 			expectedDevices:   0,
+		},
+		{
+			name:                       "publish with reserved cpus",
+			cpuInfos:                   mockCPUInfos_SingleSocket_4CPUS_HT,
+			reservedCPUs:               cpuset.New(0, 1),
+			expectPublish:              true,
+			expectedNumSlices:          1,
+			expectedDevices:            len(mockCPUInfos_SingleSocket_4CPUS_HT) - 2,
+			expectedDevicesPerNUMANode: map[int]int{0: 2},
+		},
+		{
+			name:                       "all cpus reserved",
+			cpuInfos:                   mockCPUInfos_SingleSocket_4CPUS_HT,
+			reservedCPUs:               cpuset.New(0, 1, 2, 3),
+			expectPublish:              false,
+			expectedNumSlices:          0, // No cpus to publish in ResourceSlice
+			expectedDevices:            0,
+			expectedDevicesPerNUMANode: map[int]int{},
 		},
 	}
 
@@ -204,6 +283,7 @@ func TestPublishResources(t *testing.T) {
 				cpuIDToDeviceName: make(map[int]string),
 				deviceNameToCPUID: make(map[string]int),
 				cpuInfoProvider:   mockProvider,
+				reservedCPUs:      tc.reservedCPUs,
 			}
 
 			cp.PublishResources(context.Background())
@@ -241,10 +321,26 @@ func TestPublishResources(t *testing.T) {
 			require.Equal(t, tc.expectedDevices, len(cp.deviceNameToCPUID))
 
 			// Verify device attributes
+			cpuInfosMap := make(map[int]cpuinfo.CPUInfo)
+			for _, info := range tc.cpuInfos {
+				cpuInfosMap[info.CpuID] = info
+			}
+			devicesPerNumaInSlices := make(map[int]int)
+			seenCPUIDs := make(map[int]bool)
 			for _, slice := range pool.Slices {
+				// If we expect more than one slice, all devices in a slice should belong to the same NUMA node.
+				if tc.expectedNumSlices > 1 {
+					numaNode := *slice.Devices[0].Attributes["dra.cpu/numaNode"].IntValue
+					for _, device := range slice.Devices {
+						require.Equal(t, numaNode, *device.Attributes["dra.cpu/numaNode"].IntValue)
+					}
+				}
+
 				for _, device := range slice.Devices {
 					cpuID, ok := cp.deviceNameToCPUID[device.Name]
 					require.True(t, ok)
+					require.False(t, seenCPUIDs[cpuID], "duplicate cpuID found in slices: %d", cpuID)
+					seenCPUIDs[cpuID] = true
 
 					var cpuInfo *cpuinfo.CPUInfo
 					for i := range tc.cpuInfos {
@@ -260,17 +356,47 @@ func TestPublishResources(t *testing.T) {
 					coreType := cpuInfo.CoreType.String()
 					socketID := int64(cpuInfo.SocketID)
 
-					require.Equal(t, &numaNode, device.Attributes["dra.cpu/numaNode"].IntValue)
-					require.Equal(t, &l3CacheID, device.Attributes["dra.cpu/l3CacheID"].IntValue)
-					require.Equal(t, &coreType, device.Attributes["dra.cpu/coreType"].StringValue)
-					require.Equal(t, &socketID, device.Attributes["dra.cpu/socketID"].IntValue)
+					require.Equal(t, numaNode, *device.Attributes["dra.cpu/numaNode"].IntValue)
+					require.Equal(t, l3CacheID, *device.Attributes["dra.cpu/l3CacheID"].IntValue)
+					require.Equal(t, coreType, *device.Attributes["dra.cpu/coreType"].StringValue)
+					require.Equal(t, socketID, *device.Attributes["dra.cpu/socketID"].IntValue)
+					devicesPerNumaInSlices[cpuInfo.NumaNode]++
 				}
+			}
+			require.Equal(t, len(tc.expectedDevicesPerNUMANode), len(devicesPerNumaInSlices))
+			for numaNode, numDevices := range tc.expectedDevicesPerNUMANode {
+				require.Equal(t, numDevices, devicesPerNumaInSlices[numaNode], "mismatch in device count for numa node %d", numaNode)
+			}
+
+			// Test if hyperthreads are given successive device names
+			for _, info := range tc.cpuInfos {
+				if info.SiblingCpuID == -1 || info.CpuID > info.SiblingCpuID {
+					continue
+				}
+
+				if tc.reservedCPUs.Contains(info.CpuID) || tc.reservedCPUs.Contains(info.SiblingCpuID) {
+					continue
+				}
+
+				deviceName1, ok := cp.cpuIDToDeviceName[info.CpuID]
+				require.True(t, ok, "device for cpuID %d not found in slices", info.CpuID)
+				deviceName2, ok := cp.cpuIDToDeviceName[info.SiblingCpuID]
+				require.True(t, ok, "device for sibling cpuID %d not found in slices", info.SiblingCpuID)
+
+				var devNum1, devNum2 int
+				_, err := fmt.Sscanf(deviceName1, "cpudev%d", &devNum1)
+				require.NoError(t, err)
+				_, err = fmt.Sscanf(deviceName2, "cpudev%d", &devNum2)
+				require.NoError(t, err)
+
+				require.Equal(t, devNum1+1, devNum2, "hyperthread device names are not successive for core %d (cpus %d, %d)", info.CoreID, info.CpuID, info.SiblingCpuID)
 			}
 		})
 	}
 }
 
 func TestPrepareResourceClaims(t *testing.T) {
+	mockProvider := &mockCPUInfoProvider{cpuInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
 	baseCPUDriver := func() *CPUDriver {
 		return &CPUDriver{
 			driverName: testDriverName,
@@ -278,12 +404,13 @@ func TestPrepareResourceClaims(t *testing.T) {
 				"cpudev0": 0,
 				"cpudev1": 1,
 			},
+			cpuAllocationStore: NewCPUAllocationStore(mockProvider, cpuset.New()),
 		}
 	}
 
-	successClaimUID := types.UID("claim-1")
-	successCDIDeviceName := getCDIDeviceName(successClaimUID)
-	successCDIQualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, successCDIDeviceName)
+	claimUID := types.UID("claim-1")
+	cdiDeviceName := getCDIDeviceName(claimUID)
+	cdiQualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, cdiDeviceName)
 
 	testCases := []struct {
 		name                    string
@@ -302,7 +429,7 @@ func TestPrepareResourceClaims(t *testing.T) {
 			driver: baseCPUDriver(),
 			claims: []*resourceapi.ResourceClaim{
 				{
-					ObjectMeta: metav1.ObjectMeta{UID: successClaimUID, Name: "my-claim"},
+					ObjectMeta: metav1.ObjectMeta{UID: claimUID, Name: "my-claim"},
 					Status: resourceapi.ResourceClaimStatus{
 						Allocation: &resourceapi.AllocationResult{
 							Devices: resourceapi.DeviceAllocationResult{
@@ -317,11 +444,11 @@ func TestPrepareResourceClaims(t *testing.T) {
 			},
 			expectedResultsCount:    1,
 			expectedCdiDevicesCount: 1,
-			expectedCdiDevice:       successCDIDeviceName,
-			expectedCdiEnvVar:       fmt.Sprintf("%s_claim_%s=%s", cdiEnvVarPrefix, "my-claim", "0-1"),
+			expectedCdiDevice:       cdiDeviceName,
+			expectedCdiEnvVar:       fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, "0-1"),
 			expectedPreparedDevices: []kubeletplugin.Device{
-				{PoolName: testNodeName, DeviceName: "cpudev0", CDIDeviceIDs: []string{successCDIQualifiedName}},
-				{PoolName: testNodeName, DeviceName: "cpudev1", CDIDeviceIDs: []string{successCDIQualifiedName}},
+				{PoolName: testNodeName, DeviceName: "cpudev0", CDIDeviceIDs: []string{cdiQualifiedName}},
+				{PoolName: testNodeName, DeviceName: "cpudev1", CDIDeviceIDs: []string{cdiQualifiedName}},
 			},
 		},
 		{
@@ -468,7 +595,11 @@ func TestUnprepareResourceClaims(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockCdiMgr := newMockCdiMgr()
 			mockCdiMgr.removeError = tc.cdiRemoveError
-			cp := &CPUDriver{cdiMgr: mockCdiMgr}
+			mockProvider := &mockCPUInfoProvider{cpuInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
+			cp := &CPUDriver{
+				cdiMgr:             mockCdiMgr,
+				cpuAllocationStore: NewCPUAllocationStore(mockProvider, cpuset.New()),
+			}
 
 			unpreparedClaims, err := cp.UnprepareResourceClaims(context.Background(), tc.claims)
 			require.NoError(t, err)
