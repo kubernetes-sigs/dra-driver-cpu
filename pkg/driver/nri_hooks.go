@@ -55,7 +55,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			containerUID := types.UID(container.GetId())
 			var state *ContainerState
 			if len(claimAllocations) == 0 {
-				state = NewContainerState(container.GetName(), containerUID, nil)
+				state = NewContainerState(container.GetName(), containerUID)
 			} else {
 				allGuaranteedCPUs := cpuset.New()
 				claimUIDs := []types.UID{}
@@ -65,7 +65,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 					cpuAllocationStore.AddResourceClaimAllocation(uid, cpus)
 				}
 				klog.Infof("Synchronize: Found guaranteed CPUs for pod %s/%s container %s with cpus: %v", pod.Namespace, pod.Name, container.Name, allGuaranteedCPUs.String())
-				state = NewContainerState(container.GetName(), containerUID, claimUIDs)
+				state = NewContainerState(container.GetName(), containerUID, claimUIDs...)
 			}
 			podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
 		}
@@ -141,7 +141,7 @@ func (cp *CPUDriver) CreateContainer(_ context.Context, pod *api.PodSandbox, ctr
 
 	if len(claimAllocations) == 0 {
 		// This is a shared container.
-		state := NewContainerState(ctr.GetName(), containerId, nil)
+		state := NewContainerState(ctr.GetName(), containerId)
 		cp.podConfigStore.SetContainerState(podUID, state)
 
 		sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
@@ -160,7 +160,7 @@ func (cp *CPUDriver) CreateContainer(_ context.Context, pod *api.PodSandbox, ctr
 			claimUIDs = append(claimUIDs, uid)
 		}
 		klog.Infof("Guaranteed CPUs found for pod:%s container:%s with cpus:%v", pod.Name, ctr.Name, guaranteedCPUs.String())
-		state := NewContainerState(ctr.GetName(), containerId, claimUIDs)
+		state := NewContainerState(ctr.GetName(), containerId, claimUIDs...)
 		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
 		cp.podConfigStore.SetContainerState(podUID, state)
 		// Remove the guaranteed CPUs from the containers with shared CPUs.

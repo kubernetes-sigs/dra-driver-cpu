@@ -32,7 +32,7 @@ type ContainerState struct {
 }
 
 // NewContainerState creates a new ContainerState.
-func NewContainerState(containerName string, containerUID types.UID, claimUIDs []types.UID) *ContainerState {
+func NewContainerState(containerName string, containerUID types.UID, claimUIDs ...types.UID) *ContainerState {
 	return &ContainerState{
 		containerName:     containerName,
 		containerUID:      containerUID,
