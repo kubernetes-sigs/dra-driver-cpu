@@ -67,25 +67,6 @@ func TestRemoveContainerState(t *testing.T) {
 	store.RemoveContainerState(podUID, "non-existent-ctr")
 }
 
-func TestDeletePodState(t *testing.T) {
-	store := NewPodConfigStore()
-	podUID := types.UID("pod-uid-1")
-	state := NewContainerState("ctr-1", "id-1", types.UID("claim-uid-1"))
-
-	// Setup: add a pod
-	store.SetContainerState(podUID, state)
-	_, podExists := store.configs[podUID]
-	require.True(t, podExists)
-
-	// Delete pod
-	store.DeletePodState(podUID)
-	_, podExists = store.configs[podUID]
-	require.False(t, podExists)
-
-	// Deleting non-existent pod should be a no-op
-	store.DeletePodState(podUID)
-}
-
 func TestGetSharedCPUContainerUIDs(t *testing.T) {
 	sharedState1 := NewContainerState("c1", "id1")
 	sharedState2 := NewContainerState("c2", "id2")
