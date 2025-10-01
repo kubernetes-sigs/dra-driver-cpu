@@ -127,7 +127,6 @@ func TestCreateContainer(t *testing.T) {
 		sharedCPUUpdateRequired     bool
 		expectedContainerAdjustment *api.ContainerAdjustment
 		expectedContainerUpdates    []*api.ContainerUpdate
-		expectedUpdateRequired      bool
 	}{
 		{
 			name:               "guaranteed container triggers container adjustment with cpus in resource claim",
@@ -138,7 +137,6 @@ func TestCreateContainer(t *testing.T) {
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-3"}}},
 			},
 			expectedContainerUpdates: []*api.ContainerUpdate{},
-			expectedUpdateRequired:   false,
 		},
 		{
 			name:               "shared container triggers container adjustment with all cpus",
@@ -149,14 +147,13 @@ func TestCreateContainer(t *testing.T) {
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
 			},
 			expectedContainerUpdates: []*api.ContainerUpdate{},
-			expectedUpdateRequired:   false,
 		},
 		{
 			name: "guaranteed container triggers container adjustment and update for other shared container",
 			podConfigStore: func() *PodConfigStore {
 				store := NewPodConfigStore()
-				store.SetContainerState("shared-pod-1", NewContainerState("shared-ctr-1", "shared-uid-1", nil))
-				store.SetContainerState("shared-pod-2", NewContainerState("shared-ctr-2", "shared-uid-2", nil))
+				store.SetContainerState("shared-pod-1", NewContainerState("shared-ctr-1", "shared-uid-1"))
+				store.SetContainerState("shared-pod-2", NewContainerState("shared-ctr-2", "shared-uid-2"))
 				return store
 			}(),
 			cpuAllocationStore: func() *CPUAllocationStore {
@@ -178,28 +175,6 @@ func TestCreateContainer(t *testing.T) {
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1,4-7"}}},
 				},
 			},
-			expectedUpdateRequired: false,
-		},
-		{
-			name: "shared container triggers updates for all other shared containers when update is pending",
-			podConfigStore: func() *PodConfigStore {
-				store := NewPodConfigStore()
-				store.SetContainerState("other-pod", NewContainerState("shared-ctr", "shared-uid-1", nil))
-				return store
-			}(),
-			cpuAllocationStore:      NewCPUAllocationStore(mockProvider, cpuset.New()),
-			container:               newTestContainer("", ""),
-			sharedCPUUpdateRequired: true,
-			expectedContainerAdjustment: &api.ContainerAdjustment{
-				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
-			},
-			expectedContainerUpdates: []*api.ContainerUpdate{
-				{
-					ContainerId: "shared-uid-1",
-					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
-				},
-			},
-			expectedUpdateRequired: false,
 		},
 		{
 			name:               "guaranteed container with malformed env falls back to shared",
@@ -215,14 +190,11 @@ func TestCreateContainer(t *testing.T) {
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
 			},
 			expectedContainerUpdates: []*api.ContainerUpdate{},
-			expectedUpdateRequired:   false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			setSharedCPUUpdateRequired(tc.sharedCPUUpdateRequired)
-
 			driver := &CPUDriver{
 				podConfigStore:     tc.podConfigStore,
 				cpuAllocationStore: tc.cpuAllocationStore,
@@ -232,73 +204,6 @@ func TestCreateContainer(t *testing.T) {
 
 			require.Equal(t, tc.expectedContainerAdjustment, adjust)
 			require.ElementsMatch(t, tc.expectedContainerUpdates, updates)
-			require.Equal(t, tc.expectedUpdateRequired, isSharedCPUUpdateRequired())
-		})
-	}
-}
-
-func TestRemoveContainer(t *testing.T) {
-	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
-	pod1 := &api.PodSandbox{Id: "pod-id-1", Name: "my-pod", Namespace: "my-ns", Uid: "pod-uid-1"}
-	ctr1 := &api.Container{Id: "ctr-id-1", PodSandboxId: pod1.Id, Name: "my-ctr"}
-
-	var infos []cpuinfo.CPUInfo
-	for _, cpuID := range allCPUs.UnsortedList() {
-		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NumaNode: 0})
-	}
-	mockProvider := &mockCPUInfoProvider{cpuInfos: infos}
-
-	testCases := []struct {
-		name                   string
-		driver                 *CPUDriver
-		removePod              bool
-		expectedUpdateRequired bool
-	}{
-		{
-			name: "Remove guaranteed container sets update required for shared containers",
-			driver: func() *CPUDriver {
-				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(mockProvider, cpuset.New()), cpuInfoProvider: mockProvider}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id), []types.UID{"claim-uid-1"}))
-				return driver
-			}(),
-			removePod:              false,
-			expectedUpdateRequired: true,
-		},
-		{
-			name: "Remove non-guaranteed container does not set update required",
-			driver: func() *CPUDriver {
-				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(mockProvider, cpuset.New()), cpuInfoProvider: mockProvider}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id), nil))
-				return driver
-			}(),
-			removePod:              false,
-			expectedUpdateRequired: false,
-		},
-		{
-			name: "Remove pod with guaranteed container sets update required",
-			driver: func() *CPUDriver {
-				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(mockProvider, cpuset.New()), cpuInfoProvider: mockProvider}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id), []types.UID{"claim-uid-1"}))
-				return driver
-			}(),
-			removePod:              true,
-			expectedUpdateRequired: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			setSharedCPUUpdateRequired(false)
-
-			var err error
-			if tc.removePod {
-				err = tc.driver.RemovePodSandbox(context.Background(), pod1)
-			} else {
-				err = tc.driver.RemoveContainer(context.Background(), pod1, ctr1)
-			}
-			require.NoError(t, err)
-
-			require.Equal(t, tc.expectedUpdateRequired, isSharedCPUUpdateRequired())
 		})
 	}
 }
@@ -325,7 +230,7 @@ func TestNRISynchronize(t *testing.T) {
 			name: "empty runtime state clears the store",
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(mockProvider, cpuset.New()), cpuInfoProvider: mockProvider}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState("stale-ctr", "stale-id", []types.UID{"stale-claim"}))
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState("stale-ctr", "stale-id", types.UID("stale-claim")))
 				return driver
 			}(),
 			runtimePods: []*api.PodSandbox{},
