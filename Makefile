@@ -15,18 +15,32 @@
 REPO_ROOT:=${CURDIR}
 OUT_DIR=$(REPO_ROOT)/bin
 
+# platform on which we run
+OS=$(shell go env GOOS)
+ARCH=$(shell go env GOARCH)
+
+# dependencies
+## versions
+YQ_VERSION ?= 4.47.1
+# matches golang 1.24.z
+GOLANGCI_LINT_VERSION ?= 2.3.0
+# paths
+YQ = $(OUT_DIR)/yq
+GOLANGCI_LINT = $(OUT_DIR)/golangci-lint
+
 # disable CGO by default for static binaries
 CGO_ENABLED=0
 export GOROOT GO111MODULE CGO_ENABLED
 
-# Setting SHELL to bash allows bash commands to be executed by recipes.                                                                            # Options are set to exit when a recipe line exits non-zero or a piped command fails.
+# Setting SHELL to bash allows bash commands to be executed by recipes.
+# Options are set to exit when a recipe line exits non-zero or a piped command fails.
 SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
 default: build ## Default builds
 
 help: ## Display this help.
-	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-23s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
 
 build: build-dracpu ## build dracpu
@@ -43,6 +57,9 @@ test-unit: ## run tests
 
 update: ## runs go mod tidy
 	go mod tidy
+
+$(OUT_DIR):  ## creates the output directory (used internally)
+	mkdir -p $(OUT_DIR)
 
 # get image name from directory we're building
 CLUSTER_NAME=dra-driver-cpu
@@ -62,6 +79,7 @@ TAG ?= $(GIT_VERSION)
 IMAGE_LATEST?=$(STAGING_IMAGE_NAME):latest
 IMAGE := ${STAGING_IMAGE_NAME}:${TAG}
 IMAGE_TESTING := "${TESTING_IMAGE_NAME}:${TAG}"
+# target platform(s)
 PLATFORMS?=linux/amd64
 
 # required to enable buildx
@@ -104,12 +122,12 @@ ci-kind-load-image: build-test-image  ## load the testing container image into k
 	kind load docker-image ${IMAGE_TESTING} --name ${CLUSTER_NAME}
 
 ci-manifests: install.yaml install-yq ## create the CI install manifests
-	@cd hack/ci && ../../bin/yq e -s '"_" + (.kind | downcase) + "-" + .metadata.name + ".yaml"' ../../install.yaml
+	@cd hack/ci && $(YQ) e -s '"_" + (.kind | downcase) + "-" + .metadata.name + ".yaml"' ../../install.yaml
 	@# need to make kind load docker-image working as expected: see https://kind.sigs.k8s.io/docs/user/quick-start/#loading-an-image-into-your-cluster
-	@bin/yq -i '.spec.template.spec.containers[0].imagePullPolicy = "IfNotPresent"' hack/ci/_daemonset-dracpu.yaml
-	@bin/yq -i '.spec.template.spec.containers[0].image = "${IMAGE}"' hack/ci/_daemonset-dracpu.yaml
-	@bin/yq -i '.spec.template.metadata.labels["build"] = "${GIT_VERSION}"' hack/ci/_daemonset-dracpu.yaml
-	@bin/yq '.' \
+	@$(YQ) -i '.spec.template.spec.containers[0].imagePullPolicy = "IfNotPresent"' hack/ci/_daemonset-dracpu.yaml
+	@$(YQ) -i '.spec.template.spec.containers[0].image = "${IMAGE}"' hack/ci/_daemonset-dracpu.yaml
+	@$(YQ) -i '.spec.template.metadata.labels["build"] = "${GIT_VERSION}"' hack/ci/_daemonset-dracpu.yaml
+	@$(YQ) '.' \
 		hack/ci/_clusterrole-dracpu.yaml \
 		hack/ci/_serviceaccount-dracpu.yaml \
 		hack/ci/_clusterrolebinding-dracpu.yaml \
@@ -133,12 +151,28 @@ test-dracpuinfo: ## build helper to expose hardware info in the internal dracpu 
 test-e2e-base: ## run e2e test base suite
 	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TESTING) go test -v ./test/e2e/ --ginkgo.v
 
+lint:  ## run the linter against the codebase
+	$(GOLANGCI_LINT) run ./...
+
 # dependencies
-.PHONY:
-install-yq: ## make sure the yq tool is available locally
+.PHONY: install-yq
+install-yq: $(OUT_DIR)  ## make sure the yq tool is available locally
 	@# TODO: generalize platform/os?
-	@if [ ! -f bin/yq ]; then\
-	       mkdir -p bin;\
-	       curl -L https://github.com/mikefarah/yq/releases/download/v4.47.1/yq_linux_amd64 -o bin/yq;\
-               chmod 0755 bin/yq;\
+	@if [ ! -f $(YQ) ]; then\
+	       curl -L https://github.com/mikefarah/yq/releases/download/v$(YQ_VERSION)/yq_$(OS)_$(ARCH) -o $(YQ);\
+               chmod 0755 $(YQ);\
 	fi
+
+.PHONY: install-golangci-lint
+install-golangci-lint: $(OUT_DIR) ## make sure the golangci-lint tool is available locally
+	@[ ! -f $(OUT_DIR)/golangci-lint ] && { \
+		command -v golangci-lint >/dev/null 2>&1 && {\
+			ln -sf $(shell command -v golangci-lint ) $(OUT_DIR) ;\
+			echo "reusing system golangci-lint" ;\
+		} || { \
+			curl -sSL "https://github.com/golangci/golangci-lint/releases/download/v$(GOLANGCI_LINT_VERSION)/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(OS)-$(ARCH).tar.gz" -o $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)-$(OS)-$(ARCH).tar.gz ;\
+			tar -x -C $(OUT_DIR) -f $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)-$(OS)-$(ARCH).tar.gz ;\
+			ln -sf $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)-$(OS)-$(ARCH)/golangci-lint $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION) ;\
+			ln -sf $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION) $(GOLANGCI_LINT) ;\
+		}; \
+	} || true
