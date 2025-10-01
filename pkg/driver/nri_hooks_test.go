@@ -155,8 +155,8 @@ func TestCreateContainer(t *testing.T) {
 			name: "guaranteed container triggers container adjustment and update for other shared container",
 			podConfigStore: func() *PodConfigStore {
 				store := NewPodConfigStore()
-				store.SetContainerState("shared-pod-1", NewContainerState("shared-ctr-1", "shared-uid-1", nil))
-				store.SetContainerState("shared-pod-2", NewContainerState("shared-ctr-2", "shared-uid-2", nil))
+				store.SetContainerState("shared-pod-1", NewContainerState("shared-ctr-1", "shared-uid-1"))
+				store.SetContainerState("shared-pod-2", NewContainerState("shared-ctr-2", "shared-uid-2"))
 				return store
 			}(),
 			cpuAllocationStore: func() *CPUAllocationStore {
@@ -184,7 +184,7 @@ func TestCreateContainer(t *testing.T) {
 			name: "shared container triggers updates for all other shared containers when update is pending",
 			podConfigStore: func() *PodConfigStore {
 				store := NewPodConfigStore()
-				store.SetContainerState("other-pod", NewContainerState("shared-ctr", "shared-uid-1", nil))
+				store.SetContainerState("other-pod", NewContainerState("shared-ctr", "shared-uid-1"))
 				return store
 			}(),
 			cpuAllocationStore:      NewCPUAllocationStore(mockProvider, cpuset.New()),
@@ -258,7 +258,7 @@ func TestRemoveContainer(t *testing.T) {
 			name: "Remove guaranteed container sets update required for shared containers",
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(mockProvider, cpuset.New()), cpuInfoProvider: mockProvider}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id), []types.UID{"claim-uid-1"}))
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id), types.UID("claim-uid-1")))
 				return driver
 			}(),
 			removePod:              false,
@@ -268,7 +268,7 @@ func TestRemoveContainer(t *testing.T) {
 			name: "Remove non-guaranteed container does not set update required",
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(mockProvider, cpuset.New()), cpuInfoProvider: mockProvider}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id), nil))
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id)))
 				return driver
 			}(),
 			removePod:              false,
@@ -278,7 +278,7 @@ func TestRemoveContainer(t *testing.T) {
 			name: "Remove pod with guaranteed container sets update required",
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(mockProvider, cpuset.New()), cpuInfoProvider: mockProvider}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id), []types.UID{"claim-uid-1"}))
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id), types.UID("claim-uid-1")))
 				return driver
 			}(),
 			removePod:              true,
@@ -325,7 +325,7 @@ func TestNRISynchronize(t *testing.T) {
 			name: "empty runtime state clears the store",
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(mockProvider, cpuset.New()), cpuInfoProvider: mockProvider}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState("stale-ctr", "stale-id", []types.UID{"stale-claim"}))
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState("stale-ctr", "stale-id", types.UID("stale-claim")))
 				return driver
 			}(),
 			runtimePods: []*api.PodSandbox{},
