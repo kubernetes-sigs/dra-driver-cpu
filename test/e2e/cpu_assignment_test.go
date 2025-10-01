@@ -211,52 +211,36 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 				fixture.By("creating a second best-effort reference pod")
 				shrPod2 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
-
-				ginkgo.By("checking the second best-effort pod has access to the new shared pool")
-				gomega.Eventually(func() error {
-					sharedAllocPost := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, shrPod2)
-					rootFxt.Log.Info("checking shared allocation", "pod", identifyPod(shrPod2), "cpuAllocated", sharedAllocPost.CPUAssigned.String())
-					if !expectedSharedCPUs.Equals(sharedAllocPost.CPUAssigned) {
-						return fmt.Errorf("shared CPUs mismatch: expected %v got %v", expectedSharedCPUs.String(), sharedAllocPost.CPUAssigned.String())
-					}
-					return nil
-				}).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(gomega.Succeed(), "the second best-effort tester pod does not have the expected shared CPUs")
+				verifySharedPoolMatches(ctx, fxt, shrPod2, expectedSharedCPUs)
 
 				ginkgo.By("checking the CPU pool of the best-effort pod created before the pods with CPU resource claims")
-				gomega.Eventually(func() error {
-					sharedAllocPreUpdated := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, shrPod1)
-					rootFxt.Log.Info("checking shared allocation", "pod", identifyPod(shrPod1), "cpuAllocated", sharedAllocPreUpdated.CPUAssigned.String())
-					if !expectedSharedCPUs.Equals(sharedAllocPreUpdated.CPUAssigned) {
-						return fmt.Errorf("shared CPUs mismatch: expected %v got %v", expectedSharedCPUs.String(), sharedAllocPreUpdated.CPUAssigned.String())
-					}
-					return nil
-				}).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(gomega.Succeed(), "the first, pre-existing best-effort tester pod does not have the updated shared CPUs")
+				verifySharedPoolMatches(ctx, fxt, shrPod1, expectedSharedCPUs)
 
 				fixture.By("deleting the pods with exclusive CPUs")
 				for _, pod := range exclPods {
 					gomega.Expect(e2epod.DeleteSync(ctx, fxt.K8SClientset, pod)).To(gomega.Succeed(), "cannot delete pod %s", identifyPod(pod))
 				}
 
-				fixture.By("checking the shared pool now contains all available CPUs again")
-				// Note: The current implementation of the nri_hooks.go needs a new pod to be created for the cpuset to be updated for all the shared pods.
-				fixture.By("creating a third best-effort reference pod")
-				shrPod3 := makeTesterPodBestEffort(fxt.Namespace.Name, dracpuTesterImage)
-				shrPod3 = pinPodToNode(shrPod3, targetNode.Name)
-				shrPod3, err = e2epod.CreateSync(ctx, fxt.K8SClientset, shrPod3)
-				gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create the third tester pod: %v", err)
-
-				gomega.Eventually(func() error {
-					sharedAllocPostDelete := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, shrPod3)
-					rootFxt.Log.Info("checking shared allocation after delete", "pod", identifyPod(shrPod3), "cpuAllocated", sharedAllocPostDelete.CPUAssigned.String())
-					if !availableCPUs.Equals(sharedAllocPostDelete.CPUAssigned) {
-						return fmt.Errorf("shared CPUs mismatch after delete: expected %v got %v", availableCPUs.String(), sharedAllocPostDelete.CPUAssigned.String())
-					}
-					return nil
-				}).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(gomega.Succeed(), "the shared pool does not contain all available CPUs after the exclusive pods were deleted")
+				verifySharedPoolMatches(ctx, fxt, shrPod1, availableCPUs)
+				verifySharedPoolMatches(ctx, fxt, shrPod2, availableCPUs)
 			})
 		})
 	})
 })
+
+func verifySharedPoolMatches(ctx context.Context, fxt *fixture.Fixture, sharedPod *v1.Pod, expectedSharedCPUs cpuset.CPUSet) {
+	ginkgo.GinkgoHelper()
+
+	fixture.By("checking the CPU pool of the best-effort tester pod %s matches expected %s", identifyPod(sharedPod), expectedSharedCPUs.String())
+	gomega.Eventually(func() error {
+		sharedAllocUpdated := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, sharedPod)
+		fxt.Log.Info("checking shared allocation", "pod", identifyPod(sharedPod), "cpuAllocated", sharedAllocUpdated.CPUAssigned.String(), "cpuAffinity", sharedAllocUpdated.CPUAffinity.String())
+		if !expectedSharedCPUs.Equals(sharedAllocUpdated.CPUAssigned) {
+			return fmt.Errorf("shared CPUs mismatch: expected %v got %v", expectedSharedCPUs.String(), sharedAllocUpdated.CPUAssigned.String())
+		}
+		return nil
+	}).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(gomega.Succeed(), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", identifyPod(sharedPod))
+}
 
 func makeCPUSetFromDiscoveredCPUInfo(cpuInfo discovery.DRACPUInfo) cpuset.CPUSet {
 	coreIDs := make([]int, len(cpuInfo.CPUs))
