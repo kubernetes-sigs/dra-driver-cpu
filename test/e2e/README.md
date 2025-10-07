@@ -21,7 +21,15 @@ While considering extending the testsuite, adding tests, cases or sub-suites, pl
 
 ## configure using environment variables
 
-- `DRACPU_E2E_TARGET_NODE`: the CPU-related tests don't need any specific node.
+- `DRACPU_E2E_TEST_IMAGE`: (mandatory) the full pullSpec of the test image the suite should
+  use as container image to run test containers. The default CI configuration sets this
+  value automatically.
+- `DRACPU_E2E_TARGET_NODE`: (optional) the CPU-related tests don't need any specific node.
   If this variable is set, it should be the `hostname` of a valid worker node in
   the cluster against which the tests run.
   If it is not set, the suit will pick a random node among the workers.
+- `DRACPU_E2E_RESERVED_CPUS`: (optional) if set, it is meant to mirror the driver `--reserved-cpus`
+  setting. The value must be a linux cpuset string. The tests will ensure no containers
+  consume these CPUs.
+  NOTE: at the moment is not easy to autodetect this setting from the driver configuration.
+  Future version may autodetect it.

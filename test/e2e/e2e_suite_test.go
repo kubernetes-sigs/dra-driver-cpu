@@ -17,7 +17,6 @@ limitations under the License.
 package e2e
 
 import (
-	"os"
 	"testing"
 
 	"github.com/onsi/ginkgo/v2"
@@ -25,10 +24,6 @@ import (
 )
 
 func TestE2E(t *testing.T) {
-	/* TODO temporary workaround */
-	if _, ok := os.LookupEnv("KUBECONFIG"); !ok {
-		return
-	}
 	gomega.RegisterFailHandler(ginkgo.Fail)
 	ginkgo.RunSpecs(t, "DRA CPU Driver E2E Suite")
 }
