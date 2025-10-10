@@ -40,9 +40,10 @@ import (
 )
 
 const (
-	minCPUsAvailableForPodAllocation = 4
-	maxExclusivePods                 = 10
-	cpusPerClaim                     = 2
+	maxExclusivePods = 10
+	cpusPerClaim     = 2
+	// should be at least cpusPerClaim + 1 to leave some CPUs for the shared pool
+	minCPUsAvailableForPodAllocation = 3
 )
 
 /*
@@ -69,6 +70,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		availableCPUs     cpuset.CPUSet
 		dracpuTesterImage string
 		reservedCPUs      cpuset.CPUSet
+		cpuDeviceMode     string
 	)
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
@@ -99,11 +101,14 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 			if val, ok := parseReservedCPUsArg(arg); ok {
 				dsReservedCPUs, err = cpuset.Parse(val)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse daemonset reserved cpus: %v", err)
-				break
+			}
+			if val, ok := parseCPUDeviceModeArg(arg); ok {
+				cpuDeviceMode = val
 			}
 		}
 		rootFxt.Log.Info("daemonset --reserved-cpus configuration", "cpus", dsReservedCPUs.String())
 		gomega.Expect(dsReservedCPUs.Equals(reservedCPUs)).To(gomega.BeTrue(), "daemonset reserved cpus %v do not match test reserved cpus %v", dsReservedCPUs.String(), reservedCPUs.String())
+		rootFxt.Log.Info("daemonset --cpu-device-mode configuration", "mode", cpuDeviceMode)
 
 		if targetNodeName := os.Getenv("DRACPU_E2E_TARGET_NODE"); len(targetNodeName) > 0 {
 			targetNode, err = rootFxt.K8SClientset.CoreV1().Nodes().Get(ctx, targetNodeName, metav1.GetOptions{})
@@ -129,7 +134,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		if reservedCPUs.Size() > 0 {
 			gomega.Expect(availableCPUs.Intersection(reservedCPUs).Size()).To(gomega.BeZero(), "available cpus %v overlap with reserved cpus %v", availableCPUs.String(), reservedCPUs.String())
 		}
-		rootFxt.Log.Info("checking worker node", "nodeName", infoPod.Spec.NodeName, "coreCount", len(targetNodeCPUInfo.CPUs), "allocatableCPUs", allocatableCPUs.String(), "availableCPUs", availableCPUs.String(), "reservedCPUs", reservedCPUs.String())
+		rootFxt.Log.Info("checking worker node", "nodeName", infoPod.Spec.NodeName, "coreCount", len(targetNodeCPUInfo.CPUs), "allocatableCPUs", allocatableCPUs.String(), "reservedCPUs", reservedCPUs.String(), "availableCPUs", availableCPUs.String())
 	})
 
 	ginkgo.When("setting resource claims", func() {
@@ -164,9 +169,12 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				fxt.Log.Info("checking shared allocation", "pod", identifyPod(shrPod1), "cpuAllocated", sharedAllocPre.CPUAssigned.String(), "cpuAffinity", sharedAllocPre.CPUAffinity.String())
 
 				numCPUs := availableCPUs.Size()
-				// reserve half the CPUs for the shared pool
-				numAvailableForExclusive := numCPUs / 2
-				numPods := numAvailableForExclusive / cpusPerClaim
+				// Ensure at least 1 CPU is available for the shared pool
+				maxExclusiveCpus := numCPUs - 1
+				if maxExclusiveCpus < 0 {
+					maxExclusiveCpus = 0
+				}
+				numPods := maxExclusiveCpus / cpusPerClaim
 				if numPods > maxExclusivePods {
 					numPods = maxExclusivePods
 				}
@@ -175,33 +183,12 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				var exclPods []*v1.Pod
 				allAllocatedCPUs := cpuset.New()
 
+				claimName := fmt.Sprintf("cpu-request-%d-excl", cpusPerClaim)
+				claimTemplate := makeResourceClaimTemplate(claimName, cpusPerClaim, cpuDeviceMode == "grouped")
+				createdClaimTemplate, err := fxt.K8SClientset.ResourceV1().ResourceClaimTemplates(fxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
 				for i := 0; i < numPods; i++ {
-					claimName := fmt.Sprintf("cpu-request-%d-excl-%d", cpusPerClaim, i)
-					claim := resourcev1.ResourceClaim{
-						ObjectMeta: metav1.ObjectMeta{
-							Name: claimName,
-						},
-						Spec: resourcev1.ResourceClaimSpec{
-							Devices: resourcev1.DeviceClaim{
-								Requests: []resourcev1.DeviceRequest{
-									{
-										Name: "request-cpus",
-										Exactly: &resourcev1.ExactDeviceRequest{
-											DeviceClassName: "dra.cpu",
-											Count:           int64(cpusPerClaim),
-										},
-									},
-								},
-							},
-						},
-					}
-
-					createdClaim, err := fxt.K8SClientset.ResourceV1().ResourceClaims(fxt.Namespace.Name).Create(ctx, &claim, metav1.CreateOptions{})
 					gomega.Expect(err).ToNot(gomega.HaveOccurred())
-
-					pod := makeTesterPodWithExclusiveCPUClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaim)
-					pod = pinPodToNode(pod, targetNode.Name)
-
+					pod := makeTesterPodWithExclusiveCPUClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate)
 					createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
 					gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create tester pod %d: %v", i, err)
 					exclPods = append(exclPods, createdPod)
@@ -247,8 +234,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 				fixture.By("deleting the pods with exclusive CPUs")
 				for _, pod := range exclPods {
-					err := e2epod.DeleteSync(ctx, fxt.K8SClientset, pod)
-					gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot delete pod %s: %v", pod.Name, err)
+					gomega.Expect(e2epod.DeleteSync(ctx, fxt.K8SClientset, pod)).To(gomega.Succeed(), "cannot delete pod %s", identifyPod(pod))
 				}
 
 				fixture.By("checking the shared pool now contains all available CPUs again")
@@ -256,7 +242,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				fixture.By("creating a third best-effort reference pod")
 				shrPod3 := makeTesterPodBestEffort(fxt.Namespace.Name, dracpuTesterImage)
 				shrPod3 = pinPodToNode(shrPod3, targetNode.Name)
-				shrPod3, err := e2epod.CreateSync(ctx, fxt.K8SClientset, shrPod3)
+				shrPod3, err = e2epod.CreateSync(ctx, fxt.K8SClientset, shrPod3)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create the third tester pod: %v", err)
 
 				gomega.Eventually(func() error {
@@ -302,15 +288,15 @@ func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod
 	return ret
 }
 
-func makeTesterPodWithExclusiveCPUClaim(ns, image string, cpuClaim *resourcev1.ResourceClaim) *v1.Pod {
+func makeTesterPodWithExclusiveCPUClaim(ns, image string, cpuClaimTemplate *resourcev1.ResourceClaimTemplate) *v1.Pod {
 	ginkgo.GinkgoHelper()
-	cpuQty := resource.NewQuantity(cpuClaim.Spec.Devices.Requests[0].Exactly.Count, resource.DecimalSI)
+	cpuQty := resource.NewQuantity(cpuClaimTemplate.Spec.Spec.Devices.Requests[0].Exactly.Count, resource.DecimalSI)
 	memQty, err := resource.ParseQuantity("256Mi") // random "low enough" value
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 	return &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "pk-tester-pod-excl-cpu-claim-",
+			GenerateName: "tester-pod-excl-cpu-claim-",
 			Namespace:    ns,
 		},
 		Spec: v1.PodSpec{
@@ -338,8 +324,8 @@ func makeTesterPodWithExclusiveCPUClaim(ns, image string, cpuClaim *resourcev1.R
 			},
 			ResourceClaims: []v1.PodResourceClaim{
 				{
-					Name:              "tester-container-1-claim",
-					ResourceClaimName: ptr.To(cpuClaim.Name),
+					Name:                      "tester-container-1-claim",
+					ResourceClaimTemplateName: ptr.To(cpuClaimTemplate.Name),
 				},
 			},
 			RestartPolicy: v1.RestartPolicyAlways,
@@ -420,4 +406,59 @@ func parseReservedCPUsArg(arg string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimPrefix(arg, prefix), true
+}
+
+func parseCPUDeviceModeArg(arg string) (string, bool) {
+	prefix := "--cpu-device-mode="
+	if !strings.HasPrefix(arg, prefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(arg, prefix), true
+}
+
+func makeResourceClaimTemplate(templateName string, cpus int, isConsumable bool) resourcev1.ResourceClaimTemplate {
+	var claimSpec resourcev1.ResourceClaimSpec
+	if isConsumable {
+		claimSpec = resourcev1.ResourceClaimSpec{
+			Devices: resourcev1.DeviceClaim{
+				Requests: []resourcev1.DeviceRequest{
+					{
+						Name: "request-cpus",
+						Exactly: &resourcev1.ExactDeviceRequest{
+							DeviceClassName: "dra.cpu",
+							Capacity: &resourcev1.CapacityRequirements{
+								Requests: map[resourcev1.QualifiedName]resource.Quantity{
+									"dra.cpu/cpu": resource.MustParse(fmt.Sprintf("%d", cpus)),
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+	} else {
+		claimSpec = resourcev1.ResourceClaimSpec{
+			Devices: resourcev1.DeviceClaim{
+				Requests: []resourcev1.DeviceRequest{
+					{
+						Name: "request-cpus",
+						Exactly: &resourcev1.ExactDeviceRequest{
+							DeviceClassName: "dra.cpu",
+							Count:           int64(cpus),
+						},
+					},
+				},
+			},
+		}
+	}
+
+	template := resourcev1.ResourceClaimTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: templateName,
+		},
+		Spec: resourcev1.ResourceClaimTemplateSpec{
+			Spec: claimSpec,
+		},
+	}
+	return template
 }
