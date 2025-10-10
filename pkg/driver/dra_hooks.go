@@ -30,6 +30,7 @@ import (
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/cpuset"
+	"k8s.io/utils/ptr"
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
 )
 
@@ -59,7 +60,6 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices() [][]resourceapi.Device {
 	klog.Info("Creating grouped CPU devices", "groupBy", cp.cpuDeviceGroupBy)
 
 	var devices []resourceapi.Device
-	allowMultipleAllocations := true
 
 	switch cp.cpuDeviceGroupBy {
 	case GROUP_BY_SOCKET:
@@ -89,7 +89,7 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices() [][]resourceapi.Device {
 					"dra.cpu/hyperthreading": {BoolValue: &hyperThreadEnabled},
 				},
 				Capacity:                 deviceCapacity,
-				AllowMultipleAllocations: &allowMultipleAllocations,
+				AllowMultipleAllocations: ptr.To(true),
 			})
 		}
 	case GROUP_BY_NUMA_NODE:
@@ -126,7 +126,7 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices() [][]resourceapi.Device {
 					"dra.net/numaNode": {IntValue: &numaID},
 				},
 				Capacity:                 deviceCapacity,
-				AllowMultipleAllocations: &allowMultipleAllocations,
+				AllowMultipleAllocations: ptr.To(true),
 			})
 		}
 	}
