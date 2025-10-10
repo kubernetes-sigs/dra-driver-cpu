@@ -47,6 +47,14 @@ func CreateSync(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod) (*v1.
 	return cs.CoreV1().Pods(createdPod.Namespace).Get(ctx, createdPod.Name, metav1.GetOptions{})
 }
 
+func DeleteSync(ctx context.Context, cs kubernetes.Interface, podNamespace, podName string) error {
+	err := cs.CoreV1().Pods(podNamespace).Delete(ctx, podName, metav1.DeleteOptions{})
+	if err != nil {
+		return err
+	}
+	return WaitToBeDeleted(ctx, cs, podNamespace, podName)
+}
+
 func RunToCompletion(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod) (*v1.Pod, error) {
 	createdPod, err := cs.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
