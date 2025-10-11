@@ -35,12 +35,12 @@ type CPUAllocationStore struct {
 // NewCPUAllocationStore creates a new CPUAllocationStore.
 func NewCPUAllocationStore(provider CPUInfoProvider, reservedCPUs cpuset.CPUSet) *CPUAllocationStore {
 	cpuIDs := []int{}
-	cpuInfo, err := provider.GetCPUInfos()
+	cpuTopology, err := provider.GetCPUTopology()
 	if err != nil {
 		klog.Fatalf("Fatal error getting CPU topology: %v", err)
 	}
-	for _, cpu := range cpuInfo {
-		cpuIDs = append(cpuIDs, cpu.CpuID)
+	for cpuID := range cpuTopology.CPUDetails {
+		cpuIDs = append(cpuIDs, cpuID)
 	}
 	allCPUsSet := cpuset.New(cpuIDs...)
 	availableCPUs := allCPUsSet.Difference(reservedCPUs)
