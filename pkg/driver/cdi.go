@@ -39,9 +39,10 @@ var (
 
 // CdiManager manages a single CDI JSON spec file using a mutex for thread safety.
 type CdiManager struct {
-	path    string
-	mutex   sync.Mutex
-	cdiKind string
+	path       string
+	mutex      sync.Mutex
+	cdiKind    string
+	driverName string
 }
 
 // NewCdiManager creates a manager for the driver's CDI spec file.
@@ -54,8 +55,9 @@ func NewCdiManager(driverName string) (*CdiManager, error) {
 
 	cdiKind := fmt.Sprintf("%s/%s", cdiVendor, cdiClass)
 	c := &CdiManager{
-		path:    path,
-		cdiKind: cdiKind,
+		path:       path,
+		cdiKind:    cdiKind,
+		driverName: driverName,
 	}
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -120,6 +122,10 @@ func (c *CdiManager) RemoveDevice(deviceName string) error {
 	return nil
 }
 
+func (c *CdiManager) GetSpec() (*cdiSpec.Spec, error) {
+	return c.readSpecFromFile()
+}
+
 func removeDeviceFromSpec(spec *cdiSpec.Spec, deviceName string) bool {
 	deviceFound := false
 	newDevices := []cdiSpec.Device{}
@@ -156,24 +162,40 @@ func (c *CdiManager) readSpecFromFile() (*cdiSpec.Spec, error) {
 	return spec, nil
 }
 
-func (c *CdiManager) writeSpecToFile(spec *cdiSpec.Spec) error {
+func (c *CdiManager) writeSpecToFile(spec *cdiSpec.Spec) (err error) {
+	tmpFile, err := os.CreateTemp(cdiSpecDir, c.driverName)
+	if err != nil {
+		return fmt.Errorf("failed to create temporary CDI spec: %w", err)
+	}
+	defer func() {
+		// avoid file descriptor leakage or undeterministic closure
+		// note we ignore the error; this is intentional because in the happy
+		// path we will have a double close(), which is however harmless.
+		_ = tmpFile.Close()
+		if err != nil {
+			_ = os.Remove(tmpFile.Name())
+		}
+	}()
+
 	data, err := json.MarshalIndent(spec, "", "  ")
 	if err != nil {
 		return fmt.Errorf("error marshaling CDI spec: %w", err)
 	}
 
-	file, err := os.OpenFile(c.path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return fmt.Errorf("error opening CDI file for writing %q: %w", c.path, err)
-	}
-	defer file.Close()
-
-	if _, err := file.Write(data); err != nil {
-		return fmt.Errorf("error writing to CDI file: %w", err)
+	if _, err := tmpFile.Write(data); err != nil {
+		return fmt.Errorf("failed to write to temporary CDI spec: %w", err)
 	}
 
-	if err := file.Sync(); err != nil {
-		return fmt.Errorf("error syncing CDI file: %w", err)
+	if err := tmpFile.Sync(); err != nil {
+		return fmt.Errorf("failed to sync temporary CDI spec: %w", err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary CDI spec: %w", err)
+	}
+
+	if err := os.Rename(tmpFile.Name(), c.path); err != nil {
+		return fmt.Errorf("failed to rename temporary CDI spec: %w", err)
 	}
 
 	klog.Infof("Successfully updated and synced CDI spec file %q", c.path)
