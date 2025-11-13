@@ -118,18 +118,20 @@ kind-install-cpu-dra: kind-uninstall-cpu-dra build-image kind-load-image ## inst
 delete-kind-cluster: ## delete kind cluster
 	kind delete cluster --name ${CLUSTER_NAME}
 
-ci-kind-setup: ci-manifests build-image build-test-image ## setup a CI cluster from scratch
+define kind_setup
 	kind create cluster --name ${CLUSTER_NAME} --config hack/ci/kind-ci.yaml
 	kubectl label node ${CLUSTER_NAME}-worker node-role.kubernetes.io/worker=''
 	kind load docker-image --name ${CLUSTER_NAME} ${IMAGE_CI} ${IMAGE_TEST}
-	kubectl create -f hack/ci/install-ci.yaml
+	kubectl create -f $(1)
 	hack/ci/wait-resourcelices.sh
+endef
 
-ci-manifests: install.yaml install-yq ## create the CI install manifests
+define generate_ci_manifest
 	@cd hack/ci && $(YQ) e -s '(.kind | downcase) + "-" + .metadata.name + ".part.yaml"' ../../install.yaml
 	@# need to make kind load docker-image working as expected: see https://kind.sigs.k8s.io/docs/user/quick-start/#loading-an-image-into-your-cluster
 	@$(YQ) -i '.spec.template.spec.containers[0].imagePullPolicy = "IfNotPresent"' hack/ci/daemonset-dracpu.part.yaml
 	@$(YQ) -i '.spec.template.spec.containers[0].image = "${IMAGE_CI}"' hack/ci/daemonset-dracpu.part.yaml
+	$(if $(2),@$(YQ) -i '$(2)' hack/ci/daemonset-dracpu.part.yaml,)
 	@$(YQ) -i '.spec.template.metadata.labels["build"] = "${GIT_VERSION}"' hack/ci/daemonset-dracpu.part.yaml
 	@$(YQ) '.' \
 		hack/ci/clusterrole-dracpu.part.yaml \
@@ -137,8 +139,22 @@ ci-manifests: install.yaml install-yq ## create the CI install manifests
 		hack/ci/clusterrolebinding-dracpu.part.yaml \
 		hack/ci/daemonset-dracpu.part.yaml \
 		hack/ci/deviceclass-dra.cpu.part.yaml \
-		> hack/ci/install-ci.yaml
+		> $(1)
 	@rm hack/ci/*.part.yaml
+endef
+
+ci-manifests: install.yaml install-yq ## create the CI install manifests
+	$(call generate_ci_manifest,hack/ci/install-ci.yaml)
+
+ci-kind-setup: ci-manifests build-image build-test-image ## setup a CI cluster from scratch
+	$(call kind_setup,hack/ci/install-ci.yaml)
+
+RESERVED_CPUS_E2E ?= 0,1
+ci-manifests-reserved-cpus: install.yaml install-yq ## create the CI install manifests for the reserved cpus test variant
+	$(call generate_ci_manifest,hack/ci/install-ci-reserved-cpus.yaml,.spec.template.spec.containers[0].args += "--reserved-cpus=$(RESERVED_CPUS_E2E)")
+
+ci-kind-setup-reserved-cpus: ci-manifests-reserved-cpus build-image build-test-image ## setup a CI cluster from scratch for the reserved cpus test variant
+	$(call kind_setup,hack/ci/install-ci-reserved-cpus.yaml)
 
 build-test-image: ## build tests image
 	docker buildx build . \
@@ -155,6 +171,9 @@ build-test-dracpuinfo: ## build helper to expose hardware info in the internal d
 
 test-e2e-base: ## run e2e test base suite
 	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) go test -v ./test/e2e/ --ginkgo.v
+
+test-e2e-reserved-cpus: ## run e2e test reserved cpus suite
+	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(RESERVED_CPUS_E2E) go test -v ./test/e2e/ --ginkgo.v
 
 lint:  ## run the linter against the codebase
 	$(GOLANGCI_LINT) run ./...

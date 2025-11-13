@@ -43,8 +43,20 @@ func CreateSync(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod) (*v1.
 	if err = WaitToBeRunning(ctx, cs, createdPod.Namespace, createdPod.Name); err != nil {
 		return nil, err
 	}
+
 	// Get the newest pod after it becomes running and ready, some status may change after pod created, such as pod ip.
 	return cs.CoreV1().Pods(createdPod.Namespace).Get(ctx, createdPod.Name, metav1.GetOptions{})
+}
+
+func DeleteSync(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod) error {
+	err := cs.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // Already deleted
+		}
+		return fmt.Errorf("error deleting pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	return WaitToBeDeleted(ctx, cs, pod.Namespace, pod.Name)
 }
 
 func RunToCompletion(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod) (*v1.Pod, error) {

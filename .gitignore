@@ -38,3 +38,4 @@ go.work.sum
 hack/ci/*.part.yaml
 #  The CI install files itself is gonna change at every PR (hash change)
 hack/ci/install-ci.yaml
+hack/ci/install-ci-reserved-cpus.yaml

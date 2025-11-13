@@ -29,3 +29,21 @@ jobs:
       if: ${{ failure() }}
       run: |
         kubectl get pods -A -o wide
+  e2e-reserved-cpus:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup golang
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+    - name: Kind version check
+      run: kind version
+    - name: Create and setup K8S kind cluster
+      run: make ci-kind-setup-reserved-cpus
+    - name: Run E2E tests
+      run: KUBECONFIG=${HOME}/.kube/config make test-e2e-reserved-cpus
+    - name: Show logs on failure
+      if: ${{ failure() }}
+      run: |
+        kubectl get pods -A -o wide
