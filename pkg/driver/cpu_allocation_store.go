@@ -19,6 +19,7 @@ package driver
 import (
 	"sync"
 
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/cpuset"
@@ -33,14 +34,10 @@ type CPUAllocationStore struct {
 }
 
 // NewCPUAllocationStore creates a new CPUAllocationStore.
-func NewCPUAllocationStore(provider CPUInfoProvider, reservedCPUs cpuset.CPUSet) *CPUAllocationStore {
+func NewCPUAllocationStore(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUSet) *CPUAllocationStore {
 	cpuIDs := []int{}
-	cpuInfo, err := provider.GetCPUInfos()
-	if err != nil {
-		klog.Fatalf("Fatal error getting CPU topology: %v", err)
-	}
-	for _, cpu := range cpuInfo {
-		cpuIDs = append(cpuIDs, cpu.CpuID)
+	for cpuID := range cpuTopology.CPUDetails {
+		cpuIDs = append(cpuIDs, cpuID)
 	}
 	allCPUsSet := cpuset.New(cpuIDs...)
 	availableCPUs := allCPUsSet.Difference(reservedCPUs)

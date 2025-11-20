@@ -19,11 +19,13 @@ package driver
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/stretchr/testify/require"
 	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
@@ -80,15 +82,6 @@ func (m *mockCdiMgr) RemoveDevice(deviceName string) error {
 	return nil
 }
 
-type mockCPUInfoProvider struct {
-	cpuInfos []cpuinfo.CPUInfo
-	err      error
-}
-
-func (m *mockCPUInfoProvider) GetCPUInfos() ([]cpuinfo.CPUInfo, error) {
-	return m.cpuInfos, m.err
-}
-
 var (
 	// Sibling CPUs are non-consecutive: (0,2), (1,3)
 	mockCPUInfos_SingleSocket_4CPUS_HT = []cpuinfo.CPUInfo{
@@ -121,7 +114,7 @@ var (
 		{CpuID: 6, CoreID: 2, SocketID: 1, NUMANodeID: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 2},
 		{CpuID: 7, CoreID: 3, SocketID: 1, NUMANodeID: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 3},
 	}
-	mockCPUInfos_SingleNUMANodeIDExceedsSliceLimit = func() []cpuinfo.CPUInfo {
+	mockCPUInfos_SingleNUMANodeExceedsSliceLimit = func() []cpuinfo.CPUInfo {
 		var infos []cpuinfo.CPUInfo
 		for i := 0; i < maxDevicesPerResourceSlice+1; i++ {
 			infos = append(infos, cpuinfo.CPUInfo{CpuID: i, CoreID: i, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1})
@@ -160,69 +153,69 @@ var (
 
 func TestPublishResources(t *testing.T) {
 	testCases := []struct {
-		name                         string
-		cpuInfos                     []cpuinfo.CPUInfo
-		cpuInfoErr                   error
-		publishError                 error
-		reservedCPUs                 cpuset.CPUSet
-		expectPublish                bool
-		expectedNumSlices            int
-		expectedDevices              int
-		expectedDevicesPerNUMANodeID map[int]int
+		name                       string
+		cpuInfos                   []cpuinfo.CPUInfo
+		cpuInfoErr                 error
+		publishError               error
+		reservedCPUs               cpuset.CPUSet
+		expectPublish              bool
+		expectedNumSlices          int
+		expectedDevices            int
+		expectedDevicesPerNUMANode map[int]int
 	}{
 		{
-			name:                         "single socket, HT on",
-			cpuInfos:                     mockCPUInfos_SingleSocket_4CPUS_HT,
-			reservedCPUs:                 cpuset.New(),
-			expectPublish:                true,
-			expectedNumSlices:            1,
-			expectedDevices:              len(mockCPUInfos_SingleSocket_4CPUS_HT),
-			expectedDevicesPerNUMANodeID: map[int]int{0: 4},
+			name:                       "single socket, HT on",
+			cpuInfos:                   mockCPUInfos_SingleSocket_4CPUS_HT,
+			reservedCPUs:               cpuset.New(),
+			expectPublish:              true,
+			expectedNumSlices:          1,
+			expectedDevices:            len(mockCPUInfos_SingleSocket_4CPUS_HT),
+			expectedDevicesPerNUMANode: map[int]int{0: 4},
 		},
 		{
-			name:                         "dual socket, HT on, 1 CPU reserved",
-			cpuInfos:                     mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
-			reservedCPUs:                 cpuset.New(0),
-			expectPublish:                true,
-			expectedNumSlices:            1, // 1 slice with CPUs from all the NUMA nodes
-			expectedDevices:              len(mockCPUInfos_DualSocket_4CPUsPerSocket_HT) - 1,
-			expectedDevicesPerNUMANodeID: map[int]int{0: 3, 1: 4},
+			name:                       "dual socket, HT on, 1 CPU reserved",
+			cpuInfos:                   mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			reservedCPUs:               cpuset.New(0),
+			expectPublish:              true,
+			expectedNumSlices:          1, // 1 slice with CPUs from all the NUMA nodes
+			expectedDevices:            len(mockCPUInfos_DualSocket_4CPUsPerSocket_HT) - 1,
+			expectedDevicesPerNUMANode: map[int]int{0: 3, 1: 4},
 		},
 		{
-			name:                         "single socket, HT off",
-			cpuInfos:                     mockCPUInfos_SingleSocket_4CPUs_HT_Off,
-			reservedCPUs:                 cpuset.New(),
-			expectPublish:                true,
-			expectedNumSlices:            1,
-			expectedDevices:              len(mockCPUInfos_SingleSocket_4CPUs_HT_Off),
-			expectedDevicesPerNUMANodeID: map[int]int{0: 4},
+			name:                       "single socket, HT off",
+			cpuInfos:                   mockCPUInfos_SingleSocket_4CPUs_HT_Off,
+			reservedCPUs:               cpuset.New(),
+			expectPublish:              true,
+			expectedNumSlices:          1,
+			expectedDevices:            len(mockCPUInfos_SingleSocket_4CPUs_HT_Off),
+			expectedDevicesPerNUMANode: map[int]int{0: 4},
 		},
 		{
-			name:                         "single socket, hybrid",
-			cpuInfos:                     mockCPUInfos_SingleSocket_Hybrid_HT,
-			reservedCPUs:                 cpuset.New(),
-			expectPublish:                true,
-			expectedNumSlices:            1,
-			expectedDevices:              len(mockCPUInfos_SingleSocket_Hybrid_HT),
-			expectedDevicesPerNUMANodeID: map[int]int{0: 4},
+			name:                       "single socket, hybrid",
+			cpuInfos:                   mockCPUInfos_SingleSocket_Hybrid_HT,
+			reservedCPUs:               cpuset.New(),
+			expectPublish:              true,
+			expectedNumSlices:          1,
+			expectedDevices:            len(mockCPUInfos_SingleSocket_Hybrid_HT),
+			expectedDevicesPerNUMANode: map[int]int{0: 4},
 		},
 		{
-			name:                         "dual socket, 4 CPUs per socker, HT on",
-			cpuInfos:                     mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
-			reservedCPUs:                 cpuset.New(),
-			expectPublish:                true,
-			expectedNumSlices:            1, // We should create just one slice with all cpus from both the NUMA nodes.
-			expectedDevices:              len(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
-			expectedDevicesPerNUMANodeID: map[int]int{0: 4, 1: 4},
+			name:                       "dual socket, 4 CPUs per socker, HT on",
+			cpuInfos:                   mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			reservedCPUs:               cpuset.New(),
+			expectPublish:              true,
+			expectedNumSlices:          1, // We should create just one slice with all cpus from both the NUMA nodes.
+			expectedDevices:            len(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
+			expectedDevicesPerNUMANode: map[int]int{0: 4, 1: 4},
 		},
 		{
-			name:                         "dual socket, 120 CPUs per socker, HT on",
-			cpuInfos:                     mockCPUInfos_DualSocket_120CPUsPerSocket_HT,
-			reservedCPUs:                 cpuset.New(),
-			expectPublish:                true,
-			expectedNumSlices:            2, // We should create 2 slices as number of CPUs on the machine exceeds 128.
-			expectedDevices:              len(mockCPUInfos_DualSocket_120CPUsPerSocket_HT),
-			expectedDevicesPerNUMANodeID: map[int]int{0: 120, 1: 120},
+			name:                       "dual socket, 120 CPUs per socker, HT on",
+			cpuInfos:                   mockCPUInfos_DualSocket_120CPUsPerSocket_HT,
+			reservedCPUs:               cpuset.New(),
+			expectPublish:              true,
+			expectedNumSlices:          2, // We should create 2 slices as number of CPUs on the machine exceeds 128.
+			expectedDevices:            len(mockCPUInfos_DualSocket_120CPUsPerSocket_HT),
+			expectedDevicesPerNUMANode: map[int]int{0: 120, 1: 120},
 		},
 		{
 			name:          "no devices to publish",
@@ -247,42 +240,42 @@ func TestPublishResources(t *testing.T) {
 		},
 		{
 			name:              "error because devices on one NUMA > maxDevicesPerResourceSlice",
-			cpuInfos:          mockCPUInfos_SingleNUMANodeIDExceedsSliceLimit,
+			cpuInfos:          mockCPUInfos_SingleNUMANodeExceedsSliceLimit,
 			reservedCPUs:      cpuset.New(),
 			expectPublish:     false,
 			expectedNumSlices: 0,
 			expectedDevices:   0,
 		},
 		{
-			name:                         "publish with reserved cpus",
-			cpuInfos:                     mockCPUInfos_SingleSocket_4CPUS_HT,
-			reservedCPUs:                 cpuset.New(0, 1),
-			expectPublish:                true,
-			expectedNumSlices:            1,
-			expectedDevices:              len(mockCPUInfos_SingleSocket_4CPUS_HT) - 2,
-			expectedDevicesPerNUMANodeID: map[int]int{0: 2},
+			name:                       "publish with reserved cpus",
+			cpuInfos:                   mockCPUInfos_SingleSocket_4CPUS_HT,
+			reservedCPUs:               cpuset.New(0, 1),
+			expectPublish:              true,
+			expectedNumSlices:          1,
+			expectedDevices:            len(mockCPUInfos_SingleSocket_4CPUS_HT) - 2,
+			expectedDevicesPerNUMANode: map[int]int{0: 2},
 		},
 		{
-			name:                         "all cpus reserved",
-			cpuInfos:                     mockCPUInfos_SingleSocket_4CPUS_HT,
-			reservedCPUs:                 cpuset.New(0, 1, 2, 3),
-			expectPublish:                false,
-			expectedNumSlices:            0, // No cpus to publish in ResourceSlice
-			expectedDevices:              0,
-			expectedDevicesPerNUMANodeID: map[int]int{},
+			name:                       "all cpus reserved",
+			cpuInfos:                   mockCPUInfos_SingleSocket_4CPUS_HT,
+			reservedCPUs:               cpuset.New(0, 1, 2, 3),
+			expectPublish:              false,
+			expectedNumSlices:          0, // No cpus to publish in ResourceSlice
+			expectedDevices:            0,
+			expectedDevicesPerNUMANode: map[int]int{},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			mockPlugin := &mockKubeletPlugin{publishError: tc.publishError}
-			mockProvider := &mockCPUInfoProvider{cpuInfos: tc.cpuInfos, err: tc.cpuInfoErr}
+			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: tc.cpuInfos, Err: tc.cpuInfoErr}
+			topo, _ := mockProvider.GetCPUTopology()
 			cp := &CPUDriver{
 				nodeName:          testNodeName,
 				draPlugin:         mockPlugin,
-				cpuIDToDeviceName: make(map[int]string),
 				deviceNameToCPUID: make(map[string]int),
-				cpuInfoProvider:   mockProvider,
+				cpuTopology:       topo,
 				reservedCPUs:      tc.reservedCPUs,
 			}
 
@@ -317,7 +310,6 @@ func TestPublishResources(t *testing.T) {
 				totalDevices += len(s.Devices)
 			}
 			require.Equal(t, tc.expectedDevices, totalDevices)
-			require.Equal(t, tc.expectedDevices, len(cp.cpuIDToDeviceName))
 			require.Equal(t, tc.expectedDevices, len(cp.deviceNameToCPUID))
 
 			// Verify device attributes
@@ -330,9 +322,9 @@ func TestPublishResources(t *testing.T) {
 			for _, slice := range pool.Slices {
 				// If we expect more than one slice, all devices in a slice should belong to the same NUMA node.
 				if tc.expectedNumSlices > 1 {
-					NUMANodeID := *slice.Devices[0].Attributes["dra.cpu/numaNodeID"].IntValue
+					numaNode := *slice.Devices[0].Attributes["dra.cpu/numaNodeID"].IntValue
 					for _, device := range slice.Devices {
-						require.Equal(t, NUMANodeID, *device.Attributes["dra.cpu/numaNodeID"].IntValue)
+						require.Equal(t, numaNode, *device.Attributes["dra.cpu/numaNodeID"].IntValue)
 					}
 				}
 
@@ -351,24 +343,28 @@ func TestPublishResources(t *testing.T) {
 					}
 					require.NotNil(t, cpuInfo, "could not find matching cpuInfo for device %s", device.Name)
 
-					NUMANodeID := int64(cpuInfo.NUMANodeID)
-					l3CacheID := int64(cpuInfo.UncoreCacheID)
+					numaNode := int64(cpuInfo.NUMANodeID)
+					CacheL3ID := int64(cpuInfo.UncoreCacheID)
 					coreType := cpuInfo.CoreType.String()
 					socketID := int64(cpuInfo.SocketID)
 
-					require.Equal(t, NUMANodeID, *device.Attributes["dra.cpu/numaNodeID"].IntValue)
-					require.Equal(t, l3CacheID, *device.Attributes["dra.cpu/l3CacheID"].IntValue)
+					require.Equal(t, numaNode, *device.Attributes["dra.cpu/numaNodeID"].IntValue)
+					require.Equal(t, CacheL3ID, *device.Attributes["dra.cpu/cacheL3ID"].IntValue)
 					require.Equal(t, coreType, *device.Attributes["dra.cpu/coreType"].StringValue)
 					require.Equal(t, socketID, *device.Attributes["dra.cpu/socketID"].IntValue)
 					devicesPerNumaInSlices[cpuInfo.NUMANodeID]++
 				}
 			}
-			require.Equal(t, len(tc.expectedDevicesPerNUMANodeID), len(devicesPerNumaInSlices))
-			for NUMANodeID, numDevices := range tc.expectedDevicesPerNUMANodeID {
-				require.Equal(t, numDevices, devicesPerNumaInSlices[NUMANodeID], "mismatch in device count for numa node %d", NUMANodeID)
+			require.Equal(t, len(tc.expectedDevicesPerNUMANode), len(devicesPerNumaInSlices))
+			for numaNode, numDevices := range tc.expectedDevicesPerNUMANode {
+				require.Equal(t, numDevices, devicesPerNumaInSlices[numaNode], "mismatch in device count for numa node %d", numaNode)
 			}
 
 			// Test if hyperthreads are given successive device names
+			cpuIDToDeviceName := make(map[int]string)
+			for devName, cpuID := range cp.deviceNameToCPUID {
+				cpuIDToDeviceName[cpuID] = devName
+			}
 			for _, info := range tc.cpuInfos {
 				if info.SiblingCpuID == -1 || info.CpuID > info.SiblingCpuID {
 					continue
@@ -378,9 +374,9 @@ func TestPublishResources(t *testing.T) {
 					continue
 				}
 
-				deviceName1, ok := cp.cpuIDToDeviceName[info.CpuID]
+				deviceName1, ok := cpuIDToDeviceName[info.CpuID]
 				require.True(t, ok, "device for cpuID %d not found in slices", info.CpuID)
-				deviceName2, ok := cp.cpuIDToDeviceName[info.SiblingCpuID]
+				deviceName2, ok := cpuIDToDeviceName[info.SiblingCpuID]
 				require.True(t, ok, "device for sibling cpuID %d not found in slices", info.SiblingCpuID)
 
 				var devNum1, devNum2 int
@@ -396,7 +392,8 @@ func TestPublishResources(t *testing.T) {
 }
 
 func TestPrepareResourceClaims(t *testing.T) {
-	mockProvider := &mockCPUInfoProvider{cpuInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
+	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
+	topo, _ := mockProvider.GetCPUTopology()
 	baseCPUDriver := func() *CPUDriver {
 		return &CPUDriver{
 			driverName: testDriverName,
@@ -404,7 +401,7 @@ func TestPrepareResourceClaims(t *testing.T) {
 				"cpudev0": 0,
 				"cpudev1": 1,
 			},
-			cpuAllocationStore: NewCPUAllocationStore(mockProvider, cpuset.New()),
+			cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
 		}
 	}
 
@@ -562,6 +559,261 @@ func TestPrepareResourceClaims(t *testing.T) {
 	}
 }
 
+func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
+	baseCPUDriver := func(groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet) *CPUDriver {
+		driver := &CPUDriver{}
+		driver.driverName = testDriverName
+		driver.cpuDeviceMode = CPU_DEVICE_MODE_GROUPED
+		driver.cpuDeviceGroupBy = groupBy
+		driver.deviceNameToSocketID = make(map[string]int)
+		driver.deviceNameToNUMANodeID = make(map[string]int)
+		mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
+		driver.cpuTopology, _ = mockProvider.GetCPUTopology()
+		driver.cpuAllocationStore = NewCPUAllocationStore(driver.cpuTopology, reservedCPUs)
+		for claimUID, cpus := range initialAllocations {
+			driver.cpuAllocationStore.AddResourceClaimAllocation(claimUID, cpus)
+		}
+
+		topo, err := mockProvider.GetCPUTopology()
+		require.NoError(t, err) // We don't expect errors in test setup
+
+		switch driver.cpuDeviceGroupBy {
+		case GROUP_BY_SOCKET:
+			for i := 0; i < topo.NumSockets; i++ {
+				driver.deviceNameToSocketID[fmt.Sprintf("%s%d", cpuDeviceSocketGroupedPrefix, i)] = i
+			}
+		case GROUP_BY_NUMA_NODE:
+			for i := 0; i < topo.NumNUMANodes; i++ {
+				driver.deviceNameToNUMANodeID[fmt.Sprintf("%snuma%d", cpuDevicePrefix, i)] = i
+			}
+		}
+		return driver
+	}
+
+	claimUID := types.UID("claim-1")
+	cdiDeviceName := getCDIDeviceName(claimUID)
+	cdiQualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, cdiDeviceName)
+
+	testCases := []struct {
+		name                    string
+		cpuInfos                []cpuinfo.CPUInfo
+		groupBy                 string
+		reservedCPUs            cpuset.CPUSet
+		initialAllocations      map[types.UID]cpuset.CPUSet
+		claims                  []*resourceapi.ResourceClaim
+		mockCdiAddError         error
+		expectedError           bool
+		expectedPreparedDevices []kubeletplugin.Device
+		expectedCPUSet          cpuset.CPUSet
+	}{
+		{
+			name:     "SocketGrouped_TopoSingleSocketHT_Alloc2CPU",
+			cpuInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
+			groupBy:  GROUP_BY_SOCKET,
+			claims:   []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2})},
+			// 2 hyperthreads from the same core is allocated
+			expectedCPUSet: cpuset.New(0, 2),
+		},
+		{
+			name:     "NUMAGrouped_TopoSingleSocketHT_Alloc2CPU",
+			cpuInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
+			groupBy:  GROUP_BY_NUMA_NODE,
+			claims:   []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2})},
+			// 2 hyperthreads from the same core is allocated
+			expectedCPUSet: cpuset.New(0, 2),
+		},
+		{
+			name:     "SocketGrouped_DualSocketHT_Alloc4CPU",
+			cpuInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			groupBy:  GROUP_BY_SOCKET,
+			claims:   []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 4})},
+			// hyperthreads from the same core is allocated
+			expectedCPUSet: cpuset.New(0, 4, 1, 5),
+		},
+		{
+			name:           "NUMAGrouped_DualSocketHT_Alloc4CPUFromNUMANode1",
+			cpuInfos:       mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			groupBy:        GROUP_BY_NUMA_NODE,
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma1": 4})},
+			expectedCPUSet: cpuset.New(2, 6, 3, 7),
+		},
+		{
+			name:         "SocketGrouped_DualSocketHT_Alloc2CPU_Socket0_WithReserved",
+			cpuInfos:     mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			groupBy:      GROUP_BY_SOCKET,
+			reservedCPUs: cpuset.New(0, 4),
+			claims:       []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2})},
+			// prefer hyperthreads on same core over lower numbered CPUs
+			expectedCPUSet: cpuset.New(1, 5),
+		},
+		{
+			name:         "NUMAGrouped_DualSocketHT_Alloc2CPU_NUMA1_WithReserved",
+			cpuInfos:     mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			groupBy:      GROUP_BY_NUMA_NODE,
+			reservedCPUs: cpuset.New(2, 6),
+			claims:       []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma1": 2})},
+			// prefer hyperthreads on same core over lower numbered CPUs
+			expectedCPUSet: cpuset.New(3, 7),
+			expectedError:  false,
+		},
+		{
+			name:          "SocketGrouped_DualSocketHT_DeviceNotFound_Socket",
+			cpuInfos:      mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			groupBy:       GROUP_BY_SOCKET,
+			claims:        []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket99": 2})},
+			expectedError: true,
+		},
+		{
+			name:          "NUMAGrouped_DualSocketHT_DeviceNotFound_NUMA",
+			cpuInfos:      mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			groupBy:       GROUP_BY_NUMA_NODE,
+			claims:        []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma99": 2})},
+			expectedError: true,
+		},
+		{
+			name:           "SocketGrouped_DualSocketHT_MultiSocketRequest",
+			cpuInfos:       mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			groupBy:        GROUP_BY_SOCKET,
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2, "cpudevsocket1": 2})},
+			expectedCPUSet: cpuset.New(0, 2, 4, 6),
+		},
+		{
+			name:           "NUMAGrouped_DualSocketHT_MultiNumaRequest",
+			cpuInfos:       mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			groupBy:        GROUP_BY_NUMA_NODE,
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2, "cpudevnuma1": 2})},
+			expectedCPUSet: cpuset.New(0, 2, 4, 6),
+		},
+		{
+			name:               "SocketGrouped_SingleSocketHT_FullAlloc_Socket",
+			cpuInfos:           mockCPUInfos_SingleSocket_4CPUS_HT,
+			groupBy:            GROUP_BY_SOCKET,
+			initialAllocations: map[types.UID]cpuset.CPUSet{"other-claim": cpuset.New(0, 2)},
+			claims:             []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2})},
+			expectedCPUSet:     cpuset.New(1, 3),
+		},
+		{
+			name:           "SocketGrouped_SingleSocketHT_AllocAllCPU",
+			cpuInfos:       mockCPUInfos_SingleSocket_4CPUS_HT,
+			groupBy:        GROUP_BY_SOCKET,
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 4})},
+			expectedCPUSet: cpuset.New(0, 1, 2, 3),
+		},
+		{
+			name:           "NUMAGrouped_DualSocketHT_AllocAllCPU_NUMA0",
+			cpuInfos:       mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			groupBy:        GROUP_BY_NUMA_NODE,
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 4})},
+			expectedCPUSet: cpuset.New(0, 1, 4, 5),
+		},
+		{
+			name:          "SocketGrouped_DualSocketHT_MoreThanAvailable",
+			cpuInfos:      mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			groupBy:       GROUP_BY_SOCKET,
+			claims:        []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 5})},
+			expectedError: true,
+		},
+		{
+			name:            "SocketGrouped_DualSocketHT_CDIError",
+			cpuInfos:        mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			groupBy:         GROUP_BY_SOCKET,
+			claims:          []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2})},
+			mockCdiAddError: fmt.Errorf("cdi error"),
+			expectedError:   true,
+		},
+		{
+			name:           "SocketGrouped_TopoSingleSocketHT_Off_Alloc2CPU",
+			cpuInfos:       mockCPUInfos_SingleSocket_4CPUs_HT_Off,
+			groupBy:        GROUP_BY_SOCKET,
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2})},
+			expectedCPUSet: cpuset.New(0, 1),
+		},
+		{
+			name:           "NUMAGrouped_TopoSingleSocketHT_Off_Alloc2CPU",
+			cpuInfos:       mockCPUInfos_SingleSocket_4CPUs_HT_Off,
+			groupBy:        GROUP_BY_NUMA_NODE,
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2})},
+			expectedCPUSet: cpuset.New(0, 1),
+		},
+		{
+			name:           "SocketGrouped_TopoSingleSocketHT_Off_AllocAllCPU",
+			cpuInfos:       mockCPUInfos_SingleSocket_4CPUs_HT_Off,
+			groupBy:        GROUP_BY_SOCKET,
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 4})},
+			expectedCPUSet: cpuset.New(0, 1, 2, 3),
+		},
+		{
+			name:          "SocketGrouped_TopoSingleSocketHT_Off_MoreThanAvailable",
+			cpuInfos:      mockCPUInfos_SingleSocket_4CPUs_HT_Off,
+			groupBy:       GROUP_BY_SOCKET,
+			claims:        []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 5})},
+			expectedError: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			driver := baseCPUDriver(tc.groupBy, tc.cpuInfos, tc.initialAllocations, tc.reservedCPUs)
+			mockCdiMgr := newMockCdiMgr()
+			mockCdiMgr.addError = tc.mockCdiAddError
+			driver.cdiMgr = mockCdiMgr
+
+			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
+			require.NoError(t, err)
+
+			if len(tc.claims) > 0 {
+				claimUID := tc.claims[0].UID
+				result := preparedClaims[claimUID]
+				if tc.expectedError {
+					require.Error(t, result.Err, "Expected error for test case: %s", tc.name)
+					require.Empty(t, result.Devices)
+				} else {
+					require.NoError(t, result.Err, "Unexpected error for test case: %s", tc.name)
+
+					// Build expected devices based on the claim request
+					expectedPreparedDevices := []kubeletplugin.Device{}
+					if tc.expectedCPUSet.Size() != 0 || tc.expectedError {
+						for _, res := range tc.claims[0].Status.Allocation.Devices.Results {
+							expectedPreparedDevices = append(expectedPreparedDevices, kubeletplugin.Device{
+								PoolName:     res.Pool,
+								DeviceName:   res.Device,
+								CDIDeviceIDs: []string{cdiQualifiedName},
+								Requests:     []string{res.Request},
+							})
+						}
+					}
+					require.ElementsMatch(t, expectedPreparedDevices, result.Devices)
+
+					envVar := mockCdiMgr.devices[cdiDeviceName]
+					parts := strings.SplitN(envVar, "=", 2)
+					// if expectedCPUSet is empty, parts[1] can be empty
+					if tc.expectedCPUSet.Size() > 0 {
+						require.Len(t, parts, 2, "CDI env var format error")
+					} else {
+						require.True(t, len(parts) == 2 || len(parts) == 1, "CDI env var format error")
+					}
+
+					actualCPUSet := cpuset.New()
+					if len(parts) == 2 && parts[1] != "" {
+						var err error
+						actualCPUSet, err = cpuset.Parse(parts[1])
+						require.NoError(t, err, "Failed to parse actual CPUSet from env var")
+					}
+					require.True(t, actualCPUSet.Equals(tc.expectedCPUSet), "Expected CPUSet %s, but got %s for test case %s", tc.expectedCPUSet.String(), actualCPUSet.String(), tc.name)
+					if tc.expectedCPUSet.Size() > 0 {
+						require.Equal(t, 1, len(mockCdiMgr.devices), "Expected 1 CDI device to be created")
+					} else {
+						require.Equal(t, 0, len(mockCdiMgr.devices), "Expected 0 CDI devices to be created")
+					}
+				}
+			} else {
+				require.Len(t, preparedClaims, 0)
+				require.Len(t, mockCdiMgr.devices, 0)
+			}
+		})
+	}
+}
+
 func TestUnprepareResourceClaims(t *testing.T) {
 	claimUID := types.UID("test-claim-uid")
 
@@ -595,10 +847,11 @@ func TestUnprepareResourceClaims(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockCdiMgr := newMockCdiMgr()
 			mockCdiMgr.removeError = tc.cdiRemoveError
-			mockProvider := &mockCPUInfoProvider{cpuInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
+			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
+			topo, _ := mockProvider.GetCPUTopology()
 			cp := &CPUDriver{
 				cdiMgr:             mockCdiMgr,
-				cpuAllocationStore: NewCPUAllocationStore(mockProvider, cpuset.New()),
+				cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
 			}
 
 			unpreparedClaims, err := cp.UnprepareResourceClaims(context.Background(), tc.claims)
@@ -613,5 +866,27 @@ func TestUnprepareResourceClaims(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func testClaim(claimUID types.UID, driverName, poolName string, consumedCapacity map[string]int64) *resourceapi.ResourceClaim {
+	results := []resourceapi.DeviceRequestAllocationResult{}
+	for device, quantity := range consumedCapacity {
+		results = append(results, resourceapi.DeviceRequestAllocationResult{
+			Driver:           driverName,
+			Pool:             poolName,
+			Device:           device,
+			ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{cpuResourceQualifiedName: *resource.NewQuantity(quantity, resource.DecimalSI)},
+		})
+	}
+	return &resourceapi.ResourceClaim{
+		ObjectMeta: metav1.ObjectMeta{UID: claimUID, Name: string(claimUID)},
+		Status: resourceapi.ResourceClaimStatus{
+			Allocation: &resourceapi.AllocationResult{
+				Devices: resourceapi.DeviceAllocationResult{
+					Results: results,
+				},
+			},
+		},
 	}
 }
