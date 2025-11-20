@@ -30,7 +30,7 @@ func newTestCPUAllocationStore(allCPUs, reserved cpuset.CPUSet) *CPUAllocationSt
 	for _, cpuID := range allCPUs.UnsortedList() {
 		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
 	}
-	mockProvider := &mockCPUInfoProvider{cpuInfos: infos}
+	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
 	return NewCPUAllocationStore(mockProvider, reserved)
 }
 

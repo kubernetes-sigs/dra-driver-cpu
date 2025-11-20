@@ -22,7 +22,9 @@ import (
 	"sort"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpumanager"
 	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
@@ -37,7 +39,103 @@ const (
 	// https://github.com/kubernetes/kubernetes/blob/8e6d788887034b799f6c2a86991a68a080bb0576/pkg/apis/resource/types.go#L245
 	maxDevicesPerResourceSlice = 128
 	cpuDevicePrefix            = "cpudev"
+
+	// Grouped Mode
+	// cpuResourceQualifiedName is the qualified name for the CPU resource capacity.
+	cpuResourceQualifiedName = "dra.cpu/cpu"
+
+	cpuDeviceSocketGroupedPrefix = "cpudevsocket"
+	cpuDeviceNUMAGroupedPrefix   = "cpudevnuma"
 )
+
+// createGroupedCPUDeviceSlices creates Device objects based on the CPU topology, grouped by a specific criteria.
+func (cp *CPUDriver) createGroupedCPUDeviceSlices() [][]resourceapi.Device {
+	topo, err := cp.cpuInfoProvider.GetCPUTopology()
+	if err != nil {
+		klog.Errorf("error getting CPU topology: %v", err)
+		return nil
+	}
+
+	klog.Info("Creating grouped CPU devices", "groupBy", cp.cpuDeviceGroupBy)
+
+	var devices []resourceapi.Device
+	allowMultipleAllocations := true
+
+	switch cp.cpuDeviceGroupBy {
+	case GROUP_BY_SOCKET:
+		for i := 0; i < topo.NumSockets; i++ {
+			socketID := int64(i)
+			deviceName := fmt.Sprintf("%s%d", cpuDeviceSocketGroupedPrefix, i)
+			socketCPUSet := topo.CPUDetails.CPUsInSockets(i)
+			allocatableCPUs := socketCPUSet.Difference(cp.reservedCPUs)
+			availableCPUsInSocket := int64(allocatableCPUs.Size())
+			hyperThreadEnabled := topo.CPUsPerCore() > 1
+
+			if allocatableCPUs.Size() == 0 {
+				continue
+			}
+
+			deviceCapacity := map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
+				cpuResourceQualifiedName: {Value: *resource.NewQuantity(availableCPUsInSocket, resource.DecimalSI)},
+			}
+
+			cp.deviceNameToSocketID[deviceName] = i
+
+			devices = append(devices, resourceapi.Device{
+				Name: deviceName,
+				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+					"dra.cpu/socketID":       {IntValue: &socketID},
+					"dra.cpu/numCPUs":        {IntValue: &availableCPUsInSocket},
+					"dra.cpu/hyperthreading": {BoolValue: &hyperThreadEnabled},
+				},
+				Capacity:                 deviceCapacity,
+				AllowMultipleAllocations: &allowMultipleAllocations,
+			})
+		}
+	case GROUP_BY_NUMA_NODE:
+		for i := 0; i < topo.NumNUMANodes; i++ {
+			numaID := int64(i)
+			deviceName := fmt.Sprintf("%snuma%d", cpuDevicePrefix, i)
+			numaNodeCPUSet := topo.CPUDetails.CPUsInNUMANodes(i)
+			allocatableCPUs := numaNodeCPUSet.Difference(cp.reservedCPUs)
+			availableCPUsInNUMANode := int64(allocatableCPUs.Size())
+			hyperThreadEnabled := topo.CPUsPerCore() > 1
+
+			if allocatableCPUs.Size() == 0 {
+				continue
+			}
+
+			// All CPUs in a NUMA node belong to the same socket.
+			anyCPU := allocatableCPUs.UnsortedList()[0]
+			socketID := int64(topo.CPUDetails[anyCPU].SocketID)
+
+			deviceCapacity := map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
+				cpuResourceQualifiedName: {Value: *resource.NewQuantity(availableCPUsInNUMANode, resource.DecimalSI)},
+			}
+
+			cp.deviceNameToNUMANodeID[deviceName] = i
+
+			devices = append(devices, resourceapi.Device{
+				Name: deviceName,
+				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+					"dra.cpu/numaNodeID":     {IntValue: &numaID},
+					"dra.cpu/socketID":       {IntValue: &socketID},
+					"dra.cpu/numCPUs":        {IntValue: &availableCPUsInNUMANode},
+					"dra.cpu/hyperthreading": {BoolValue: &hyperThreadEnabled},
+					// TODO(pravk03): Remove. Hack to align with NIC (DRANet). We need some standard attribute to align other resources with CPU.
+					"dra.net/numaNode": {IntValue: &numaID},
+				},
+				Capacity:                 deviceCapacity,
+				AllowMultipleAllocations: &allowMultipleAllocations,
+			})
+		}
+	}
+
+	if len(devices) == 0 {
+		return nil
+	}
+	return [][]resourceapi.Device{devices}
+}
 
 // CreateCPUDeviceSlices creates Device objects based on the CPU topology.
 // It groups CPUs by physical core to assign consecutive device IDs to hyperthreads.
@@ -92,20 +190,19 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 	for _, group := range coreGroups {
 		for _, cpu := range group {
 			numaNode := int64(cpu.NUMANodeID)
-			l3CacheID := int64(cpu.L3CacheID)
+			cacheL3ID := int64(cpu.L3CacheID)
 			socketID := int64(cpu.SocketID)
 			coreID := int64(cpu.CoreID)
 			cpuID := int64(cpu.CpuID)
 			coreType := cpu.CoreType.String()
 			deviceName := fmt.Sprintf("%s%d", cpuDevicePrefix, devId)
 			devId++
-			cp.cpuIDToDeviceName[cpu.CpuID] = deviceName
 			cp.deviceNameToCPUID[deviceName] = cpu.CpuID
 			cpuDevice := resourceapi.Device{
 				Name: deviceName,
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 					"dra.cpu/numaNodeID": {IntValue: &numaNode},
-					"dra.cpu/l3CacheID":  {IntValue: &l3CacheID},
+					"dra.cpu/cacheL3ID":  {IntValue: &cacheL3ID},
 					"dra.cpu/coreType":   {StringValue: &coreType},
 					"dra.cpu/socketID":   {IntValue: &socketID},
 					"dra.cpu/coreID":     {IntValue: &coreID},
@@ -160,7 +257,13 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 func (cp *CPUDriver) PublishResources(ctx context.Context) {
 	klog.Infof("Publishing resources")
 
-	deviceChunks := cp.createCPUDeviceSlices()
+	var deviceChunks [][]resourceapi.Device
+	if cp.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
+		deviceChunks = cp.createGroupedCPUDeviceSlices()
+	} else {
+		deviceChunks = cp.createCPUDeviceSlices()
+	}
+
 	if deviceChunks == nil {
 		klog.Infof("No devices to publish or error occurred.")
 		return
@@ -195,13 +298,106 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 	}
 
 	for _, claim := range claims {
-		result[claim.UID] = cp.prepareResourceClaim(ctx, claim)
+		if cp.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
+			klog.Infof("Claim %s/%s is for a grouped resource", claim.Namespace, claim.Name)
+			result[claim.UID] = cp.prepareGroupedResourceClaim(ctx, claim)
+		} else {
+			klog.Infof("Claim %s/%s is for an individual resource", claim.Namespace, claim.Name)
+			result[claim.UID] = cp.prepareResourceClaim(ctx, claim)
+		}
 	}
 	return result, nil
 }
 
 func getCDIDeviceName(uid types.UID) string {
 	return fmt.Sprintf("claim-%s", uid)
+}
+
+func (cp *CPUDriver) prepareGroupedResourceClaim(ctx context.Context, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
+	klog.Infof("prepareResourceClaim claim:%s/%s", claim.Namespace, claim.Name)
+
+	if claim.Status.Allocation == nil {
+		return kubeletplugin.PrepareResult{
+			Err: fmt.Errorf("claim %s/%s has no allocation", claim.Namespace, claim.Name),
+		}
+	}
+
+	var cpuAssignment cpuset.CPUSet
+	for _, alloc := range claim.Status.Allocation.Devices.Results {
+		claimCPUCount := int64(0)
+		if alloc.Driver != cp.driverName {
+			continue
+		}
+		if quantity, ok := alloc.ConsumedCapacity[cpuResourceQualifiedName]; ok {
+			count := quantity.Value()
+			claimCPUCount = count
+			klog.Infof("Found request for %d CPUs in device %s for claim %s", count, alloc.Device, claim.Name)
+		}
+
+		topo, err := cp.cpuInfoProvider.GetCPUTopology()
+		if err != nil {
+			klog.Errorf("error getting CPU topology: %v", err)
+			return kubeletplugin.PrepareResult{Err: err}
+		}
+
+		var availableCPUsForDevice cpuset.CPUSet
+		if cp.cpuDeviceGroupBy == GROUP_BY_SOCKET {
+			socketID, ok := cp.deviceNameToSocketID[alloc.Device]
+			if !ok {
+				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid socket ID found for device %s", alloc.Device)}
+			}
+			socketCPUs := topo.CPUDetails.CPUsInSockets(socketID)
+			availableCPUsForDevice = cp.cpuAllocationStore.GetSharedCPUs().Intersection(socketCPUs)
+			klog.Infof("Socket %d CPUs:%s available CPUs: %s", socketID, socketCPUs.String(), availableCPUsForDevice.String())
+		} else { // numanode
+			numaNodeID, ok := cp.deviceNameToNUMANodeID[alloc.Device]
+			if !ok {
+				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid NUMA node ID found for device %s", alloc.Device)}
+			}
+			numaCPUs := topo.CPUDetails.CPUsInNUMANodes(numaNodeID)
+			availableCPUsForDevice = cp.cpuAllocationStore.GetSharedCPUs().Intersection(numaCPUs)
+			klog.Infof("NUMA node %d CPUs:%s available CPUs: %s", numaNodeID, numaCPUs.String(), availableCPUsForDevice.String())
+		}
+
+		logger := klog.FromContext(ctx)
+		cur, err := cpumanager.TakeByTopologyNUMAPacked(logger, topo, availableCPUsForDevice, int(claimCPUCount), cpumanager.CPUSortingStrategyPacked, true)
+		if err != nil {
+			return kubeletplugin.PrepareResult{Err: err}
+		}
+		cpuAssignment = cpuAssignment.Union(cur)
+		klog.Infof("CPU assignment for device %s: %s. All cpus assigned:%s", alloc.Device, cur.String(), cpuAssignment.String())
+	}
+
+	if cpuAssignment.Size() == 0 {
+		klog.V(5).Infof("prepareResourceClaim claim:%s/%s has no CPU allocations for this driver", claim.Namespace, claim.Name)
+		return kubeletplugin.PrepareResult{}
+	}
+
+	cp.cpuAllocationStore.AddResourceClaimAllocation(claim.UID, cpuAssignment)
+
+	deviceName := getCDIDeviceName(claim.UID)
+	envVar := fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claim.UID, cpuAssignment.String())
+	if err := cp.cdiMgr.AddDevice(deviceName, envVar); err != nil {
+		return kubeletplugin.PrepareResult{Err: err}
+	}
+
+	qualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, deviceName)
+	klog.Infof("prepareResourceClaim CDIDeviceName:%s envVar:%s qualifiedName:%v", deviceName, envVar, qualifiedName)
+	preparedDevices := []kubeletplugin.Device{}
+	for _, allocResult := range claim.Status.Allocation.Devices.Results {
+		preparedDevice := kubeletplugin.Device{
+			PoolName:     allocResult.Pool,
+			DeviceName:   allocResult.Device,
+			CDIDeviceIDs: []string{qualifiedName},
+			Requests:     []string{allocResult.Request},
+		}
+		preparedDevices = append(preparedDevices, preparedDevice)
+	}
+
+	klog.Infof("prepareResourceClaim preparedDevices:%+v", preparedDevices)
+	return kubeletplugin.PrepareResult{
+		Devices: preparedDevices,
+	}
 }
 
 func (cp *CPUDriver) prepareResourceClaim(_ context.Context, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {

@@ -72,7 +72,7 @@ TESTING_IMAGE_NAME := ${REGISTRY}/${IMAGE_NAME}-test
 # tag based on date-sha
 GIT_VERSION := $(shell date +v%Y%m%d)-$(shell git rev-parse --short HEAD)
 ifneq ($(shell git status --porcelain),)
-	GIT_VERSION := $(GIT_VERSION)-dirty
+    GIT_VERSION := $(GIT_VERSION)-dirty
 endif
 TAG ?= $(GIT_VERSION)
 # the full image tag
