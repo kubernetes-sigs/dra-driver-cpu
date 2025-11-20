@@ -91,8 +91,8 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 	devicesByNuma := make(map[int64][]resourceapi.Device)
 	for _, group := range coreGroups {
 		for _, cpu := range group {
-			numaNode := int64(cpu.NumaNode)
-			l3CacheID := int64(cpu.L3CacheID)
+			numaNode := int64(cpu.NUMANodeID)
+			l3CacheID := int64(cpu.UncoreCacheID)
 			socketID := int64(cpu.SocketID)
 			coreID := int64(cpu.CoreID)
 			cpuID := int64(cpu.CpuID)
@@ -104,12 +104,12 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 			cpuDevice := resourceapi.Device{
 				Name: deviceName,
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					"dra.cpu/numaNode":  {IntValue: &numaNode},
-					"dra.cpu/l3CacheID": {IntValue: &l3CacheID},
-					"dra.cpu/coreType":  {StringValue: &coreType},
-					"dra.cpu/socketID":  {IntValue: &socketID},
-					"dra.cpu/coreID":    {IntValue: &coreID},
-					"dra.cpu/cpuID":     {IntValue: &cpuID},
+					"dra.cpu/numaNodeID": {IntValue: &numaNode},
+					"dra.cpu/l3CacheID":  {IntValue: &l3CacheID},
+					"dra.cpu/coreType":   {StringValue: &coreType},
+					"dra.cpu/socketID":   {IntValue: &socketID},
+					"dra.cpu/coreID":     {IntValue: &coreID},
+					"dra.cpu/cpuID":      {IntValue: &cpuID},
 					// TODO(pravk03): Remove. Hack to align with NIC (DRANet). We need some standard attribute to align other resources with CPU.
 					"dra.net/numaNode": {IntValue: &numaNode},
 				},

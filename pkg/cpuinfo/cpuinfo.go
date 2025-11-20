@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/cpuset"
 )
 
@@ -96,8 +97,8 @@ type CPUInfo struct {
 	// SocketID is the physical socket ID
 	SocketID int `json:"socketID"`
 
-	// NumaNode is the NUMA node ID, unique within each SocketID
-	NumaNode int `json:"numaNode"`
+	// NUMANodeID is the NUMA node ID, unique within each SocketID
+	NUMANodeID int `json:"numaNodeID"`
 
 	// NUMA Node Affinity Mask
 	NumaNodeAffinityMask string `json:"numaNodeAffinityMask"`
@@ -108,8 +109,23 @@ type CPUInfo struct {
 	// Core Type (e-core or p-core)
 	CoreType CoreType `json:"coreType,omitempty"`
 
-	// L3CacheID is the L3 cache ID
-	L3CacheID int64 `json:"l3CacheID"`
+	// UncoreCacheID is the L3 cache ID
+	UncoreCacheID int `json:"uncoreCacheID"`
+}
+
+// CPUTopology contains details of node cpu, where :
+// CPU  - logical CPU, cadvisor - thread
+// Core - physical CPU, cadvisor - Core
+// Socket - socket, cadvisor - Socket
+// NUMA Node - NUMA cell, cadvisor - Node
+// UncoreCache - Split L3 Cache Topology, cadvisor
+type CPUTopology struct {
+	NumCPUs        int
+	NumCores       int
+	NumUncoreCache int
+	NumSockets     int
+	NumNUMANodes   int
+	CPUDetails     CPUDetails
 }
 
 // SystemCPUInfo provides information about the CPUs on the system.
@@ -118,6 +134,46 @@ type SystemCPUInfo struct{}
 // NewSystemCPUInfo creates a new SystemCPUInfo.
 func NewSystemCPUInfo() *SystemCPUInfo {
 	return &SystemCPUInfo{}
+}
+
+// GetCPUTopology returns the CPUTopology of the system.
+func (s *SystemCPUInfo) GetCPUTopology() (*CPUTopology, error) {
+	cpuInfos, err := s.GetCPUInfos()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get CPU infos: %w", err)
+	}
+
+	cpuDetails := make(CPUDetails)
+	sockets := sets.NewInt()
+	numaNodes := sets.NewInt()
+	type coreIdent struct {
+		SocketID int
+		coreID   int
+	}
+	cores := sets.New[coreIdent]()
+	uncoreCaches := sets.NewInt()
+
+	for i := range cpuInfos {
+		info := cpuInfos[i]
+		cpuDetails[info.CpuID] = info
+		sockets.Insert(info.SocketID)
+		numaNodes.Insert(info.NUMANodeID)
+		// A core is unique by socket and core id
+		coreKey := coreIdent{SocketID: info.SocketID, coreID: info.CoreID}
+		cores[coreKey] = struct{}{}
+		if info.UncoreCacheID != -1 {
+			uncoreCaches.Insert(info.UncoreCacheID)
+		}
+	}
+
+	return &CPUTopology{
+		NumCPUs:        len(cpuInfos),
+		NumCores:       len(cores),
+		NumSockets:     sockets.Len(),
+		NumNUMANodes:   numaNodes.Len(),
+		NumUncoreCache: uncoreCaches.Len(),
+		CPUDetails:     cpuDetails,
+	}, nil
 }
 
 // GetCPUInfos returns a slice of CPUInfo structs, one for each logical CPU.
@@ -158,6 +214,14 @@ func (s *SystemCPUInfo) GetCPUInfos() ([]CPUInfo, error) {
 			cpuInfoLines = append(cpuInfoLines, line)
 		}
 	}
+	// Process the last block of cpu info.
+	if len(cpuInfoLines) > 0 {
+		cpuInfo := parseCPUInfo(isHybrid, eCoreCpus, cpuInfoLines...)
+		if cpuInfo != nil {
+			cpuInfos = append(cpuInfos, *cpuInfo)
+		}
+	}
+
 	if err := populateTopologyInfo(cpuInfos); err != nil {
 		return nil, fmt.Errorf("failed to populate topology info: %w", err)
 	}
@@ -173,9 +237,9 @@ func parseCPUInfo(isHybrid bool, eCoreCpus cpuset.CPUSet, lines ...string) *CPUI
 		CpuID:                -1,
 		SocketID:             -1,
 		CoreID:               -1,
-		NumaNode:             -1,
+		NUMANodeID:           -1,
 		NumaNodeAffinityMask: "",
-		L3CacheID:            -1,
+		UncoreCacheID:        -1,
 		SiblingCpuID:         -1,
 		CoreType:             CoreTypeUndefined,
 	}
@@ -223,7 +287,7 @@ func parseCPUInfo(isHybrid bool, eCoreCpus cpuset.CPUSet, lines ...string) *CPUI
 
 func populateL3CacheIDs(cpuInfos []CPUInfo) error {
 	for i := range cpuInfos {
-		if cpuInfos[i].L3CacheID != -1 {
+		if cpuInfos[i].UncoreCacheID != -1 {
 			continue
 		}
 
@@ -270,7 +334,7 @@ func populateL3CacheIDs(cpuInfos []CPUInfo) error {
 				// Update the L3Cache ID for all the cpus with the same cache.
 				for j := range cpuInfos {
 					if sharedCPUSet.Contains(cpuInfos[j].CpuID) {
-						cpuInfos[j].L3CacheID = id
+						cpuInfos[j].UncoreCacheID = int(id)
 					}
 				}
 				break
@@ -313,7 +377,7 @@ func populateTopologyInfo(cpuInfos []CPUInfo) error {
 				if err != nil {
 					continue // Should not happen with a well-formed sysfs
 				}
-				cpuInfos[i].NumaNode = int(nodeID)
+				cpuInfos[i].NUMANodeID = int(nodeID)
 				foundNode = true
 
 				//  Get NUMA Affinity Mask (from cache if possible)
@@ -452,4 +516,32 @@ func combinePath(value string, combineWith ...string) string {
 		copy(all[1:], combineWith)
 		return filepath.Join(all...)
 	}
+}
+
+// TODO: Refactor topology representation to handle asymmetric CPU distributions.
+// The current funcs CPUsPerCore, CPUsPerSocket, CPUsPerUncore assume symmetry
+// and would be inaccurate if CPUs are offlined asymmetrically or on heterogeneous systems.
+// See https://github.com/kubernetes-sigs/dra-driver-cpu/pull/16#discussion_r2588301122
+func (t *CPUTopology) CPUsPerCore() int {
+	if t.NumCores == 0 {
+		return 0
+	}
+	return t.NumCPUs / t.NumCores
+}
+
+func (t *CPUTopology) CPUsPerSocket() int {
+	if t.NumSockets == 0 {
+		return 0
+	}
+	return t.NumCPUs / t.NumSockets
+}
+
+func (t *CPUTopology) CPUsPerUncore() int {
+	if t.NumUncoreCache == 0 {
+		// Avoid division by zero. If there are no uncore caches, then
+		// no CPUs can be in one.
+		return 0
+	}
+	// Note: this is an approximation that assumes all uncore caches have the same number of CPUs.
+	return t.NumCPUs / t.NumUncoreCache
 }
