@@ -37,5 +37,5 @@ go.work.sum
 #  Partial files needed to regenerate the CI install file
 hack/ci/*.part.yaml
 #  The CI install files itself is gonna change at every PR (hash change)
-hack/ci/install-ci.yaml
-hack/ci/install-ci-reserved-cpus.yaml
+hack/ci/install-ci-individual-mode.yaml
+hack/ci/install-ci-grouped-mode.yaml

@@ -11,7 +11,7 @@ defaults:
     shell: bash
 
 jobs:
-  e2e-base:
+  e2e-individual-mode:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -22,14 +22,14 @@ jobs:
     - name: Kind version check
       run: kind version
     - name: Create and setup K8S kind cluster
-      run: make ci-kind-setup
+      run: make ci-kind-setup-individual-mode
     - name: Run E2E tests
-      run: KUBECONFIG=${HOME}/.kube/config make test-e2e-base
+      run: KUBECONFIG=${HOME}/.kube/config make test-e2e-individual-mode
     - name: Show logs on failure
       if: ${{ failure() }}
       run: |
         kubectl get pods -A -o wide
-  e2e-reserved-cpus:
+  e2e-grouped-mode:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -40,9 +40,9 @@ jobs:
     - name: Kind version check
       run: kind version
     - name: Create and setup K8S kind cluster
-      run: make ci-kind-setup-reserved-cpus
+      run: make ci-kind-setup-grouped-mode
     - name: Run E2E tests
-      run: KUBECONFIG=${HOME}/.kube/config make test-e2e-reserved-cpus
+      run: KUBECONFIG=${HOME}/.kube/config make test-e2e-grouped-mode
     - name: Show logs on failure
       if: ${{ failure() }}
       run: |

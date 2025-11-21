@@ -101,9 +101,9 @@ func TestCreateContainer(t *testing.T) {
 
 	var infos []cpuinfo.CPUInfo
 	for _, cpuID := range allCPUs.UnsortedList() {
-		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NumaNode: 0})
+		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
 	}
-	mockProvider := &mockCPUInfoProvider{cpuInfos: infos}
+	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
 
 	// newTestContainer is a local helper to simplify test case definitions.
 	newTestContainer := func(claimUID, cpus string) *api.Container {
@@ -244,9 +244,9 @@ func TestRemoveContainer(t *testing.T) {
 
 	var infos []cpuinfo.CPUInfo
 	for _, cpuID := range allCPUs.UnsortedList() {
-		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NumaNode: 0})
+		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
 	}
-	mockProvider := &mockCPUInfoProvider{cpuInfos: infos}
+	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
 
 	testCases := []struct {
 		name                   string
@@ -309,7 +309,7 @@ func TestNRISynchronize(t *testing.T) {
 	for _, cpuID := range allCPUs.UnsortedList() {
 		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID})
 	}
-	mockProvider := &mockCPUInfoProvider{cpuInfos: infos}
+	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
 
 	pod1 := &api.PodSandbox{Id: "pod-id-1", Name: "my-pod-1", Namespace: "my-ns", Uid: "pod-uid-1"}
 	pod2 := &api.PodSandbox{Id: "pod-id-2", Name: "my-pod-2", Namespace: "my-ns", Uid: "pod-uid-2"}
