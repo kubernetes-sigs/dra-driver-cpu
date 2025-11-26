@@ -72,7 +72,7 @@ func (c *CoreType) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	key := strings.ToLower(s)
-	switch s {
+	switch key {
 	case "standard":
 		*c = CoreTypeStandard
 	case "p-core":
