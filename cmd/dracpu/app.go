@@ -91,7 +91,9 @@ func main() {
 	}
 
 	go func() {
-		_ = server.ListenAndServe()
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			klog.Errorf("HTTP server failed: %v", err)
+		}
 	}()
 
 	var config *rest.Config
