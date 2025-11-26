@@ -194,13 +194,27 @@ func parseCPUInfo(isHybrid bool, eCoreCpus cpuset.CPUSet, lines ...string) *CPUI
 		key := strings.TrimSpace(fields[0])
 		value := strings.TrimSpace(fields[1])
 
+		var val int
+		var err error
 		switch key {
 		case "processor":
-			cpuInfo.CpuID = parseInt(value)
+			if val, err = strconv.Atoi(value); err != nil {
+				log.Printf("Warning: failed to parse processor ID %q: %v", value, err)
+			} else {
+				cpuInfo.CpuID = val
+			}
 		case "physical id":
-			cpuInfo.SocketID = parseInt(value)
+			if val, err = strconv.Atoi(value); err != nil {
+				log.Printf("Warning: failed to parse physical ID %q: %v", value, err)
+			} else {
+				cpuInfo.SocketID = val
+			}
 		case "core id":
-			cpuInfo.CoreID = parseInt(value)
+			if val, err = strconv.Atoi(value); err != nil {
+				log.Printf("Warning: failed to parse core ID %q: %v", value, err)
+			} else {
+				cpuInfo.CoreID = val
+			}
 		}
 	}
 
@@ -386,14 +400,6 @@ func formatAffinityMask(mask string) string {
 		return "0x0"
 	}
 	return "0x" + newMask
-}
-
-func parseInt(str string) int {
-	val, err := strconv.Atoi(str)
-	if err != nil {
-		panic(err)
-	}
-	return val
 }
 
 // ReadFile reads contents from a file.
