@@ -465,3 +465,103 @@ func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
 		})
 	}
 }
+
+func TestSMTDetection(t *testing.T) {
+	testCases := []struct {
+		name          string
+		topology      fakeCPUTopology
+		createSMTFile bool
+		smtContent    string
+		expectedSMT   bool
+	}{
+		{
+			name: "SMT on from sysfs",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 1, cpusPerCore: 2, coresPerL3: 1,
+			},
+			createSMTFile: true,
+			smtContent:    "on\n",
+			expectedSMT:   true,
+		},
+		{
+			name: "SMT off from sysfs",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 1, cpusPerCore: 1, coresPerL3: 1,
+			},
+			createSMTFile: true,
+			smtContent:    "off\n",
+			expectedSMT:   false,
+		},
+		{
+			name: "SMT forceoff from sysfs",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 1, cpusPerCore: 2, coresPerL3: 1,
+			},
+			createSMTFile: true,
+			smtContent:    "forceoff\n",
+			expectedSMT:   false,
+		},
+		{
+			name: "SMT notsupported from sysfs",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 1, cpusPerCore: 1, coresPerL3: 1,
+			},
+			createSMTFile: true,
+			smtContent:    "notsupported\n",
+			expectedSMT:   false,
+		},
+		{
+			name: "SMT unknown content from sysfs",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 1, cpusPerCore: 2, coresPerL3: 1,
+			},
+			createSMTFile: true,
+			smtContent:    "unknown\n", // Should fallback
+			expectedSMT:   true,
+		},
+		{
+			name: "Fallback SMT on - sysfs file missing",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 2, cpusPerCore: 2, coresPerL3: 2,
+			},
+			createSMTFile: false,
+			expectedSMT:   true,
+		},
+		{
+			name: "Fallback SMT off - sysfs file missing",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 2, cpusPerCore: 1, coresPerL3: 2,
+			},
+			createSMTFile: false,
+			expectedSMT:   false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("HOST_ROOT", tmpDir)
+			createFakeCPUTopology(t, tmpDir, tc.topology)
+
+			if tc.createSMTFile {
+				smtFile := filepath.Join(tmpDir, "sys/devices/system/cpu/smt/control")
+				if err := os.MkdirAll(filepath.Dir(smtFile), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(smtFile, []byte(tc.smtContent), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			provider := NewSystemCPUInfo()
+			topo, err := provider.GetCPUTopology()
+			if err != nil {
+				t.Fatalf("GetCPUTopology() failed: %v", err)
+			}
+
+			if topo.SMTEnabled != tc.expectedSMT {
+				t.Errorf("expected SMTEnabled to be %v, got %v", tc.expectedSMT, topo.SMTEnabled)
+			}
+		})
+	}
+}

@@ -125,6 +125,7 @@ type CPUTopology struct {
 	NumUncoreCache int
 	NumSockets     int
 	NumNUMANodes   int
+	SMTEnabled     bool
 	CPUDetails     CPUDetails
 }
 
@@ -166,14 +167,38 @@ func (s *SystemCPUInfo) GetCPUTopology() (*CPUTopology, error) {
 		}
 	}
 
+	smtEnabled, err := s.IsSMTEnabled()
+	if err != nil {
+		log.Printf("Warning: could not determine SMT status from sysfs: %v. Falling back to CPU/Core count.", err)
+		smtEnabled = len(cpuInfos) > len(cores)
+	}
+
 	return &CPUTopology{
 		NumCPUs:        len(cpuInfos),
 		NumCores:       len(cores),
 		NumSockets:     sockets.Len(),
 		NumNUMANodes:   numaNodes.Len(),
 		NumUncoreCache: uncoreCaches.Len(),
+		SMTEnabled:     smtEnabled,
 		CPUDetails:     cpuDetails,
 	}, nil
+}
+
+// IsSMTEnabled checks if SMT is enabled on the system by reading /sys/devices/system/cpu/smt/control.
+func (s *SystemCPUInfo) IsSMTEnabled() (bool, error) {
+	status, err := ReadFile(hostSys("devices/system/cpu/smt/control"))
+	if err != nil {
+		return false, err
+	}
+
+	status = strings.TrimSpace(strings.ToLower(status))
+	if status == "on" {
+		return true, nil
+	}
+	if status == "off" || status == "forceoff" || status == "notsupported" {
+		return false, nil
+	}
+	return false, fmt.Errorf("unknown SMT status: %s", status)
 }
 
 // GetCPUInfos returns a slice of CPUInfo structs, one for each logical CPU.

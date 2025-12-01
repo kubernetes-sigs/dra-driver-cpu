@@ -55,6 +55,8 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices() [][]resourceapi.Device {
 	var devices []resourceapi.Device
 
 	topo := cp.cpuTopology
+	smtEnabled := topo.SMTEnabled
+
 	switch cp.cpuDeviceGroupBy {
 	case GROUP_BY_SOCKET:
 		socketIDs := topo.CPUDetails.Sockets().List()
@@ -64,7 +66,6 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices() [][]resourceapi.Device {
 			socketCPUSet := topo.CPUDetails.CPUsInSockets(socketIDInt)
 			allocatableCPUs := socketCPUSet.Difference(cp.reservedCPUs)
 			availableCPUsInSocket := int64(allocatableCPUs.Size())
-			smtEnabled := topo.CPUsPerCore() > 1
 
 			if allocatableCPUs.Size() == 0 {
 				continue
@@ -95,7 +96,6 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices() [][]resourceapi.Device {
 			numaNodeCPUSet := topo.CPUDetails.CPUsInNUMANodes(numaIDInt)
 			allocatableCPUs := numaNodeCPUSet.Difference(cp.reservedCPUs)
 			availableCPUsInNUMANode := int64(allocatableCPUs.Size())
-			smtEnabled := topo.CPUsPerCore() > 1
 
 			if allocatableCPUs.Size() == 0 {
 				continue
