@@ -38,7 +38,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	klog.Infof("Synchronized state with the runtime (%d pods, %d containers)...",
 		len(pods), len(containers))
 
-	cpuAllocationStore := NewCPUAllocationStore(cp.cpuInfoProvider, cp.reservedCPUs)
+	cpuAllocationStore := NewCPUAllocationStore(cp.cpuTopology, cp.reservedCPUs)
 	podConfigStore := NewPodConfigStore()
 
 	for _, pod := range pods {

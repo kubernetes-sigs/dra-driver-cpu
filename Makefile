@@ -143,18 +143,18 @@ define generate_ci_manifest
 	@rm hack/ci/*.part.yaml
 endef
 
-ci-manifests: install.yaml install-yq ## create the CI install manifests
-	$(call generate_ci_manifest,hack/ci/install-ci.yaml)
+RESERVED_CPUS_E2E ?= 0
+ci-manifests-individual-mode: install.yaml install-yq ## create the CI install manifests for the individual mode test variant
+	$(call generate_ci_manifest,hack/ci/install-ci-individual-mode.yaml,.spec.template.spec.containers[0].args |= (del(.[] | select(. == "--cpu-device-mode=*")) | . + ["--cpu-device-mode=individual", "--reserved-cpus=$(RESERVED_CPUS_E2E)"]))
 
-ci-kind-setup: ci-manifests build-image build-test-image ## setup a CI cluster from scratch
-	$(call kind_setup,hack/ci/install-ci.yaml)
+ci-kind-setup-individual-mode: ci-manifests-individual-mode build-image build-test-image ## setup a CI cluster from scratch for the reserved cpus test variant
+	$(call kind_setup,hack/ci/install-ci-individual-mode.yaml)
 
-RESERVED_CPUS_E2E ?= 0,1
-ci-manifests-reserved-cpus: install.yaml install-yq ## create the CI install manifests for the reserved cpus test variant
-	$(call generate_ci_manifest,hack/ci/install-ci-reserved-cpus.yaml,.spec.template.spec.containers[0].args += "--reserved-cpus=$(RESERVED_CPUS_E2E)")
+ci-manifests-grouped-mode: install.yaml install-yq ## create the CI install manifests for the grouped mode test variant
+	$(call generate_ci_manifest,hack/ci/install-ci-grouped-mode.yaml,.spec.template.spec.containers[0].args |= (del(.[] | select(. == "--cpu-device-mode=*")) | . + ["--cpu-device-mode=grouped", "--reserved-cpus=$(RESERVED_CPUS_E2E)"]))
 
-ci-kind-setup-reserved-cpus: ci-manifests-reserved-cpus build-image build-test-image ## setup a CI cluster from scratch for the reserved cpus test variant
-	$(call kind_setup,hack/ci/install-ci-reserved-cpus.yaml)
+ci-kind-setup-grouped-mode: ci-manifests-grouped-mode build-image build-test-image ## setup a CI cluster from scratch for the reserved cpus test variant
+	$(call kind_setup,hack/ci/install-ci-grouped-mode.yaml)
 
 build-test-image: ## build tests image
 	docker buildx build . \
@@ -169,11 +169,11 @@ build-test-dracputester: ## build helper to serve as entry point and report cpu 
 build-test-dracpuinfo: ## build helper to expose hardware info in the internal dracpu format
 	go build -v -o "$(OUT_DIR)/dracpuinfo" ./test/image/dracpuinfo
 
-test-e2e-base: ## run e2e test base suite
-	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) go test -v ./test/e2e/ --ginkgo.v
+test-e2e-individual-mode: ## run e2e test reserved cpus suite
+	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(RESERVED_CPUS_E2E) DRACPU_E2E_CPU_DEVICE_MODE=individual go test -v ./test/e2e/ --ginkgo.v
 
-test-e2e-reserved-cpus: ## run e2e test reserved cpus suite
-	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(RESERVED_CPUS_E2E) go test -v ./test/e2e/ --ginkgo.v
+test-e2e-grouped-mode: ## run e2e test grouped mode suite
+	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(RESERVED_CPUS_E2E) DRACPU_E2E_CPU_DEVICE_MODE=grouped go test -v ./test/e2e/ --ginkgo.v
 
 lint:  ## run the linter against the codebase
 	$(GOLANGCI_LINT) run ./...

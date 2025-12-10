@@ -153,6 +153,7 @@ spec:
         args:
         - /dracpu
         - --v=4
+        - --cpu-device-mode=grouped
         image: us-central1-docker.pkg.dev/k8s-staging-images/dra-driver-cpu/dra-driver-cpu:latest
         imagePullPolicy: Always
         resources:

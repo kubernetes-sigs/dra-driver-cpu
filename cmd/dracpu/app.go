@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -47,12 +48,58 @@ var (
 	bindAddress      string
 	reservedCPUs     string
 	ready            atomic.Bool
+	cpuDeviceMode    string
+	groupBy          string
 )
+
+type cpuDeviceModeValue struct {
+	value *string
+}
+
+func newCPUDeviceModeValue(val *string, def string) *cpuDeviceModeValue {
+	*val = def
+	return &cpuDeviceModeValue{value: val}
+}
+
+func (v *cpuDeviceModeValue) String() string {
+	return *v.value
+}
+
+func (v *cpuDeviceModeValue) Set(s string) error {
+	if s != driver.CPU_DEVICE_MODE_GROUPED && s != driver.CPU_DEVICE_MODE_INDIVIDUAL {
+		return fmt.Errorf("invalid value: %q, must be %s or %s", s, driver.CPU_DEVICE_MODE_GROUPED, driver.CPU_DEVICE_MODE_INDIVIDUAL)
+	}
+	*v.value = s
+	return nil
+}
+
+type groupByValue struct {
+	value *string
+}
+
+func newGroupByValue(val *string, def string) *groupByValue {
+	*val = def
+	return &groupByValue{value: val}
+}
+
+func (v *groupByValue) String() string {
+	return *v.value
+}
+
+func (v *groupByValue) Set(s string) error {
+	if s != driver.GROUP_BY_SOCKET && s != driver.GROUP_BY_NUMA_NODE {
+		return fmt.Errorf("invalid value: %q, must be %s or %s", s, driver.GROUP_BY_SOCKET, driver.GROUP_BY_NUMA_NODE)
+	}
+	*v.value = s
+	return nil
+}
 
 func init() {
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
 	flag.StringVar(&hostnameOverride, "hostname-override", "", "If non-empty, will be used as the name of the Node that kube-network-policies is running on. If unset, the node name is assumed to be the same as the node's hostname.")
 	flag.StringVar(&reservedCPUs, "reserved-cpus", "", "cpuset of CPUs to be excluded from ResourceSlice.")
+	flag.Var(newCPUDeviceModeValue(&cpuDeviceMode, driver.CPU_DEVICE_MODE_GROUPED), "cpu-device-mode", "Sets the mode for exposing CPU devices. 'grouped' exposes a single device per socket or numa node (based on --group-by). 'individual' exposes each CPU as a separate device.")
+	flag.Var(newGroupByValue(&groupBy, driver.GROUP_BY_NUMA_NODE), "group-by", "When --cpu-device-mode=grouped, sets the criteria for grouping CPUs. Can be set to 'socket' or 'numanode'.")
 }
 
 func main() {
@@ -133,9 +180,11 @@ func main() {
 	signal.Notify(signalCh, os.Interrupt, unix.SIGINT)
 
 	driverConfig := &driver.Config{
-		DriverName:   driverName,
-		NodeName:     nodeName,
-		ReservedCPUs: reservedCPUSet,
+		DriverName:       driverName,
+		NodeName:         nodeName,
+		ReservedCPUs:     reservedCPUSet,
+		CpuDeviceMode:    cpuDeviceMode,
+		CPUDeviceGroupBy: groupBy,
 	}
 	dracpu, err := driver.Start(ctx, clientset, driverConfig)
 	if err != nil {

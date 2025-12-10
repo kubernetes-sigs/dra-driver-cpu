@@ -34,6 +34,20 @@ import (
 )
 
 const (
+	// CPU_DEVICE_MODE_GROUPED exposes a single device for a group of CPUs.
+	CPU_DEVICE_MODE_GROUPED = "grouped"
+	// CPU_DEVICE_MODE_INDIVIDUAL exposes each CPU as a separate device.
+	CPU_DEVICE_MODE_INDIVIDUAL = "individual"
+)
+
+const (
+	// GROUP_BY_SOCKET groups CPUs by socket.
+	GROUP_BY_SOCKET = "socket"
+	// GROUP_BY_NUMA_NODE groups CPUs by NUMA node.
+	GROUP_BY_NUMA_NODE = "numanode"
+)
+
+const (
 	kubeletPluginPath = "/var/lib/kubelet/plugins"
 	// maxAttempts indicates the number of times the driver will try to recover itself before failing
 	maxAttempts = 5
@@ -51,45 +65,63 @@ type cdiManager interface {
 }
 
 // CPUInfoProvider is an interface for getting CPU information.
+// TODO(pravk03): This interface can be simplified. We can export only GetCPUTopology() and remove GetCPUInfos().
 type CPUInfoProvider interface {
 	GetCPUInfos() ([]cpuinfo.CPUInfo, error)
+	GetCPUTopology() (*cpuinfo.CPUTopology, error)
 }
 
 // CPUDriver is the structure that holds all the driver runtime information.
 type CPUDriver struct {
-	driverName         string
-	nodeName           string
-	kubeClient         kubernetes.Interface
-	draPlugin          KubeletPlugin
-	nriPlugin          stub.Stub
-	podConfigStore     *PodConfigStore
-	cdiMgr             cdiManager
-	cpuIDToDeviceName  map[int]string
-	deviceNameToCPUID  map[string]int
-	cpuInfoProvider    CPUInfoProvider
-	cpuAllocationStore *CPUAllocationStore
-	reservedCPUs       cpuset.CPUSet
+	driverName             string
+	nodeName               string
+	kubeClient             kubernetes.Interface
+	draPlugin              KubeletPlugin
+	nriPlugin              stub.Stub
+	podConfigStore         *PodConfigStore
+	cpuAllocationStore     *CPUAllocationStore
+	cdiMgr                 cdiManager
+	cpuTopology            *cpuinfo.CPUTopology
+	deviceNameToCPUID      map[string]int
+	deviceNameToSocketID   map[string]int
+	deviceNameToNUMANodeID map[string]int
+	reservedCPUs           cpuset.CPUSet
+	cpuDeviceMode          string
+	cpuDeviceGroupBy       string
 }
 
 // Config is the configuration for the CPUDriver.
 type Config struct {
-	DriverName   string
-	NodeName     string
-	ReservedCPUs cpuset.CPUSet
+	DriverName       string
+	NodeName         string
+	ReservedCPUs     cpuset.CPUSet
+	CpuDeviceMode    string
+	CPUDeviceGroupBy string
 }
 
 // Start creates and starts a new CPUDriver.
 func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) (*CPUDriver, error) {
 	plugin := &CPUDriver{
-		driverName:        config.DriverName,
-		nodeName:          config.NodeName,
-		kubeClient:        clientset,
-		cpuIDToDeviceName: make(map[int]string),
-		deviceNameToCPUID: make(map[string]int),
-		cpuInfoProvider:   cpuinfo.NewSystemCPUInfo(),
-		reservedCPUs:      config.ReservedCPUs,
+		driverName:             config.DriverName,
+		nodeName:               config.NodeName,
+		kubeClient:             clientset,
+		deviceNameToCPUID:      make(map[string]int),
+		deviceNameToSocketID:   make(map[string]int),
+		deviceNameToNUMANodeID: make(map[string]int),
+		reservedCPUs:           config.ReservedCPUs,
+		cpuDeviceMode:          config.CpuDeviceMode,
+		cpuDeviceGroupBy:       config.CPUDeviceGroupBy,
 	}
-	plugin.cpuAllocationStore = NewCPUAllocationStore(plugin.cpuInfoProvider, config.ReservedCPUs)
+	cpuInfoProvider := cpuinfo.NewSystemCPUInfo()
+	topo, err := cpuInfoProvider.GetCPUTopology()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get CPU topology: %w", err)
+	}
+	if topo == nil {
+		return nil, fmt.Errorf("failed to get CPU topology: topology is nil")
+	}
+	plugin.cpuTopology = topo
+	plugin.cpuAllocationStore = NewCPUAllocationStore(plugin.cpuTopology, config.ReservedCPUs)
 	plugin.podConfigStore = NewPodConfigStore()
 
 	driverPluginPath := filepath.Join(kubeletPluginPath, config.DriverName)

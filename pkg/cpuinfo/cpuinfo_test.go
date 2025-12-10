@@ -287,10 +287,10 @@ func TestGetCPUInfos(t *testing.T) {
 				hybrid:                false,
 			},
 			expectedInfos: []CPUInfo{
-				{CpuID: 0, CoreID: 0, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 2, CoreType: CoreTypeStandard, L3CacheID: 0},
-				{CpuID: 1, CoreID: 1, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 3, CoreType: CoreTypeStandard, L3CacheID: 0},
-				{CpuID: 2, CoreID: 0, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 0, CoreType: CoreTypeStandard, L3CacheID: 0},
-				{CpuID: 3, CoreID: 1, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 1, CoreType: CoreTypeStandard, L3CacheID: 0},
+				{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 2, CoreType: CoreTypeStandard, UncoreCacheID: 0},
+				{CpuID: 1, CoreID: 1, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 3, CoreType: CoreTypeStandard, UncoreCacheID: 0},
+				{CpuID: 2, CoreID: 0, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 0, CoreType: CoreTypeStandard, UncoreCacheID: 0},
+				{CpuID: 3, CoreID: 1, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 1, CoreType: CoreTypeStandard, UncoreCacheID: 0},
 			},
 		},
 		{
@@ -304,8 +304,8 @@ func TestGetCPUInfos(t *testing.T) {
 				hybrid:                false,
 			},
 			expectedInfos: []CPUInfo{
-				{CpuID: 0, CoreID: 0, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0x3", SiblingCpuID: -1, CoreType: CoreTypeStandard, L3CacheID: 0},
-				{CpuID: 1, CoreID: 1, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0x3", SiblingCpuID: -1, CoreType: CoreTypeStandard, L3CacheID: 0},
+				{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0x3", SiblingCpuID: -1, CoreType: CoreTypeStandard, UncoreCacheID: 0},
+				{CpuID: 1, CoreID: 1, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0x3", SiblingCpuID: -1, CoreType: CoreTypeStandard, UncoreCacheID: 0},
 			},
 		},
 		{
@@ -319,14 +319,14 @@ func TestGetCPUInfos(t *testing.T) {
 				hybrid:                false,
 			},
 			expectedInfos: []CPUInfo{
-				{CpuID: 0, CoreID: 0, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 2, CoreType: CoreTypeStandard, L3CacheID: 0},
-				{CpuID: 1, CoreID: 1, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 3, CoreType: CoreTypeStandard, L3CacheID: 0},
-				{CpuID: 2, CoreID: 0, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 0, CoreType: CoreTypeStandard, L3CacheID: 0},
-				{CpuID: 3, CoreID: 1, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 1, CoreType: CoreTypeStandard, L3CacheID: 0},
-				{CpuID: 4, CoreID: 0, SocketID: 1, NumaNode: 1, NumaNodeAffinityMask: "0xf0", SiblingCpuID: 6, CoreType: CoreTypeStandard, L3CacheID: 1},
-				{CpuID: 5, CoreID: 1, SocketID: 1, NumaNode: 1, NumaNodeAffinityMask: "0xf0", SiblingCpuID: 7, CoreType: CoreTypeStandard, L3CacheID: 1},
-				{CpuID: 6, CoreID: 0, SocketID: 1, NumaNode: 1, NumaNodeAffinityMask: "0xf0", SiblingCpuID: 4, CoreType: CoreTypeStandard, L3CacheID: 1},
-				{CpuID: 7, CoreID: 1, SocketID: 1, NumaNode: 1, NumaNodeAffinityMask: "0xf0", SiblingCpuID: 5, CoreType: CoreTypeStandard, L3CacheID: 1},
+				{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 2, CoreType: CoreTypeStandard, UncoreCacheID: 0},
+				{CpuID: 1, CoreID: 1, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 3, CoreType: CoreTypeStandard, UncoreCacheID: 0},
+				{CpuID: 2, CoreID: 0, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 0, CoreType: CoreTypeStandard, UncoreCacheID: 0},
+				{CpuID: 3, CoreID: 1, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: 1, CoreType: CoreTypeStandard, UncoreCacheID: 0},
+				{CpuID: 4, CoreID: 0, SocketID: 1, NUMANodeID: 1, NumaNodeAffinityMask: "0xf0", SiblingCpuID: 6, CoreType: CoreTypeStandard, UncoreCacheID: 1},
+				{CpuID: 5, CoreID: 1, SocketID: 1, NUMANodeID: 1, NumaNodeAffinityMask: "0xf0", SiblingCpuID: 7, CoreType: CoreTypeStandard, UncoreCacheID: 1},
+				{CpuID: 6, CoreID: 0, SocketID: 1, NUMANodeID: 1, NumaNodeAffinityMask: "0xf0", SiblingCpuID: 4, CoreType: CoreTypeStandard, UncoreCacheID: 1},
+				{CpuID: 7, CoreID: 1, SocketID: 1, NUMANodeID: 1, NumaNodeAffinityMask: "0xf0", SiblingCpuID: 5, CoreType: CoreTypeStandard, UncoreCacheID: 1},
 			},
 		},
 		{
@@ -341,10 +341,10 @@ func TestGetCPUInfos(t *testing.T) {
 				eCores:                "2,3",
 			},
 			expectedInfos: []CPUInfo{
-				{CpuID: 0, CoreID: 0, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: -1, CoreType: CoreTypePerformance, L3CacheID: 0},
-				{CpuID: 1, CoreID: 1, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: -1, CoreType: CoreTypePerformance, L3CacheID: 0},
-				{CpuID: 2, CoreID: 2, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: -1, CoreType: CoreTypeEfficiency, L3CacheID: 0},
-				{CpuID: 3, CoreID: 3, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: -1, CoreType: CoreTypeEfficiency, L3CacheID: 0},
+				{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: -1, CoreType: CoreTypePerformance, UncoreCacheID: 0},
+				{CpuID: 1, CoreID: 1, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: -1, CoreType: CoreTypePerformance, UncoreCacheID: 0},
+				{CpuID: 2, CoreID: 2, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: -1, CoreType: CoreTypeEfficiency, UncoreCacheID: 0},
+				{CpuID: 3, CoreID: 3, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0xf", SiblingCpuID: -1, CoreType: CoreTypeEfficiency, UncoreCacheID: 0},
 			},
 		},
 		{
@@ -359,8 +359,8 @@ func TestGetCPUInfos(t *testing.T) {
 				eCores:                "",
 			},
 			expectedInfos: []CPUInfo{
-				{CpuID: 0, CoreID: 0, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0x3", SiblingCpuID: -1, CoreType: CoreTypePerformance, L3CacheID: 0},
-				{CpuID: 1, CoreID: 1, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0x3", SiblingCpuID: -1, CoreType: CoreTypePerformance, L3CacheID: 0},
+				{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0x3", SiblingCpuID: -1, CoreType: CoreTypePerformance, UncoreCacheID: 0},
+				{CpuID: 1, CoreID: 1, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0x3", SiblingCpuID: -1, CoreType: CoreTypePerformance, UncoreCacheID: 0},
 			},
 		},
 	}
@@ -412,7 +412,7 @@ func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
 			},
 			expectedErrorSubstring: "", // Should warn and continue, not error out
 			expectedInfos: []CPUInfo{
-				{CpuID: 0, CoreID: 0, SocketID: 0, NumaNode: 0, NumaNodeAffinityMask: "0x1", SiblingCpuID: -1, CoreType: CoreTypeStandard, L3CacheID: 0},
+				{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, NumaNodeAffinityMask: "0x1", SiblingCpuID: -1, CoreType: CoreTypeStandard, UncoreCacheID: 0},
 			},
 		},
 		{
@@ -461,6 +461,106 @@ func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
 				if !reflect.DeepEqual(cpuInfos, tc.expectedInfos) {
 					t.Errorf("Mismatch in CPUInfo.\nExpected: %+v\nGot:      %+v", tc.expectedInfos, cpuInfos)
 				}
+			}
+		})
+	}
+}
+
+func TestSMTDetection(t *testing.T) {
+	testCases := []struct {
+		name          string
+		topology      fakeCPUTopology
+		createSMTFile bool
+		smtContent    string
+		expectedSMT   bool
+	}{
+		{
+			name: "SMT on from sysfs",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 1, cpusPerCore: 2, coresPerL3: 1,
+			},
+			createSMTFile: true,
+			smtContent:    "on\n",
+			expectedSMT:   true,
+		},
+		{
+			name: "SMT off from sysfs",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 1, cpusPerCore: 1, coresPerL3: 1,
+			},
+			createSMTFile: true,
+			smtContent:    "off\n",
+			expectedSMT:   false,
+		},
+		{
+			name: "SMT forceoff from sysfs",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 1, cpusPerCore: 2, coresPerL3: 1,
+			},
+			createSMTFile: true,
+			smtContent:    "forceoff\n",
+			expectedSMT:   false,
+		},
+		{
+			name: "SMT notsupported from sysfs",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 1, cpusPerCore: 1, coresPerL3: 1,
+			},
+			createSMTFile: true,
+			smtContent:    "notsupported\n",
+			expectedSMT:   false,
+		},
+		{
+			name: "SMT unknown content from sysfs",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 1, cpusPerCore: 2, coresPerL3: 1,
+			},
+			createSMTFile: true,
+			smtContent:    "unknown\n", // Should fallback
+			expectedSMT:   true,
+		},
+		{
+			name: "Fallback SMT on - sysfs file missing",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 2, cpusPerCore: 2, coresPerL3: 2,
+			},
+			createSMTFile: false,
+			expectedSMT:   true,
+		},
+		{
+			name: "Fallback SMT off - sysfs file missing",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 2, cpusPerCore: 1, coresPerL3: 2,
+			},
+			createSMTFile: false,
+			expectedSMT:   false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("HOST_ROOT", tmpDir)
+			createFakeCPUTopology(t, tmpDir, tc.topology)
+
+			if tc.createSMTFile {
+				smtFile := filepath.Join(tmpDir, "sys/devices/system/cpu/smt/control")
+				if err := os.MkdirAll(filepath.Dir(smtFile), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(smtFile, []byte(tc.smtContent), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			provider := NewSystemCPUInfo()
+			topo, err := provider.GetCPUTopology()
+			if err != nil {
+				t.Fatalf("GetCPUTopology() failed: %v", err)
+			}
+
+			if topo.SMTEnabled != tc.expectedSMT {
+				t.Errorf("expected SMTEnabled to be %v, got %v", tc.expectedSMT, topo.SMTEnabled)
 			}
 		})
 	}
