@@ -258,6 +258,20 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 	})
 })
 
+func verifySharedPoolMatches(ctx context.Context, fxt *fixture.Fixture, sharedPod *v1.Pod, expectedSharedCPUs cpuset.CPUSet) {
+	ginkgo.GinkgoHelper()
+
+	fixture.By("checking the CPU pool of the best-effort tester pod %s matches expected %s", identifyPod(sharedPod), expectedSharedCPUs.String())
+	gomega.Eventually(func() error {
+		sharedAllocUpdated := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, sharedPod)
+		fxt.Log.Info("checking shared allocation", "pod", identifyPod(sharedPod), "cpuAllocated", sharedAllocUpdated.CPUAssigned.String(), "cpuAffinity", sharedAllocUpdated.CPUAffinity.String())
+		if !expectedSharedCPUs.Equals(sharedAllocUpdated.CPUAssigned) {
+			return fmt.Errorf("shared CPUs mismatch: expected %v got %v", expectedSharedCPUs.String(), sharedAllocUpdated.CPUAssigned.String())
+		}
+		return nil
+	}).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(gomega.Succeed(), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", identifyPod(sharedPod))
+}
+
 func makeCPUSetFromDiscoveredCPUInfo(cpuInfo discovery.DRACPUInfo) cpuset.CPUSet {
 	coreIDs := make([]int, len(cpuInfo.CPUs))
 	for idx, cpu := range cpuInfo.CPUs {
