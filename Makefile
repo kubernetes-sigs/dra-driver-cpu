@@ -22,7 +22,7 @@ ARCH=$(shell go env GOARCH)
 # dependencies
 ## versions
 YQ_VERSION ?= 4.47.1
-# matches golang 1.24.z
+# matches golang 1.25.z
 GOLANGCI_LINT_VERSION ?= 2.3.0
 # paths
 YQ = $(OUT_DIR)/yq
@@ -53,7 +53,8 @@ clean: ## clean
 test-unit: ## run tests
 	CGO_ENABLED=1 go test -v -race -count 1 -coverprofile=coverage.out ./pkg/...
 
-update: ## runs go mod tidy
+update: ## runs go mod tidy and go get -u
+	go get -u ./...
 	go mod tidy
 
 $(OUT_DIR):  ## creates the output directory (used internally)
