@@ -18,7 +18,7 @@ jobs:
     - name: Setup golang
       uses: actions/setup-go@v4
       with:
-        go-version: '1.24'
+        go-version: '1.25'
     - name: Kind version check
       run: kind version
     - name: Create and setup K8S kind cluster
@@ -36,7 +36,7 @@ jobs:
     - name: Setup golang
       uses: actions/setup-go@v4
       with:
-        go-version: '1.24'
+        go-version: '1.25'
     - name: Kind version check
       run: kind version
     - name: Create and setup K8S kind cluster
