@@ -23,7 +23,7 @@ ARCH=$(shell go env GOARCH)
 ## versions
 YQ_VERSION ?= 4.47.1
 # matches golang 1.25.z
-GOLANGCI_LINT_VERSION ?= 2.3.0
+GOLANGCI_LINT_VERSION ?= 2.7.2
 # paths
 YQ = $(OUT_DIR)/yq
 GOLANGCI_LINT = $(OUT_DIR)/golangci-lint
@@ -190,14 +190,4 @@ install-yq: $(OUT_DIR)  ## make sure the yq tool is available locally
 
 .PHONY: install-golangci-lint
 install-golangci-lint: $(OUT_DIR) ## make sure the golangci-lint tool is available locally
-	@[ ! -f $(OUT_DIR)/golangci-lint ] && { \
-		command -v golangci-lint >/dev/null 2>&1 && {\
-			ln -sf $(shell command -v golangci-lint ) $(OUT_DIR) ;\
-			echo "reusing system golangci-lint" ;\
-		} || { \
-			curl -sSL "https://github.com/golangci/golangci-lint/releases/download/v$(GOLANGCI_LINT_VERSION)/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(OS)-$(ARCH).tar.gz" -o $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)-$(OS)-$(ARCH).tar.gz ;\
-			tar -x -C $(OUT_DIR) -f $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)-$(OS)-$(ARCH).tar.gz ;\
-			ln -sf $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)-$(OS)-$(ARCH)/golangci-lint $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION) ;\
-			ln -sf $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION) $(GOLANGCI_LINT) ;\
-		}; \
-	} || true
+	@hack/fetch-golangci-lint.sh $(OUT_DIR) $(GOLANGCI_LINT_VERSION)
