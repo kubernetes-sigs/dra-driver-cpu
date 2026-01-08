@@ -32,7 +32,7 @@ type ContainerState struct {
 }
 
 // NewContainerState creates a new ContainerState.
-func NewContainerState(containerName string, containerUID types.UID, claimUIDs []types.UID) *ContainerState {
+func NewContainerState(containerName string, containerUID types.UID, claimUIDs ...types.UID) *ContainerState {
 	return &ContainerState{
 		containerName:     containerName,
 		containerUID:      containerUID,
@@ -79,27 +79,28 @@ func (s *PodConfigStore) GetContainerState(podUID types.UID, containerName strin
 }
 
 // RemoveContainerState removes a container's state from the store.
-func (s *PodConfigStore) RemoveContainerState(podUID types.UID, containerName string) {
+func (s *PodConfigStore) RemoveContainerState(podUID types.UID, containerName string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	podAssignments, ok := s.configs[podUID]
 	if !ok {
-		return
+		return false
 	}
 
-	delete(podAssignments, containerName)
+	cs, ok := podAssignments[containerName]
+	if !ok {
+		return false
+	}
 
+	updateNeeded := cs.HasExclusiveCPUAllocation()
+
+	delete(podAssignments, containerName)
 	if len(podAssignments) == 0 {
 		delete(s.configs, podUID)
 	}
-}
 
-// DeletePodState removes a pod's state from the store.
-func (s *PodConfigStore) DeletePodState(podUID types.UID) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.configs, podUID)
+	return updateNeeded
 }
 
 // GetContainersWithSharedCPUs returns a list of container UIDs that have shared CPU allocation.

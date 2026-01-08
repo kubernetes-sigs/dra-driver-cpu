@@ -27,7 +27,7 @@ func TestSetAndGetContainerState(t *testing.T) {
 	store := NewPodConfigStore()
 	podUID := types.UID("pod-uid-1")
 	ctrName := "ctr-name-1"
-	state := NewContainerState(ctrName, "ctr-uid-1", []types.UID{"claim-uid-1"})
+	state := NewContainerState(ctrName, "ctr-uid-1", types.UID("claim-uid-1"))
 
 	// Get non-existent state
 	require.Nil(t, store.GetContainerState(podUID, ctrName))
@@ -43,8 +43,8 @@ func TestRemoveContainerState(t *testing.T) {
 	podUID := types.UID("pod-uid-1")
 	ctrName1 := "ctr-name-1"
 	ctrName2 := "ctr-name-2"
-	state1 := NewContainerState(ctrName1, "ctr-uid-1", []types.UID{"claim-uid-1"})
-	state2 := NewContainerState(ctrName2, "ctr-uid-2", nil)
+	state1 := NewContainerState(ctrName1, "ctr-uid-1", types.UID("claim-uid-1"))
+	state2 := NewContainerState(ctrName2, "ctr-uid-2")
 
 	// Setup: add a pod with two containers
 	store.SetContainerState(podUID, state1)
@@ -67,29 +67,10 @@ func TestRemoveContainerState(t *testing.T) {
 	store.RemoveContainerState(podUID, "non-existent-ctr")
 }
 
-func TestDeletePodState(t *testing.T) {
-	store := NewPodConfigStore()
-	podUID := types.UID("pod-uid-1")
-	state := NewContainerState("ctr-1", "id-1", []types.UID{"claim-uid-1"})
-
-	// Setup: add a pod
-	store.SetContainerState(podUID, state)
-	_, podExists := store.configs[podUID]
-	require.True(t, podExists)
-
-	// Delete pod
-	store.DeletePodState(podUID)
-	_, podExists = store.configs[podUID]
-	require.False(t, podExists)
-
-	// Deleting non-existent pod should be a no-op
-	store.DeletePodState(podUID)
-}
-
 func TestGetSharedCPUContainerUIDs(t *testing.T) {
-	sharedState1 := NewContainerState("c1", "id1", nil)
-	sharedState2 := NewContainerState("c2", "id2", nil)
-	guaranteedState := NewContainerState("c3", "id3", []types.UID{"claim-uid-1"})
+	sharedState1 := NewContainerState("c1", "id1")
+	sharedState2 := NewContainerState("c2", "id2")
+	guaranteedState := NewContainerState("c3", "id3", types.UID("claim-uid-1"))
 
 	testCases := []struct {
 		name     string
@@ -130,8 +111,8 @@ func TestGetSharedCPUContainerUIDs(t *testing.T) {
 }
 
 func TestPodHasExclusiveCPUAllocation(t *testing.T) {
-	guaranteedState := NewContainerState("guaranteed-ctr", "gid1", []types.UID{"claim-uid-1"})
-	sharedState := NewContainerState("shared-ctr", "sid1", nil)
+	guaranteedState := NewContainerState("guaranteed-ctr", "gid1", types.UID("claim-uid-1"))
+	sharedState := NewContainerState("shared-ctr", "sid1")
 
 	testCases := []struct {
 		name           string
@@ -174,8 +155,8 @@ func TestPodHasExclusiveCPUAllocation(t *testing.T) {
 			name:   "pod with multiple shared containers",
 			podUID: "pod1",
 			setup: func(s *PodConfigStore) {
-				s.SetContainerState("pod1", NewContainerState("c1", "id1", nil))
-				s.SetContainerState("pod1", NewContainerState("c2", "id2", nil))
+				s.SetContainerState("pod1", NewContainerState("c1", "id1"))
+				s.SetContainerState("pod1", NewContainerState("c2", "id2"))
 			},
 			wantGuaranteed: false,
 		},
