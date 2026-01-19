@@ -96,6 +96,7 @@ spec:
         k8s-app: dracpu
     spec:
       hostNetwork: true
+      priorityClassName: system-node-critical
       tolerations:
       - operator: Exists
         effect: NoSchedule
