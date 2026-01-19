@@ -195,6 +195,32 @@ spec:
     name: cpudevnuma1
 ```
 
+### Running the tests
+
+To run the e2e tests against a custom-setup, special-purpose kind cluster, just run
+
+```bash
+make test-e2e-kind
+```
+
+Set the environment variable `DRACPU_E2E_VERBOSE` to 1 for more output:
+
+```bash
+DRACPU_E2E_VERBOSE=1 make test-e2e-kind
+```
+
+In some cases, you may need to set explicitly the KUBECONFIG path:
+
+```bash
+KUBECONFIG=${HOME}/.kube/config DRACPU_E2E_VERBOSE=1 make test-e2e-kind
+```
+
+The `test-e2e-kind` will exercises the same flows which are run on the project CI.
+The full documentation for all the supported environment variables is found in the [tests README](test/e2e/README.md).
+
+**NOTE** the custom-setup kind cluster is _not_ automatically tear down once the tests terminate
+**NOTE** if you want to run again the tests, just use `make test-e2e`. Please see `make help` for more details.
+
 ## Community, discussion, contribution, and support
 
 Learn how to engage with the Kubernetes community on the [community page](http://kubernetes.io/community/).
