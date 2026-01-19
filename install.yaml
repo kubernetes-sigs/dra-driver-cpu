@@ -182,12 +182,6 @@ spec:
       - name: nri-plugin
         hostPath:
           path: /var/run/nri
-      - name: netns
-        hostPath:
-          path: /var/run/netns
-      - name: infiniband
-        hostPath:
-          path: /dev/infiniband
       - name: etc
         hostPath:
           path: /etc
