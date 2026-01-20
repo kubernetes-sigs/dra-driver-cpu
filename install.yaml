@@ -96,6 +96,7 @@ spec:
         k8s-app: dracpu
     spec:
       hostNetwork: true
+      priorityClassName: system-node-critical
       tolerations:
       - operator: Exists
         effect: NoSchedule
@@ -109,6 +110,10 @@ spec:
           name: etc
         securityContext:
           privileged: true
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "50Mi"
         command:
         - /bin/sh
         - -c
@@ -182,12 +187,6 @@ spec:
       - name: nri-plugin
         hostPath:
           path: /var/run/nri
-      - name: netns
-        hostPath:
-          path: /var/run/netns
-      - name: infiniband
-        hostPath:
-          path: /dev/infiniband
       - name: etc
         hostPath:
           path: /etc
