@@ -66,6 +66,21 @@ The driver is deployed as a DaemonSet which contains two core components:
 - This driver currently only manages CPU resources. Memory allocation and management are not supported.
 - While the driver is topology-aware, the grouped mode currently abstracts some of the fine-grained details within the group. Future enhancements may explore combining [consumable capacity](https://github.com/kubernetes/enhancements/blob/master/keps/sig-scheduling/5075-dra-consumable-capacity/README.md) with [partitionable devices](https://github.com/kubernetes/enhancements/blob/master/keps/sig-scheduling/4815-dra-partitionable-devices/README.md) for more hierarchical control.
 
+### Matching CPU Manager functionality
+
+The kubelet cpumanager support [options](https://kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/#cpu-policy-static--options) to fine-tune the CPU allocation behavior.
+This DRA driver aims to implement feature parity with the kubelet cpumanager. The following table summarize how you can achieve a cpumananger functionality controlled by a cpumanager policy option.
+Reference: [kubernetes 1.35.0](https://github.com/kubernetes/kubernetes/blob/v1.35.0/pkg/kubelet/cm/cpumanager/policy_options.go).
+
+| CPU Manager Option        | Maturity | Kubelet development status | Driver equivalent functionality                                        | notes             |
+| ------------------------- | -------- | -------------------------- | ---------------------------------------------------------------------- | ----------------- |
+| AlignBySocket             | alpha    | inactive                   | `--grouped-mode` driver option                                         |                   |
+| DistributeCPUsAcrossCores | alpha    | inactive                   | none yet; postponed till k8s feature graduates to beta                 |                   |
+| DistributeCPUsAcrossNUMA  | beta     | active                     | see issue: https://github.com/kubernetes-sigs/dra-driver-cpu/issues/46 | possibly in 0.1.0 |
+| PreferAlignByUnCoreCache  | beta     | active                     | builtin; enabled by default                                            |                   |
+| FullPCPUsOnly             | GA       | N/A                        | see issue: https://github.com/kubernetes-sigs/dra-driver-cpu/issues/45 | post 0.1.0        |
+| StrictCPUReservation      | GA       | N/A                        | builtin; enabled by default                                            |                   |
+
 ## Getting Started
 
 ### Installation
