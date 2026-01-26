@@ -24,6 +24,7 @@ import (
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/cpuset"
@@ -125,6 +126,7 @@ func TestCreateContainer(t *testing.T) {
 		name                        string
 		podConfigStore              *PodConfigStore
 		cpuAllocationStore          *CPUAllocationStore
+		claimTracker                *store.ClaimTracker
 		container                   *api.Container
 		expectedContainerAdjustment *api.ContainerAdjustment
 		expectedContainerUpdates    []*api.ContainerUpdate
@@ -133,6 +135,7 @@ func TestCreateContainer(t *testing.T) {
 			name:               "guaranteed container triggers container adjustment with cpus in resource claim",
 			podConfigStore:     NewPodConfigStore(),
 			cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+			claimTracker:       store.NewClaimTracker(),
 			container:          newTestContainer(claimUID, "0-3"),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-3"}}},
@@ -143,6 +146,7 @@ func TestCreateContainer(t *testing.T) {
 			name:               "shared container triggers container adjustment with all cpus",
 			podConfigStore:     NewPodConfigStore(),
 			cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+			claimTracker:       store.NewClaimTracker(),
 			container:          newTestContainer("", ""),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
@@ -162,7 +166,8 @@ func TestCreateContainer(t *testing.T) {
 				store.AddResourceClaimAllocation(types.UID(claimUID), cpuset.New(2, 3))
 				return store
 			}(),
-			container: newTestContainer(claimUID, "2-3"),
+			claimTracker: store.NewClaimTracker(),
+			container:    newTestContainer(claimUID, "2-3"),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-3"}}},
 			},
@@ -181,6 +186,7 @@ func TestCreateContainer(t *testing.T) {
 			name:               "guaranteed container with malformed env falls back to shared",
 			podConfigStore:     NewPodConfigStore(),
 			cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+			claimTracker:       store.NewClaimTracker(),
 			container: &api.Container{
 				Id:           "ctr-id-1",
 				PodSandboxId: pod.Id,
@@ -199,6 +205,7 @@ func TestCreateContainer(t *testing.T) {
 			driver := &CPUDriver{
 				podConfigStore:     tc.podConfigStore,
 				cpuAllocationStore: tc.cpuAllocationStore,
+				claimTracker:       tc.claimTracker,
 			}
 			adjust, updates, err := driver.CreateContainer(context.Background(), pod, tc.container)
 			require.NoError(t, err)
@@ -231,7 +238,12 @@ func TestStopContainer(t *testing.T) {
 		{
 			name: "Stop guaranteed container sets update required for shared containers",
 			driver: func() *CPUDriver {
-				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()), cpuTopology: topo}
+				driver := &CPUDriver{
+					podConfigStore:     NewPodConfigStore(),
+					cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+					claimTracker:       store.NewClaimTracker(),
+					cpuTopology:        topo,
+				}
 				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id), types.UID("claim-uid-1")))
 				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
 				return driver
@@ -241,7 +253,12 @@ func TestStopContainer(t *testing.T) {
 		{
 			name: "Stop non-guaranteed container does not set update required",
 			driver: func() *CPUDriver {
-				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()), cpuTopology: topo}
+				driver := &CPUDriver{
+					podConfigStore:     NewPodConfigStore(),
+					cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+					claimTracker:       store.NewClaimTracker(),
+					cpuTopology:        topo,
+				}
 				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id)))
 				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
 				return driver
@@ -282,7 +299,12 @@ func TestNRISynchronize(t *testing.T) {
 		{
 			name: "empty runtime state clears the store",
 			driver: func() *CPUDriver {
-				driver := &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()), cpuTopology: topo}
+				driver := &CPUDriver{
+					podConfigStore:     NewPodConfigStore(),
+					cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+					claimTracker:       store.NewClaimTracker(),
+					cpuTopology:        topo,
+				}
 				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState("stale-ctr", "stale-id", types.UID("stale-claim")))
 				return driver
 			}(),
@@ -290,8 +312,13 @@ func TestNRISynchronize(t *testing.T) {
 			runtimeCtrs: []*api.Container{},
 		},
 		{
-			name:        "mixed containers across multiple pods",
-			driver:      &CPUDriver{podConfigStore: NewPodConfigStore(), cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()), cpuTopology: topo},
+			name: "mixed containers across multiple pods",
+			driver: &CPUDriver{
+				podConfigStore:     NewPodConfigStore(),
+				cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+				claimTracker:       store.NewClaimTracker(),
+				cpuTopology:        topo,
+			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
 			runtimeCtrs: []*api.Container{
 				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
