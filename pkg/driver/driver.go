@@ -80,7 +80,7 @@ type CPUDriver struct {
 	draPlugin              KubeletPlugin
 	nriPlugin              stub.Stub
 	podConfigStore         *store.PodConfig
-	cpuAllocationStore     *CPUAllocationStore
+	cpuAllocationStore     *store.CPUAllocation
 	cdiMgr                 cdiManager
 	cpuTopology            *cpuinfo.CPUTopology
 	deviceNameToCPUID      map[string]int
@@ -124,7 +124,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		return nil, fmt.Errorf("failed to get CPU topology: topology is nil")
 	}
 	plugin.cpuTopology = topo
-	plugin.cpuAllocationStore = NewCPUAllocationStore(plugin.cpuTopology, config.ReservedCPUs)
+	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.cpuTopology, config.ReservedCPUs)
 	plugin.podConfigStore = store.NewPodConfig()
 
 	driverPluginPath := filepath.Join(kubeletPluginPath, config.DriverName)
