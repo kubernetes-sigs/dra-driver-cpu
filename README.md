@@ -198,14 +198,9 @@ spec:
 ## Community, discussion, contribution, and support
 
 Learn how to engage with the Kubernetes community on the [community page](http://kubernetes.io/community/).
+Participation in the Kubernetes community is governed by the [Kubernetes Code of Conduct](code-of-conduct.md).
 
 You can reach the maintainers of this project at:
 
-- [Slack](https://slack.k8s.io/)
+- [Slack](https://slack.k8s.io/) - preferred channels: #sig-node #wg-device-management
 - [Mailing List](https://groups.google.com/a/kubernetes.io/g/dev)
-
-### Code of conduct
-
-Participation in the Kubernetes community is governed by the [Kubernetes Code of Conduct](code-of-conduct.md).
-
-This project is managed by its [OWNERS](https://git.k8s.io/community/contributors/guide/owners.md) and is licensed under [Creative Commons 4.0](https://git.k8s.io/website/LICENSE).
