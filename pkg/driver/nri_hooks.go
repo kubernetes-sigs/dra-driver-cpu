@@ -162,8 +162,8 @@ func (cp *CPUDriver) CreateContainer(_ context.Context, pod *api.PodSandbox, ctr
 func (cp *CPUDriver) StopContainer(_ context.Context, pod *api.PodSandbox, ctr *api.Container) ([]*api.ContainerUpdate, error) {
 	klog.Infof("StopContainer Pod:%s/%s PodUID:%s Container:%s ContainerID:%s", pod.Namespace, pod.Name, pod.Uid, ctr.Name, ctr.Id)
 	updates := []*api.ContainerUpdate{}
-	updateNeeded := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
-	if updateNeeded {
+	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
+	if len(claimUIDs) > 0 {
 		// Remove the guaranteed CPUs from the containers with shared CPUs.
 		updates = cp.getSharedContainerUpdates(types.UID(ctr.GetId()))
 		klog.Infof("StopContainer updates needed: %d entries", len(updates))
@@ -176,8 +176,8 @@ func (cp *CPUDriver) StopContainer(_ context.Context, pod *api.PodSandbox, ctr *
 // RemoveContainer handles container removal requests from the NRI.
 func (cp *CPUDriver) RemoveContainer(_ context.Context, pod *api.PodSandbox, ctr *api.Container) error {
 	klog.Infof("RemoveContainer Pod:%s/%s PodUID:%s Container:%s ContainerID:%s", pod.Namespace, pod.Name, pod.Uid, ctr.Name, ctr.Id)
-	updateNeeded := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
-	if updateNeeded {
+	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
+	if len(claimUIDs) > 0 {
 		// this serves only for debugging purposes. We should never get here
 		klog.Errorf("RemoveContainer spurious updates needed (unexpected, please file a bug): %v", cp.getSharedContainerUpdates(types.UID(ctr.GetId())))
 	}

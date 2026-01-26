@@ -79,28 +79,31 @@ func (s *PodConfigStore) GetContainerState(podUID types.UID, containerName strin
 }
 
 // RemoveContainerState removes a container's state from the store.
-func (s *PodConfigStore) RemoveContainerState(podUID types.UID, containerName string) bool {
+func (s *PodConfigStore) RemoveContainerState(podUID types.UID, containerName string) []types.UID {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	podAssignments, ok := s.configs[podUID]
 	if !ok {
-		return false
+		return []types.UID{}
 	}
 
 	cs, ok := podAssignments[containerName]
 	if !ok {
-		return false
+		return []types.UID{}
 	}
 
-	updateNeeded := cs.HasExclusiveCPUAllocation()
+	claimUIDs := cs.resourceClaimUIDs
+	if claimUIDs == nil {
+		claimUIDs = []types.UID{}
+	}
 
 	delete(podAssignments, containerName)
 	if len(podAssignments) == 0 {
 		delete(s.configs, podUID)
 	}
 
-	return updateNeeded
+	return claimUIDs
 }
 
 // GetContainersWithSharedCPUs returns a list of container UIDs that have shared CPU allocation.
@@ -111,29 +114,10 @@ func (s *PodConfigStore) GetContainersWithSharedCPUs() []types.UID {
 	sharedCPUContainers := []types.UID{}
 	for _, podAssignments := range s.configs {
 		for _, state := range podAssignments {
-			if !state.HasExclusiveCPUAllocation() {
+			if len(state.resourceClaimUIDs) == 0 {
 				sharedCPUContainers = append(sharedCPUContainers, state.containerUID)
 			}
 		}
 	}
 	return sharedCPUContainers
-}
-
-// HasExclusiveCPUAllocation returns true if the container has associated resource claims.
-func (cs *ContainerState) HasExclusiveCPUAllocation() bool {
-	return len(cs.resourceClaimUIDs) > 0
-}
-
-// PodHasExclusiveCPUAllocation returns true if any container in the pod has exclusive CPU allocation.
-func (s *PodConfigStore) PodHasExclusiveCPUAllocation(podUID types.UID) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if podAssignments, ok := s.configs[podUID]; ok {
-		for _, state := range podAssignments {
-			if state.HasExclusiveCPUAllocation() {
-				return true
-			}
-		}
-	}
-	return false
 }
