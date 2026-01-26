@@ -125,7 +125,7 @@ func TestCreateContainer(t *testing.T) {
 	testCases := []struct {
 		name                        string
 		podConfigStore              *store.PodConfig
-		cpuAllocationStore          *CPUAllocationStore
+		cpuAllocationStore          *store.CPUAllocation
 		claimTracker                *store.ClaimTracker
 		container                   *api.Container
 		expectedContainerAdjustment *api.ContainerAdjustment
@@ -134,7 +134,7 @@ func TestCreateContainer(t *testing.T) {
 		{
 			name:               "guaranteed container triggers container adjustment with cpus in resource claim",
 			podConfigStore:     store.NewPodConfig(),
-			cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 			claimTracker:       store.NewClaimTracker(),
 			container:          newTestContainer(claimUID, "0-3"),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
@@ -145,7 +145,7 @@ func TestCreateContainer(t *testing.T) {
 		{
 			name:               "shared container triggers container adjustment with all cpus",
 			podConfigStore:     store.NewPodConfig(),
-			cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 			claimTracker:       store.NewClaimTracker(),
 			container:          newTestContainer("", ""),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
@@ -161,8 +161,8 @@ func TestCreateContainer(t *testing.T) {
 				conf.SetContainerState("shared-pod-2", store.NewContainerState("shared-ctr-2", "shared-uid-2"))
 				return conf
 			}(),
-			cpuAllocationStore: func() *CPUAllocationStore {
-				store := NewCPUAllocationStore(topo, cpuset.New())
+			cpuAllocationStore: func() *store.CPUAllocation {
+				store := store.NewCPUAllocation(topo, cpuset.New())
 				store.AddResourceClaimAllocation(types.UID(claimUID), cpuset.New(2, 3))
 				return store
 			}(),
@@ -185,7 +185,7 @@ func TestCreateContainer(t *testing.T) {
 		{
 			name:               "guaranteed container with malformed env falls back to shared",
 			podConfigStore:     store.NewPodConfig(),
-			cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 			claimTracker:       store.NewClaimTracker(),
 			container: &api.Container{
 				Id:           "ctr-id-1",
@@ -240,7 +240,7 @@ func TestStopContainer(t *testing.T) {
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{
 					podConfigStore:     store.NewPodConfig(),
-					cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
 					cpuTopology:        topo,
 				}
@@ -255,7 +255,7 @@ func TestStopContainer(t *testing.T) {
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{
 					podConfigStore:     store.NewPodConfig(),
-					cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
 					cpuTopology:        topo,
 				}
@@ -301,7 +301,7 @@ func TestNRISynchronize(t *testing.T) {
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{
 					podConfigStore:     store.NewPodConfig(),
-					cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
 					cpuTopology:        topo,
 				}
@@ -315,7 +315,7 @@ func TestNRISynchronize(t *testing.T) {
 			name: "mixed containers across multiple pods",
 			driver: &CPUDriver{
 				podConfigStore:     store.NewPodConfig(),
-				cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
 				cpuTopology:        topo,
 			},
