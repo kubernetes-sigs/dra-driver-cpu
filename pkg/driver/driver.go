@@ -25,6 +25,7 @@ import (
 
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
@@ -88,6 +89,7 @@ type CPUDriver struct {
 	reservedCPUs           cpuset.CPUSet
 	cpuDeviceMode          string
 	cpuDeviceGroupBy       string
+	claimTracker           *store.ClaimTracker
 }
 
 // Config is the configuration for the CPUDriver.
@@ -111,6 +113,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		reservedCPUs:           config.ReservedCPUs,
 		cpuDeviceMode:          config.CpuDeviceMode,
 		cpuDeviceGroupBy:       config.CPUDeviceGroupBy,
+		claimTracker:           store.NewClaimTracker(),
 	}
 	cpuInfoProvider := cpuinfo.NewSystemCPUInfo()
 	topo, err := cpuInfoProvider.GetCPUTopology()
