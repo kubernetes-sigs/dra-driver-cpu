@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package driver
+package store
 
 import (
 	"testing"
@@ -24,7 +24,7 @@ import (
 )
 
 func TestSetAndGetContainerState(t *testing.T) {
-	store := NewPodConfigStore()
+	store := NewPodConfig()
 	podUID := types.UID("pod-uid-1")
 	ctrName := "ctr-name-1"
 	state := NewContainerState(ctrName, "ctr-uid-1", types.UID("claim-uid-1"))
@@ -39,7 +39,7 @@ func TestSetAndGetContainerState(t *testing.T) {
 }
 
 func TestRemoveContainerState(t *testing.T) {
-	store := NewPodConfigStore()
+	store := NewPodConfig()
 	podUID := types.UID("pod-uid-1")
 	ctrName1 := "ctr-name-1"
 	ctrName2 := "ctr-name-2"
@@ -74,12 +74,12 @@ func TestGetSharedCPUContainerUIDs(t *testing.T) {
 
 	testCases := []struct {
 		name     string
-		setup    func(s *PodConfigStore)
+		setup    func(s *PodConfig)
 		wantUIDs []types.UID
 	}{
 		{
 			name: "some shared, some guaranteed",
-			setup: func(s *PodConfigStore) {
+			setup: func(s *PodConfig) {
 				s.SetContainerState("pod1", sharedState1)
 				s.SetContainerState("pod2", sharedState2)
 				s.SetContainerState("pod1", guaranteedState)
@@ -88,21 +88,21 @@ func TestGetSharedCPUContainerUIDs(t *testing.T) {
 		},
 		{
 			name: "only guaranteed",
-			setup: func(s *PodConfigStore) {
+			setup: func(s *PodConfig) {
 				s.SetContainerState("pod1", guaranteedState)
 			},
 			wantUIDs: []types.UID{},
 		},
 		{
 			name:     "no containers",
-			setup:    func(s *PodConfigStore) {},
+			setup:    func(s *PodConfig) {},
 			wantUIDs: []types.UID{},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			store := NewPodConfigStore()
+			store := NewPodConfig()
 			tc.setup(store)
 			gotUIDs := store.GetContainersWithSharedCPUs()
 			require.ElementsMatch(t, tc.wantUIDs, gotUIDs)

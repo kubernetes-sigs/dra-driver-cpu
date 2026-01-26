@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package driver
+package store
 
 import (
 	"sync"
@@ -23,7 +23,7 @@ import (
 
 // ContainerState holds the allocation type and all claim assignments for a container.
 type ContainerState struct {
-	// containerName is used as the primary key for efficient lookups within the PodConfigStore.
+	// containerName is used as the primary key for efficient lookups within the PodConfig.
 	containerName string
 	// containerUID is used by the container runtime to apply updates to a container.
 	containerUID types.UID
@@ -43,21 +43,21 @@ func NewContainerState(containerName string, containerUID types.UID, claimUIDs .
 // PodCPUAssignments maps a container name to its state.
 type PodCPUAssignments map[string]*ContainerState
 
-// PodConfigStore maps a Pod's UID directly to its container-level assignments.
-type PodConfigStore struct {
+// PodConfig maps a Pod's UID directly to its container-level assignments.
+type PodConfig struct {
 	mu      sync.RWMutex
 	configs map[types.UID]PodCPUAssignments
 }
 
-// NewPodConfigStore creates a new PodConfigStore.
-func NewPodConfigStore() *PodConfigStore {
-	return &PodConfigStore{
+// NewPodConfig creates a new PodConfig.
+func NewPodConfig() *PodConfig {
+	return &PodConfig{
 		configs: make(map[types.UID]PodCPUAssignments),
 	}
 }
 
 // SetContainerState records or updates a container's allocation using a state object.
-func (s *PodConfigStore) SetContainerState(podUID types.UID, state *ContainerState) {
+func (s *PodConfig) SetContainerState(podUID types.UID, state *ContainerState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -68,7 +68,7 @@ func (s *PodConfigStore) SetContainerState(podUID types.UID, state *ContainerSta
 }
 
 // GetContainerState retrieves a container's state.
-func (s *PodConfigStore) GetContainerState(podUID types.UID, containerName string) *ContainerState {
+func (s *PodConfig) GetContainerState(podUID types.UID, containerName string) *ContainerState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -79,7 +79,7 @@ func (s *PodConfigStore) GetContainerState(podUID types.UID, containerName strin
 }
 
 // RemoveContainerState removes a container's state from the store.
-func (s *PodConfigStore) RemoveContainerState(podUID types.UID, containerName string) []types.UID {
+func (s *PodConfig) RemoveContainerState(podUID types.UID, containerName string) []types.UID {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -108,7 +108,7 @@ func (s *PodConfigStore) RemoveContainerState(podUID types.UID, containerName st
 
 // GetContainersWithSharedCPUs returns a list of container UIDs that have shared CPU allocation.
 // TODO(pravk03): Cache this and return from this function in O(1)
-func (s *PodConfigStore) GetContainersWithSharedCPUs() []types.UID {
+func (s *PodConfig) GetContainersWithSharedCPUs() []types.UID {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	sharedCPUContainers := []types.UID{}
@@ -120,4 +120,10 @@ func (s *PodConfigStore) GetContainersWithSharedCPUs() []types.UID {
 		}
 	}
 	return sharedCPUContainers
+}
+
+func (s *PodConfig) Len() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.configs)
 }
