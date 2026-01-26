@@ -124,7 +124,7 @@ func TestCreateContainer(t *testing.T) {
 
 	testCases := []struct {
 		name                        string
-		podConfigStore              *PodConfigStore
+		podConfigStore              *store.PodConfig
 		cpuAllocationStore          *CPUAllocationStore
 		claimTracker                *store.ClaimTracker
 		container                   *api.Container
@@ -133,7 +133,7 @@ func TestCreateContainer(t *testing.T) {
 	}{
 		{
 			name:               "guaranteed container triggers container adjustment with cpus in resource claim",
-			podConfigStore:     NewPodConfigStore(),
+			podConfigStore:     store.NewPodConfig(),
 			cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
 			claimTracker:       store.NewClaimTracker(),
 			container:          newTestContainer(claimUID, "0-3"),
@@ -144,7 +144,7 @@ func TestCreateContainer(t *testing.T) {
 		},
 		{
 			name:               "shared container triggers container adjustment with all cpus",
-			podConfigStore:     NewPodConfigStore(),
+			podConfigStore:     store.NewPodConfig(),
 			cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
 			claimTracker:       store.NewClaimTracker(),
 			container:          newTestContainer("", ""),
@@ -155,11 +155,11 @@ func TestCreateContainer(t *testing.T) {
 		},
 		{
 			name: "guaranteed container triggers container adjustment and update for other shared container",
-			podConfigStore: func() *PodConfigStore {
-				store := NewPodConfigStore()
-				store.SetContainerState("shared-pod-1", NewContainerState("shared-ctr-1", "shared-uid-1"))
-				store.SetContainerState("shared-pod-2", NewContainerState("shared-ctr-2", "shared-uid-2"))
-				return store
+			podConfigStore: func() *store.PodConfig {
+				conf := store.NewPodConfig()
+				conf.SetContainerState("shared-pod-1", store.NewContainerState("shared-ctr-1", "shared-uid-1"))
+				conf.SetContainerState("shared-pod-2", store.NewContainerState("shared-ctr-2", "shared-uid-2"))
+				return conf
 			}(),
 			cpuAllocationStore: func() *CPUAllocationStore {
 				store := NewCPUAllocationStore(topo, cpuset.New())
@@ -184,7 +184,7 @@ func TestCreateContainer(t *testing.T) {
 		},
 		{
 			name:               "guaranteed container with malformed env falls back to shared",
-			podConfigStore:     NewPodConfigStore(),
+			podConfigStore:     store.NewPodConfig(),
 			cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
 			claimTracker:       store.NewClaimTracker(),
 			container: &api.Container{
@@ -239,13 +239,13 @@ func TestStopContainer(t *testing.T) {
 			name: "Stop guaranteed container sets update required for shared containers",
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{
-					podConfigStore:     NewPodConfigStore(),
+					podConfigStore:     store.NewPodConfig(),
 					cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
 					cpuTopology:        topo,
 				}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id), types.UID("claim-uid-1")))
-				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id), types.UID("claim-uid-1")))
+				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
 				return driver
 			}(),
 			expectedUpdatesFor: []string{ctr2.Id},
@@ -254,13 +254,13 @@ func TestStopContainer(t *testing.T) {
 			name: "Stop non-guaranteed container does not set update required",
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{
-					podConfigStore:     NewPodConfigStore(),
+					podConfigStore:     store.NewPodConfig(),
 					cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
 					cpuTopology:        topo,
 				}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState(ctr1.Name, types.UID(ctr1.Id)))
-				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id)))
+				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
 				return driver
 			}(),
 			expectedUpdatesFor: []string{},
@@ -300,12 +300,12 @@ func TestNRISynchronize(t *testing.T) {
 			name: "empty runtime state clears the store",
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{
-					podConfigStore:     NewPodConfigStore(),
+					podConfigStore:     store.NewPodConfig(),
 					cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
 					cpuTopology:        topo,
 				}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), NewContainerState("stale-ctr", "stale-id", types.UID("stale-claim")))
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState("stale-ctr", "stale-id", types.UID("stale-claim")))
 				return driver
 			}(),
 			runtimePods: []*api.PodSandbox{},
@@ -314,7 +314,7 @@ func TestNRISynchronize(t *testing.T) {
 		{
 			name: "mixed containers across multiple pods",
 			driver: &CPUDriver{
-				podConfigStore:     NewPodConfigStore(),
+				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
 				cpuTopology:        topo,
@@ -339,7 +339,7 @@ func TestNRISynchronize(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify that the store has been populated correctly
-			require.Equal(t, len(tc.runtimePods), len(tc.driver.podConfigStore.configs))
+			require.Equal(t, len(tc.runtimePods), tc.driver.podConfigStore.Len())
 			for _, pod := range tc.runtimePods {
 				for _, container := range tc.runtimeCtrs {
 					if container.PodSandboxId != pod.Id {

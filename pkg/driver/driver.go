@@ -79,7 +79,7 @@ type CPUDriver struct {
 	kubeClient             kubernetes.Interface
 	draPlugin              KubeletPlugin
 	nriPlugin              stub.Stub
-	podConfigStore         *PodConfigStore
+	podConfigStore         *store.PodConfig
 	cpuAllocationStore     *CPUAllocationStore
 	cdiMgr                 cdiManager
 	cpuTopology            *cpuinfo.CPUTopology
@@ -125,7 +125,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 	}
 	plugin.cpuTopology = topo
 	plugin.cpuAllocationStore = NewCPUAllocationStore(plugin.cpuTopology, config.ReservedCPUs)
-	plugin.podConfigStore = NewPodConfigStore()
+	plugin.podConfigStore = store.NewPodConfig()
 
 	driverPluginPath := filepath.Join(kubeletPluginPath, config.DriverName)
 	if err := os.MkdirAll(driverPluginPath, 0750); err != nil {
