@@ -23,7 +23,7 @@ fi
 
 if command -v golangci-lint >/dev/null 2>&1; then
 	echo "reusing system golangci-lint"
-	ln -sf "$(command -v golangci-lint)" "$(OUT_DIR)"
+	ln -sf "$(command -v golangci-lint)" "${OUT_DIR}"
 	exit 0
 fi
 
