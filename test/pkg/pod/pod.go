@@ -128,3 +128,14 @@ func GetLogs(cs kubernetes.Interface, ctx context.Context, podNamespace, podName
 	}
 	return string(logs), err
 }
+
+func PinToNode(pod *v1.Pod, nodeName string) *v1.Pod {
+	pod.Spec.NodeSelector = map[string]string{
+		"kubernetes.io/hostname": nodeName,
+	}
+	return pod
+}
+
+func Identify(pod *v1.Pod) string {
+	return pod.Namespace + "/" + pod.Name + "@" + pod.Spec.NodeName
+}

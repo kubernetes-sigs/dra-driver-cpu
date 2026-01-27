@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
@@ -32,11 +31,8 @@ import (
 	"github.com/onsi/gomega"
 	v1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/cpuset"
-	"k8s.io/utils/ptr"
 )
 
 const (
@@ -128,8 +124,8 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		}
 		rootFxt.Log.Info("using worker node", "nodeName", targetNode.Name)
 
-		infoPod := makeDiscoveryPod(infraFxt.Namespace.Name, dracpuTesterImage)
-		infoPod = pinPodToNode(infoPod, targetNode.Name)
+		infoPod := discovery.MakePod(infraFxt.Namespace.Name, dracpuTesterImage)
+		infoPod = e2epod.PinToNode(infoPod, targetNode.Name)
 		infoPod, err = e2epod.RunToCompletion(ctx, infraFxt.K8SClientset, infoPod)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create discovery pod: %v", err)
 		data, err := e2epod.GetLogs(infraFxt.K8SClientset, ctx, infoPod.Namespace, infoPod.Name, infoPod.Spec.Containers[0].Name)
@@ -171,9 +167,9 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				fixture.By("creating a best-effort reference pod")
 				shrPod1 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
 
-				fixture.By("checking the best-effort reference pod %s has access to all the non-reserved node CPUs through the shared pool", identifyPod(shrPod1))
+				fixture.By("checking the best-effort reference pod %s has access to all the non-reserved node CPUs through the shared pool", e2epod.Identify(shrPod1))
 				sharedAllocPre := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, shrPod1)
-				fxt.Log.Info("checking shared allocation", "pod", identifyPod(shrPod1), "cpuAllocated", sharedAllocPre.CPUAssigned.String(), "cpuAffinity", sharedAllocPre.CPUAffinity.String())
+				fxt.Log.Info("checking shared allocation", "pod", e2epod.Identify(shrPod1), "cpuAllocated", sharedAllocPre.CPUAssigned.String(), "cpuAffinity", sharedAllocPre.CPUAffinity.String())
 
 				numCPUs := availableCPUs.Size()
 				// Ensure at least 1 CPU is available for the shared pool
@@ -190,8 +186,14 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				var exclPods []*v1.Pod
 				allAllocatedCPUs := cpuset.New()
 
-				claimName := fmt.Sprintf("cpu-request-%d-excl", cpusPerClaim)
-				claimTemplate := makeResourceClaimTemplate(claimName, cpusPerClaim, cpuDeviceMode == "grouped")
+				claimTemplate := resourcev1.ResourceClaimTemplate{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: fmt.Sprintf("cpu-request-%d-excl", cpusPerClaim),
+					},
+					Spec: resourcev1.ResourceClaimTemplateSpec{
+						Spec: makeResourceClaimSpec(cpusPerClaim, cpuDeviceMode == "grouped"),
+					},
+				}
 				createdClaimTemplate, err := fxt.K8SClientset.ResourceV1().ResourceClaimTemplates(fxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
 				for i := 0; i < numPods; i++ {
 					gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -204,7 +206,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				fixture.By("Verifying CPU allocations for each exclusive pod")
 				for i, pod := range exclPods {
 					alloc := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, pod)
-					fxt.Log.Info("Checking exclusive CPU allocation", "pod", identifyPod(pod), "cpuAllocated", alloc.CPUAssigned.String())
+					fxt.Log.Info("Checking exclusive CPU allocation", "pod", e2epod.Identify(pod), "cpuAllocated", alloc.CPUAssigned.String())
 					gomega.Expect(alloc.CPUAssigned.Size()).To(gomega.Equal(cpusPerClaim), "Pod %d did not get %d CPUs", i, cpusPerClaim)
 					gomega.Expect(alloc.CPUAssigned.IsSubsetOf(availableCPUs)).To(gomega.BeTrue(), "Pod %d got CPUs outside available set", i)
 					gomega.Expect(allAllocatedCPUs.Intersection(alloc.CPUAssigned).Size()).To(gomega.Equal(0), "Pod %d has overlapping CPUs", i)
@@ -225,7 +227,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 				fixture.By("deleting the pods with exclusive CPUs")
 				for _, pod := range exclPods {
-					gomega.Expect(e2epod.DeleteSync(ctx, fxt.K8SClientset, pod)).To(gomega.Succeed(), "cannot delete pod %s", identifyPod(pod))
+					gomega.Expect(e2epod.DeleteSync(ctx, fxt.K8SClientset, pod)).To(gomega.Succeed(), "cannot delete pod %s", e2epod.Identify(pod))
 				}
 
 				verifySharedPoolMatches(ctx, fxt, shrPod1, availableCPUs)
@@ -238,218 +240,13 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 func verifySharedPoolMatches(ctx context.Context, fxt *fixture.Fixture, sharedPod *v1.Pod, expectedSharedCPUs cpuset.CPUSet) {
 	ginkgo.GinkgoHelper()
 
-	fixture.By("checking the CPU pool of the best-effort tester pod %s matches expected %s", identifyPod(sharedPod), expectedSharedCPUs.String())
+	fixture.By("checking the CPU pool of the best-effort tester pod %s matches expected %s", e2epod.Identify(sharedPod), expectedSharedCPUs.String())
 	gomega.Eventually(func() error {
 		sharedAllocUpdated := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, sharedPod)
-		fxt.Log.Info("checking shared allocation", "pod", identifyPod(sharedPod), "cpuAllocated", sharedAllocUpdated.CPUAssigned.String(), "cpuAffinity", sharedAllocUpdated.CPUAffinity.String())
+		fxt.Log.Info("checking shared allocation", "pod", e2epod.Identify(sharedPod), "cpuAllocated", sharedAllocUpdated.CPUAssigned.String(), "cpuAffinity", sharedAllocUpdated.CPUAffinity.String())
 		if !expectedSharedCPUs.Equals(sharedAllocUpdated.CPUAssigned) {
 			return fmt.Errorf("shared CPUs mismatch: expected %v got %v", expectedSharedCPUs.String(), sharedAllocUpdated.CPUAssigned.String())
 		}
 		return nil
-	}).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(gomega.Succeed(), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", identifyPod(sharedPod))
-}
-
-func makeCPUSetFromDiscoveredCPUInfo(cpuInfo discovery.DRACPUInfo) cpuset.CPUSet {
-	coreIDs := make([]int, len(cpuInfo.CPUs))
-	for idx, cpu := range cpuInfo.CPUs {
-		coreIDs[idx] = cpu.CpuID
-	}
-	return cpuset.New(coreIDs...)
-}
-
-type CPUAllocation struct {
-	CPUAssigned cpuset.CPUSet
-	CPUAffinity cpuset.CPUSet
-}
-
-func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod *v1.Pod) CPUAllocation {
-	ginkgo.GinkgoHelper()
-
-	data, err := e2epod.GetLogs(cs, ctx, pod.Namespace, pod.Name, pod.Spec.Containers[0].Name)
-	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs for %s/%s/%s", pod.Namespace, pod.Name, pod.Spec.Containers[0].Name)
-
-	testerInfo := discovery.DRACPUTester{}
-	gomega.Expect(json.Unmarshal([]byte(data), &testerInfo)).To(gomega.Succeed())
-
-	ret := CPUAllocation{}
-	ret.CPUAssigned, err = cpuset.Parse(testerInfo.Allocation.CPUs)
-	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse assigned cpuset: %q", testerInfo.Allocation.CPUs)
-	ret.CPUAffinity, err = cpuset.Parse(testerInfo.Runtimeinfo.CPUAffinity)
-	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse affinity cpuset: %q", testerInfo.Runtimeinfo.CPUAffinity)
-	return ret
-}
-
-func makeTesterPodWithExclusiveCPUClaim(ns, image string, cpuClaimTemplate *resourcev1.ResourceClaimTemplate) *v1.Pod {
-	ginkgo.GinkgoHelper()
-	cpuQty := resource.NewQuantity(cpuClaimTemplate.Spec.Spec.Devices.Requests[0].Exactly.Count, resource.DecimalSI)
-	memQty, err := resource.ParseQuantity("256Mi") // random "low enough" value
-	gomega.Expect(err).ToNot(gomega.HaveOccurred())
-
-	return &v1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "tester-pod-excl-cpu-claim-",
-			Namespace:    ns,
-		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
-				{
-					Name:    "tester-container-1",
-					Image:   image,
-					Command: []string{"/dracputester"},
-					Resources: v1.ResourceRequirements{
-						Requests: v1.ResourceList{
-							v1.ResourceCPU:    *cpuQty,
-							v1.ResourceMemory: memQty,
-						},
-						Limits: v1.ResourceList{
-							v1.ResourceCPU:    *cpuQty,
-							v1.ResourceMemory: memQty,
-						},
-						Claims: []v1.ResourceClaim{
-							{
-								Name: "tester-container-1-claim",
-							},
-						},
-					},
-				},
-			},
-			ResourceClaims: []v1.PodResourceClaim{
-				{
-					Name:                      "tester-container-1-claim",
-					ResourceClaimTemplateName: ptr.To(cpuClaimTemplate.Name),
-				},
-			},
-			RestartPolicy: v1.RestartPolicyAlways,
-		},
-	}
-}
-
-func makeTesterPodBestEffort(ns, image string) *v1.Pod {
-	return &v1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "tester-pod-be-",
-			Namespace:    ns,
-		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
-				{
-					Name:    "tester-container",
-					Image:   image,
-					Command: []string{"/dracputester"},
-					// at the moment we depend on pod logs to learn the cpu allocation.
-					// Therefore, the pod without resource claims, best-effort,
-					// will restart periodically to provide the up to date information.
-					// NOTE: restarting always ensuring there's the minimal and easiest
-					// amount of logs to process. The other option would be to periodically
-					// log the data, but then the client side will need to read and discard
-					// all but the latest update, which is wasteful. This approach is the simplest.
-					Args: []string{"-run-for", "10s"},
-				},
-			},
-			RestartPolicy: v1.RestartPolicyAlways,
-		},
-	}
-}
-
-func makeDiscoveryPod(ns, image string) *v1.Pod {
-	return &v1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "discovery-pod",
-			Namespace: ns,
-		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
-				{
-					Name:            "discovery-container",
-					Image:           image,
-					ImagePullPolicy: v1.PullIfNotPresent,
-					Command:         []string{"/dracpuinfo"},
-				},
-			},
-			RestartPolicy: v1.RestartPolicyNever,
-		},
-	}
-}
-
-func pinPodToNode(pod *v1.Pod, nodeName string) *v1.Pod {
-	pod.Spec.NodeSelector = map[string]string{
-		"kubernetes.io/hostname": nodeName,
-	}
-	return pod
-}
-
-func identifyPod(pod *v1.Pod) string {
-	return pod.Namespace + "/" + pod.Name + "@" + pod.Spec.NodeName
-}
-
-func mustCreateBestEffortPod(ctx context.Context, fxt *fixture.Fixture, nodeName, dracpuTesterImage string) *v1.Pod {
-	fixture.By("creating a best-effort reference pod")
-	pod := makeTesterPodBestEffort(fxt.Namespace.Name, dracpuTesterImage)
-	pod = pinPodToNode(pod, nodeName)
-	pod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
-	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create tester pod: %v", err)
-	return pod
-}
-
-func parseReservedCPUsArg(arg string) (string, bool) {
-	prefix := "--reserved-cpus="
-	if !strings.HasPrefix(arg, prefix) {
-		return "", false
-	}
-	return strings.TrimPrefix(arg, prefix), true
-}
-
-func parseCPUDeviceModeArg(arg string) (string, bool) {
-	prefix := "--cpu-device-mode="
-	if !strings.HasPrefix(arg, prefix) {
-		return "", false
-	}
-	return strings.TrimPrefix(arg, prefix), true
-}
-
-func makeResourceClaimTemplate(templateName string, cpus int, isConsumable bool) resourcev1.ResourceClaimTemplate {
-	var claimSpec resourcev1.ResourceClaimSpec
-	if isConsumable {
-		claimSpec = resourcev1.ResourceClaimSpec{
-			Devices: resourcev1.DeviceClaim{
-				Requests: []resourcev1.DeviceRequest{
-					{
-						Name: "request-cpus",
-						Exactly: &resourcev1.ExactDeviceRequest{
-							DeviceClassName: "dra.cpu",
-							Capacity: &resourcev1.CapacityRequirements{
-								Requests: map[resourcev1.QualifiedName]resource.Quantity{
-									"dra.cpu/cpu": resource.MustParse(fmt.Sprintf("%d", cpus)),
-								},
-							},
-						},
-					},
-				},
-			},
-		}
-	} else {
-		claimSpec = resourcev1.ResourceClaimSpec{
-			Devices: resourcev1.DeviceClaim{
-				Requests: []resourcev1.DeviceRequest{
-					{
-						Name: "request-cpus",
-						Exactly: &resourcev1.ExactDeviceRequest{
-							DeviceClassName: "dra.cpu",
-							Count:           int64(cpus),
-						},
-					},
-				},
-			},
-		}
-	}
-
-	template := resourcev1.ResourceClaimTemplate{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: templateName,
-		},
-		Spec: resourcev1.ResourceClaimTemplateSpec{
-			Spec: claimSpec,
-		},
-	}
-	return template
+	}).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(gomega.Succeed(), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", e2epod.Identify(sharedPod))
 }
