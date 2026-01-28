@@ -13,6 +13,9 @@ defaults:
 jobs:
   e2e-individual-mode:
     runs-on: ubuntu-latest
+    env:
+      DRACPU_E2E_CPU_DEVICE_MODE: individual
+      DRACPU_E2E_VERBOSE: 1
     steps:
     - uses: actions/checkout@v4
     - name: Setup golang
@@ -22,15 +25,18 @@ jobs:
     - name: Kind version check
       run: kind version
     - name: Create and setup K8S kind cluster
-      run: make ci-kind-setup-individual-mode
+      run: make ci-kind-setup
     - name: Run E2E tests
-      run: KUBECONFIG=${HOME}/.kube/config make test-e2e-individual-mode
+      run: KUBECONFIG=${HOME}/.kube/config make test-e2e
     - name: Show logs on failure
       if: ${{ failure() }}
       run: |
         kubectl get pods -A -o wide
   e2e-grouped-mode:
     runs-on: ubuntu-latest
+    env:
+      DRACPU_E2E_CPU_DEVICE_MODE: grouped
+      DRACPU_E2E_VERBOSE: 1
     steps:
     - uses: actions/checkout@v4
     - name: Setup golang
@@ -40,9 +46,9 @@ jobs:
     - name: Kind version check
       run: kind version
     - name: Create and setup K8S kind cluster
-      run: make ci-kind-setup-grouped-mode
+      run: make ci-kind-setup
     - name: Run E2E tests
-      run: KUBECONFIG=${HOME}/.kube/config make test-e2e-grouped-mode
+      run: KUBECONFIG=${HOME}/.kube/config make test-e2e
     - name: Show logs on failure
       if: ${{ failure() }}
       run: |

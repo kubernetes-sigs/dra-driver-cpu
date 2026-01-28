@@ -69,7 +69,6 @@ REGISTRY := us-central1-docker.pkg.dev/k8s-staging-images
 # this is an intentionally non-existent registry to be used only by local CI using the local image loading
 REGISTRY_CI := dev.kind.local/ci
 STAGING_IMAGE_NAME := ${REGISTRY}/${STAGING_REPO_NAME}/${IMAGE_NAME}
-TESTING_IMAGE_NAME := ${REGISTRY}/${IMAGE_NAME}-test
 # tag based on date-sha
 GIT_VERSION := $(shell date +v%Y%m%d)-$(shell git rev-parse --short HEAD)
 ifneq ($(shell git status --porcelain),)
@@ -79,11 +78,18 @@ TAG ?= $(GIT_VERSION)
 # the full image tag
 IMAGE_LATEST?=$(STAGING_IMAGE_NAME):latest
 IMAGE := ${STAGING_IMAGE_NAME}:${TAG}
-IMAGE_TESTING := "${TESTING_IMAGE_NAME}:${TAG}"
 IMAGE_CI := ${REGISTRY_CI}/${IMAGE_NAME}:${TAG}
 IMAGE_TEST := ${REGISTRY_CI}/${IMAGE_NAME}-test:${TAG}
 # target platform(s)
 PLATFORMS?=linux/amd64
+
+# set convenient defaults for user variables
+DRACPU_E2E_CPU_DEVICE_MODE ?= grouped
+DRACPU_E2E_RESERVED_CPUS ?= 0
+
+# shortcut
+CI_MANIFEST_FILE := hack/ci/install-ci-$(DRACPU_E2E_CPU_DEVICE_MODE)-mode.yaml
+# we need this because manifest processing always needs a nonempty value
 
 # required to enable buildx
 export DOCKER_CLI_EXPERIMENTAL=enabled
@@ -144,18 +150,17 @@ define generate_ci_manifest
 	@rm hack/ci/*.part.yaml
 endef
 
-RESERVED_CPUS_E2E ?= 0
-ci-manifests-individual-mode: install.yaml install-yq ## create the CI install manifests for the individual mode test variant
-	$(call generate_ci_manifest,hack/ci/install-ci-individual-mode.yaml,.spec.template.spec.containers[0].args |= (del(.[] | select(. == "--cpu-device-mode=*")) | . + ["--cpu-device-mode=individual", "--reserved-cpus=$(RESERVED_CPUS_E2E)"]))
+ci-manifests: install.yaml install-yq ## create the CI install manifests
+ifneq ($(DRACPU_E2E_VERBOSE),)
+	@echo "setting up manifests for mode=$(DRACPU_E2E_CPU_DEVICE_MODE)"
+endif
+	$(call generate_ci_manifest,$(CI_MANIFEST_FILE),.spec.template.spec.containers[0].args |= (del(.[] | select(. == "--cpu-device-mode=*")) | . + ["--cpu-device-mode=individual", "--reserved-cpus=$(DRACPU_E2E_RESERVED_CPUS)"]))
 
-ci-kind-setup-individual-mode: ci-manifests-individual-mode build-image build-test-image ## setup a CI cluster from scratch for the reserved cpus test variant
-	$(call kind_setup,hack/ci/install-ci-individual-mode.yaml)
-
-ci-manifests-grouped-mode: install.yaml install-yq ## create the CI install manifests for the grouped mode test variant
-	$(call generate_ci_manifest,hack/ci/install-ci-grouped-mode.yaml,.spec.template.spec.containers[0].args |= (del(.[] | select(. == "--cpu-device-mode=*")) | . + ["--cpu-device-mode=grouped", "--reserved-cpus=$(RESERVED_CPUS_E2E)"]))
-
-ci-kind-setup-grouped-mode: ci-manifests-grouped-mode build-image build-test-image ## setup a CI cluster from scratch for the reserved cpus test variant
-	$(call kind_setup,hack/ci/install-ci-grouped-mode.yaml)
+ci-kind-setup: ci-manifests build-image build-test-image ## setup a CI cluster from scratch using reserved CPUs
+ifneq ($(DRACPU_E2E_VERBOSE),)
+	@echo "creating a kind cluster for mode=$(DRACPU_E2E_CPU_DEVICE_MODE)"
+endif
+	$(call kind_setup,$(CI_MANIFEST_FILE))
 
 build-test-image: ## build tests image
 	docker buildx build . \
@@ -170,11 +175,10 @@ build-test-dracputester: ## build helper to serve as entry point and report cpu 
 build-test-dracpuinfo: ## build helper to expose hardware info in the internal dracpu format
 	go build -v -o "$(OUT_DIR)/dracpuinfo" ./test/image/dracpuinfo
 
-test-e2e-individual-mode: ## run e2e test reserved cpus suite
-	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(RESERVED_CPUS_E2E) DRACPU_E2E_CPU_DEVICE_MODE=individual go test -v ./test/e2e/ --ginkgo.v
+test-e2e: ## run e2e test against an existing configured cluster
+	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) go test -v ./test/e2e/ --ginkgo.v
 
-test-e2e-grouped-mode: ## run e2e test grouped mode suite
-	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(RESERVED_CPUS_E2E) DRACPU_E2E_CPU_DEVICE_MODE=grouped go test -v ./test/e2e/ --ginkgo.v
+test-e2e-kind: ci-kind-setup test-e2e ## run e2e test against a purpose-built kind cluster
 
 lint:  ## run the linter against the codebase
 	$(GOLANGCI_LINT) run ./...

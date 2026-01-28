@@ -114,10 +114,17 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 			targetNode, err = rootFxt.K8SClientset.CoreV1().Nodes().Get(ctx, targetNodeName, metav1.GetOptions{})
 			gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get worker node %q: %v", targetNodeName, err)
 		} else {
-			workerNodes, err := node.FindWorkers(ctx, infraFxt.K8SClientset)
-			gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot find worker nodes: %v", err)
-			gomega.Expect(workerNodes).ToNot(gomega.BeEmpty(), "no worker nodes detected")
-			targetNode = workerNodes[0] // pick random one, this is the simplest random pick
+			gomega.Eventually(func() error {
+				workerNodes, err := node.FindWorkers(ctx, infraFxt.K8SClientset)
+				if err != nil {
+					return err
+				}
+				if len(workerNodes) == 0 {
+					return fmt.Errorf("no worker nodes detected")
+				}
+				targetNode = workerNodes[0] // pick random one, this is the simplest random pick
+				return nil
+			}).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(gomega.Succeed(), "failed to find any worker node")
 		}
 		rootFxt.Log.Info("using worker node", "nodeName", targetNode.Name)
 
