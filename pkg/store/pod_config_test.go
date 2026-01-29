@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package driver
+package store
 
 import (
 	"testing"
@@ -24,7 +24,7 @@ import (
 )
 
 func TestSetAndGetContainerState(t *testing.T) {
-	store := NewPodConfigStore()
+	store := NewPodConfig()
 	podUID := types.UID("pod-uid-1")
 	ctrName := "ctr-name-1"
 	state := NewContainerState(ctrName, "ctr-uid-1", types.UID("claim-uid-1"))
@@ -39,7 +39,7 @@ func TestSetAndGetContainerState(t *testing.T) {
 }
 
 func TestRemoveContainerState(t *testing.T) {
-	store := NewPodConfigStore()
+	store := NewPodConfig()
 	podUID := types.UID("pod-uid-1")
 	ctrName1 := "ctr-name-1"
 	ctrName2 := "ctr-name-2"
@@ -74,12 +74,12 @@ func TestGetSharedCPUContainerUIDs(t *testing.T) {
 
 	testCases := []struct {
 		name     string
-		setup    func(s *PodConfigStore)
+		setup    func(s *PodConfig)
 		wantUIDs []types.UID
 	}{
 		{
 			name: "some shared, some guaranteed",
-			setup: func(s *PodConfigStore) {
+			setup: func(s *PodConfig) {
 				s.SetContainerState("pod1", sharedState1)
 				s.SetContainerState("pod2", sharedState2)
 				s.SetContainerState("pod1", guaranteedState)
@@ -88,86 +88,24 @@ func TestGetSharedCPUContainerUIDs(t *testing.T) {
 		},
 		{
 			name: "only guaranteed",
-			setup: func(s *PodConfigStore) {
+			setup: func(s *PodConfig) {
 				s.SetContainerState("pod1", guaranteedState)
 			},
 			wantUIDs: []types.UID{},
 		},
 		{
 			name:     "no containers",
-			setup:    func(s *PodConfigStore) {},
+			setup:    func(s *PodConfig) {},
 			wantUIDs: []types.UID{},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			store := NewPodConfigStore()
+			store := NewPodConfig()
 			tc.setup(store)
 			gotUIDs := store.GetContainersWithSharedCPUs()
 			require.ElementsMatch(t, tc.wantUIDs, gotUIDs)
-		})
-	}
-}
-
-func TestPodHasExclusiveCPUAllocation(t *testing.T) {
-	guaranteedState := NewContainerState("guaranteed-ctr", "gid1", types.UID("claim-uid-1"))
-	sharedState := NewContainerState("shared-ctr", "sid1")
-
-	testCases := []struct {
-		name           string
-		podUID         types.UID
-		setup          func(s *PodConfigStore)
-		wantGuaranteed bool
-	}{
-		{
-			name:           "pod not in store",
-			podUID:         "non-existent-pod",
-			setup:          func(s *PodConfigStore) {},
-			wantGuaranteed: false,
-		},
-		{
-			name:   "pod with only shared containers",
-			podUID: "pod1",
-			setup: func(s *PodConfigStore) {
-				s.SetContainerState("pod1", sharedState)
-			},
-			wantGuaranteed: false,
-		},
-		{
-			name:   "pod with only guaranteed containers",
-			podUID: "pod1",
-			setup: func(s *PodConfigStore) {
-				s.SetContainerState("pod1", guaranteedState)
-			},
-			wantGuaranteed: true,
-		},
-		{
-			name:   "pod with mixed containers",
-			podUID: "pod1",
-			setup: func(s *PodConfigStore) {
-				s.SetContainerState("pod1", sharedState)
-				s.SetContainerState("pod1", guaranteedState)
-			},
-			wantGuaranteed: true,
-		},
-		{
-			name:   "pod with multiple shared containers",
-			podUID: "pod1",
-			setup: func(s *PodConfigStore) {
-				s.SetContainerState("pod1", NewContainerState("c1", "id1"))
-				s.SetContainerState("pod1", NewContainerState("c2", "id2"))
-			},
-			wantGuaranteed: false,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			store := NewPodConfigStore()
-			tc.setup(store)
-			gotGuaranteed := store.PodHasExclusiveCPUAllocation(tc.podUID)
-			require.Equal(t, tc.wantGuaranteed, gotGuaranteed)
 		})
 	}
 }
