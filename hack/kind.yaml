@@ -19,7 +19,7 @@ featureGates:
   DRAConsumableCapacity: true
 nodes:
 - role: control-plane
-  image: kindest/node:v1.34.0
+  image: kindest/node:v1.35.0
   kubeadmConfigPatches:
   - |
     kind: ClusterConfiguration
@@ -36,7 +36,7 @@ nodes:
       kubeletExtraArgs:
         v: "5"
 - role: worker
-  image: kindest/node:v1.34.0
+  image: kindest/node:v1.35.0
   kubeadmConfigPatches:
   - |
     kind: JoinConfiguration
@@ -44,7 +44,7 @@ nodes:
       kubeletExtraArgs:
         v: "5"
 - role: worker
-  image: kindest/node:v1.34.0
+  image: kindest/node:v1.35.0
   kubeadmConfigPatches:
   - |
     kind: JoinConfiguration
