@@ -79,12 +79,19 @@ The driver is deployed as a DaemonSet which contains two core components:
 
 ### Example Usage
 
-- Create a ResourceClaim: This requests a specific number of exclusive CPUs from
-  the driver.
-  - `kubectl apply -f hack/examples/sample_cpu_resource_claims.yaml`
-- Create a Pod: Reference the ResourceClaim in your pod spec to receive the
-  allocated CPUs.
-  - `kubectl apply -f hack/examples/sample_pod_with_cpu_resource_claim.yaml`
+The driver supports two modes of operation. Each mode has a complete example manifest that includes both the ResourceClaim(s) and a sample Pod. The ResourceClaim requests a specific number of exclusive CPUs from the driver, and is referenced in the Pod spec to receive the allocated CPUs.
+
+#### Grouped Mode (default)
+
+In grouped mode, CPUs are requested as a consumable capacity from a device group (e.g., NUMA node or socket). This example requests 10 CPUs.
+
+- `kubectl apply -f hack/examples/pod_with_resource_claim_grouped_mode.yaml`
+
+#### Individual Mode
+
+In individual mode, specific CPU devices are requested by count, allowing for fine-grained control over CPU selection. This example includes two ResourceClaims requesting 4 and 6 CPUs respectively, used by a Pod with multiple containers.
+
+- `kubectl apply -f hack/examples/pod_with_resource_claim_individual_mode.yaml`
 
 ## Example ResourceSlices
 
