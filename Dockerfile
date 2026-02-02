@@ -25,8 +25,10 @@ RUN go mod download
 # build
 COPY . .
 RUN go build -o /go/bin/dracpu ./cmd/dracpu
+RUN go build -o /go/bin/dracpu-admission ./cmd/dracpu-admission
 
 # copy binary onto base image
 FROM gcr.io/distroless/base-debian12
 COPY --from=builder --chown=root:root /go/bin/dracpu /dracpu
+COPY --from=builder --chown=root:root /go/bin/dracpu-admission /dracpu-admission
 CMD ["/dracpu"]
