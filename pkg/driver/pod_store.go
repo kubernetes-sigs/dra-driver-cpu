@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // ContainerState holds the allocation type and all claim assignments for a container.
@@ -45,14 +46,16 @@ type PodCPUAssignments map[string]*ContainerState
 
 // PodConfigStore maps a Pod's UID directly to its container-level assignments.
 type PodConfigStore struct {
-	mu      sync.RWMutex
-	configs map[types.UID]PodCPUAssignments
+	mu                  sync.RWMutex
+	configs             map[types.UID]PodCPUAssignments
+	sharedCPUContainers sets.Set[types.UID]
 }
 
 // NewPodConfigStore creates a new PodConfigStore.
 func NewPodConfigStore() *PodConfigStore {
 	return &PodConfigStore{
-		configs: make(map[types.UID]PodCPUAssignments),
+		configs:             make(map[types.UID]PodCPUAssignments),
+		sharedCPUContainers: sets.New[types.UID](),
 	}
 }
 
@@ -61,10 +64,23 @@ func (s *PodConfigStore) SetContainerState(podUID types.UID, state *ContainerSta
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Check if there's an existing state for this container that we need to clean up from cache.
+	if podAssignments, ok := s.configs[podUID]; ok {
+		if oldState, exists := podAssignments[state.containerName]; exists {
+			// Remove old container from sharedCPUContainers cache if it was there.
+			s.sharedCPUContainers.Delete(oldState.containerUID)
+		}
+	}
+
 	if _, ok := s.configs[podUID]; !ok {
 		s.configs[podUID] = make(PodCPUAssignments)
 	}
 	s.configs[podUID][state.containerName] = state
+
+	// Update sharedCPUContainers cache based on new state.
+	if !state.HasExclusiveCPUAllocation() {
+		s.sharedCPUContainers.Insert(state.containerUID)
+	}
 }
 
 // GetContainerState retrieves a container's state.
@@ -95,6 +111,9 @@ func (s *PodConfigStore) RemoveContainerState(podUID types.UID, containerName st
 
 	updateNeeded := cs.HasExclusiveCPUAllocation()
 
+	// Remove from sharedCPUContainers cache.
+	s.sharedCPUContainers.Delete(cs.containerUID)
+
 	delete(podAssignments, containerName)
 	if len(podAssignments) == 0 {
 		delete(s.configs, podUID)
@@ -104,19 +123,10 @@ func (s *PodConfigStore) RemoveContainerState(podUID types.UID, containerName st
 }
 
 // GetContainersWithSharedCPUs returns a list of container UIDs that have shared CPU allocation.
-// TODO(pravk03): Cache this and return from this function in O(1)
 func (s *PodConfigStore) GetContainersWithSharedCPUs() []types.UID {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	sharedCPUContainers := []types.UID{}
-	for _, podAssignments := range s.configs {
-		for _, state := range podAssignments {
-			if !state.HasExclusiveCPUAllocation() {
-				sharedCPUContainers = append(sharedCPUContainers, state.containerUID)
-			}
-		}
-	}
-	return sharedCPUContainers
+	return s.sharedCPUContainers.UnsortedList()
 }
 
 // HasExclusiveCPUAllocation returns true if the container has associated resource claims.

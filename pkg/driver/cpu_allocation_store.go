@@ -31,6 +31,7 @@ type CPUAllocationStore struct {
 	availableCPUs            cpuset.CPUSet
 	reservedCPUs             cpuset.CPUSet
 	resourceClaimAllocations map[types.UID]cpuset.CPUSet
+	allocatedCPUs            cpuset.CPUSet
 }
 
 // NewCPUAllocationStore creates a new CPUAllocationStore.
@@ -46,15 +47,16 @@ func NewCPUAllocationStore(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset
 		availableCPUs:            availableCPUs,
 		reservedCPUs:             reservedCPUs,
 		resourceClaimAllocations: make(map[types.UID]cpuset.CPUSet),
+		allocatedCPUs:            cpuset.New(),
 	}
 }
 
 // AddResourceClaimAllocation adds a new resource claim allocation to the store.
-// TODO(pravk03): Keep track of all allocated CPUs here so that GetSharedCPUs() can return in O(1).
 func (s *CPUAllocationStore) AddResourceClaimAllocation(claimUID types.UID, cpus cpuset.CPUSet) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.resourceClaimAllocations[claimUID] = cpus
+	s.allocatedCPUs = s.allocatedCPUs.Union(cpus)
 	klog.Infof("Added allocation for resource claim %s: CPUs %s", claimUID, cpus.String())
 }
 
@@ -64,20 +66,20 @@ func (s *CPUAllocationStore) RemoveResourceClaimAllocation(claimUID types.UID) {
 	defer s.mu.Unlock()
 	if _, ok := s.resourceClaimAllocations[claimUID]; ok {
 		delete(s.resourceClaimAllocations, claimUID)
+		// Rebuild allocatedCPUs cache from remaining allocations.
+		s.allocatedCPUs = cpuset.New()
+		for _, cpus := range s.resourceClaimAllocations {
+			s.allocatedCPUs = s.allocatedCPUs.Union(cpus)
+		}
 		klog.Infof("Removed allocation for resource claim %s", claimUID)
 	}
 }
 
-// GetSharedCPUs calculates and returns the set of CPUs not reserved by any resource claim.
+// GetSharedCPUs returns the set of CPUs not reserved by any resource claim.
 func (s *CPUAllocationStore) GetSharedCPUs() cpuset.CPUSet {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-
-	allocatedCPUs := cpuset.New()
-	for _, cpus := range s.resourceClaimAllocations {
-		allocatedCPUs = allocatedCPUs.Union(cpus)
-	}
-	return s.availableCPUs.Difference(allocatedCPUs)
+	return s.availableCPUs.Difference(s.allocatedCPUs)
 }
 
 // GetResourceClaimAllocation returns the cpuset for a given resource claim.
