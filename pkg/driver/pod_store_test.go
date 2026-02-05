@@ -17,6 +17,7 @@ limitations under the License.
 package driver
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -168,6 +169,99 @@ func TestPodHasExclusiveCPUAllocation(t *testing.T) {
 			tc.setup(store)
 			gotGuaranteed := store.PodHasExclusiveCPUAllocation(tc.podUID)
 			require.Equal(t, tc.wantGuaranteed, gotGuaranteed)
+		})
+	}
+}
+
+func TestSharedCPUContainersCacheConsistency(t *testing.T) {
+	store := NewPodConfigStore()
+
+	store.SetContainerState("pod1", NewContainerState("c1", "id1"))
+	store.SetContainerState("pod1", NewContainerState("c2", "id2"))
+	store.SetContainerState("pod2", NewContainerState("c3", "id3"))
+
+	sharedUIDs := store.GetContainersWithSharedCPUs()
+	require.Len(t, sharedUIDs, 3)
+
+	store.SetContainerState("pod3", NewContainerState("c4", "id4", "claim-1"))
+	sharedUIDs = store.GetContainersWithSharedCPUs()
+	require.Len(t, sharedUIDs, 3)
+
+	store.SetContainerState("pod1", NewContainerState("c1", "id1", "claim-2"))
+	sharedUIDs = store.GetContainersWithSharedCPUs()
+	require.Len(t, sharedUIDs, 2)
+	require.NotContains(t, sharedUIDs, types.UID("id1"))
+
+	store.RemoveContainerState("pod1", "c2")
+	sharedUIDs = store.GetContainersWithSharedCPUs()
+	require.Len(t, sharedUIDs, 1)
+	require.ElementsMatch(t, []types.UID{"id3"}, sharedUIDs)
+
+	store.RemoveContainerState("pod2", "c3")
+	sharedUIDs = store.GetContainersWithSharedCPUs()
+	require.Len(t, sharedUIDs, 0)
+}
+
+func getContainersWithSharedCPUsNaive(configs map[types.UID]map[string]*ContainerState) []types.UID {
+	var result []types.UID
+	for _, containers := range configs {
+		for _, state := range containers {
+			if len(state.resourceClaimUIDs) == 0 {
+				result = append(result, state.containerUID)
+			}
+		}
+	}
+	return result
+}
+
+func BenchmarkGetContainersWithSharedCPUs(b *testing.B) {
+	testCases := []struct {
+		name          string
+		numPods       int
+		ctrsPerPod    int
+		sharedPercent int
+	}{
+		{"10_pods_50pct_shared", 10, 2, 50},
+		{"100_pods_50pct_shared", 100, 2, 50},
+		{"500_pods_50pct_shared", 500, 2, 50},
+		{"500_pods_90pct_shared", 500, 2, 90},
+	}
+
+	for _, tc := range testCases {
+		configs := make(map[types.UID]map[string]*ContainerState)
+		store := NewPodConfigStore()
+
+		ctrIndex := 0
+		for i := 0; i < tc.numPods; i++ {
+			podUID := types.UID(fmt.Sprintf("pod-%d", i))
+			configs[podUID] = make(map[string]*ContainerState)
+
+			for j := 0; j < tc.ctrsPerPod; j++ {
+				ctrName := fmt.Sprintf("ctr-%d", j)
+				ctrUID := types.UID(fmt.Sprintf("ctr-uid-%d", ctrIndex))
+
+				var state *ContainerState
+				if (ctrIndex*100)/(tc.numPods*tc.ctrsPerPod) < tc.sharedPercent {
+					state = NewContainerState(ctrName, ctrUID)
+				} else {
+					state = NewContainerState(ctrName, ctrUID, types.UID(fmt.Sprintf("claim-%d", ctrIndex)))
+				}
+				configs[podUID][ctrName] = state
+				store.SetContainerState(podUID, state)
+				ctrIndex++
+			}
+		}
+
+		b.Run(tc.name+"/naive", func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = getContainersWithSharedCPUsNaive(configs)
+			}
+		})
+
+		b.Run(tc.name+"/optimized", func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = store.GetContainersWithSharedCPUs()
+			}
 		})
 	}
 }
