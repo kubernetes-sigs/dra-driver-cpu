@@ -114,9 +114,9 @@ func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod
 	return ret
 }
 
-func makeTesterPodWithExclusiveCPUClaim(ns, image string, cpuClaimTemplate *resourcev1.ResourceClaimTemplate) *v1.Pod {
+func makeTesterPodWithExclusiveCPUClaim(ns, image, cpuClaimTemplateName string, numCPUs int64) *v1.Pod {
 	ginkgo.GinkgoHelper()
-	cpuQty := resource.NewQuantity(cpuClaimTemplate.Spec.Spec.Devices.Requests[0].Exactly.Count, resource.DecimalSI)
+	cpuQty := resource.NewQuantity(numCPUs, resource.DecimalSI)
 	memQty, err := resource.ParseQuantity("256Mi") // random "low enough" value
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
@@ -151,7 +151,7 @@ func makeTesterPodWithExclusiveCPUClaim(ns, image string, cpuClaimTemplate *reso
 			ResourceClaims: []v1.PodResourceClaim{
 				{
 					Name:                      "tester-container-1-claim",
-					ResourceClaimTemplateName: ptr.To(cpuClaimTemplate.Name),
+					ResourceClaimTemplateName: ptr.To(cpuClaimTemplateName),
 				},
 			},
 			RestartPolicy: v1.RestartPolicyAlways,

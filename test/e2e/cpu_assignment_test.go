@@ -197,7 +197,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				createdClaimTemplate, err := fxt.K8SClientset.ResourceV1().ResourceClaimTemplates(fxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
 				for i := 0; i < numPods; i++ {
 					gomega.Expect(err).ToNot(gomega.HaveOccurred())
-					pod := makeTesterPodWithExclusiveCPUClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate)
+					pod := makeTesterPodWithExclusiveCPUClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, int64(cpusPerClaim))
 					createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
 					gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create tester pod %d: %v", i, err)
 					exclPods = append(exclPods, createdPod)
