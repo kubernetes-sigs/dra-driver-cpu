@@ -24,6 +24,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -85,6 +86,26 @@ var _ = ginkgo.Describe("Admission Webhook", ginkgo.Ordered, func() {
 		gomega.Expect(err).To(gomega.HaveOccurred())
 		gomega.Expect(apierrors.IsInvalid(err)).To(gomega.BeTrue(), fmt.Sprintf("expected invalid error, got: %v", err))
 	})
+
+	ginkgo.It("allows pods without resource claims", func(ctx context.Context) {
+		pod := makePodWithoutClaim(fxt.Namespace.Name, "pod-no-claim", 1)
+		createdPod, err := fxt.K8SClientset.CoreV1().Pods(fxt.Namespace.Name).Create(ctx, pod, metav1.CreateOptions{})
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+		gomega.Expect(deletePod(ctx, fxt.K8SClientset, createdPod)).To(gomega.Succeed())
+	})
+
+	ginkgo.It("allows claim-only pods without cpu requests", func(ctx context.Context) {
+		claim := makeCountClaim(fxt.Namespace.Name, "claim-no-cpu", 1)
+		_, err := fxt.K8SClientset.ResourceV1().ResourceClaims(fxt.Namespace.Name).Create(ctx, claim, metav1.CreateOptions{})
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+		pod := makePodWithClaimOnly(fxt.Namespace.Name, "pod-claim-no-cpu", "pod-claim-ref", claim.Name)
+		createdPod, err := fxt.K8SClientset.CoreV1().Pods(fxt.Namespace.Name).Create(ctx, pod, metav1.CreateOptions{})
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+		gomega.Expect(deletePod(ctx, fxt.K8SClientset, createdPod)).To(gomega.Succeed())
+	})
 })
 
 func ensureAdmissionWebhookReady(ctx context.Context, cs kubernetes.Interface) {
@@ -104,23 +125,37 @@ func ensureAdmissionWebhookReady(ctx context.Context, cs kubernetes.Interface) {
 		ginkgo.Skip("dracpu-admission webhook is missing CA bundle")
 	}
 
-	endpoints, err := cs.CoreV1().Endpoints("kube-system").Get(ctx, "dracpu-admission", metav1.GetOptions{})
+	endpointSlices, err := cs.DiscoveryV1().EndpointSlices("kube-system").List(ctx, metav1.ListOptions{
+		LabelSelector: "kubernetes.io/service-name=dracpu-admission",
+	})
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			ginkgo.Skip("dracpu-admission service endpoints not found")
-		}
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 	}
 	hasReadyEndpoint := false
-	for _, subset := range endpoints.Subsets {
-		if len(subset.Addresses) > 0 {
-			hasReadyEndpoint = true
+	for _, slice := range endpointSlices.Items {
+		if slice.AddressType != discoveryv1.AddressTypeIPv4 && slice.AddressType != discoveryv1.AddressTypeIPv6 {
+			continue
+		}
+		for _, endpoint := range slice.Endpoints {
+			if endpointReady(endpoint) {
+				hasReadyEndpoint = true
+				break
+			}
+		}
+		if hasReadyEndpoint {
 			break
 		}
 	}
 	if !hasReadyEndpoint {
 		ginkgo.Skip("dracpu-admission service has no ready endpoints")
 	}
+}
+
+func endpointReady(endpoint discoveryv1.Endpoint) bool {
+	if endpoint.Conditions.Ready != nil {
+		return *endpoint.Conditions.Ready
+	}
+	return false
 }
 
 // makeCapacityClaim builds a dra.cpu capacity-based ResourceClaim.
@@ -260,6 +295,64 @@ func makePodWithTwoClaims(namespace, name, claimRefName1, claimName1 string, cpu
 				{
 					Name:              claimRefName2,
 					ResourceClaimName: &claimName2,
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
+}
+
+// makePodWithoutClaim builds a pod with CPU requests/limits and no claims.
+func makePodWithoutClaim(namespace, name string, cpu int64) *corev1.Pod {
+	cpuQty := resource.MustParse(fmt.Sprintf("%d", cpu))
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "workload-container",
+					Image: "registry.k8s.io/pause:3.9",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU: cpuQty,
+						},
+						Limits: corev1.ResourceList{
+							corev1.ResourceCPU: cpuQty,
+						},
+					},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
+}
+
+// makePodWithClaimOnly builds a pod referencing a claim without cpu requests.
+func makePodWithClaimOnly(namespace, name, claimRefName, claimName string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "workload-container",
+					Image: "registry.k8s.io/pause:3.9",
+					Resources: corev1.ResourceRequirements{
+						Claims: []corev1.ResourceClaim{
+							{Name: claimRefName},
+						},
+					},
+				},
+			},
+			ResourceClaims: []corev1.PodResourceClaim{
+				{
+					Name:              claimRefName,
+					ResourceClaimName: &claimName,
 				},
 			},
 			RestartPolicy: corev1.RestartPolicyNever,
