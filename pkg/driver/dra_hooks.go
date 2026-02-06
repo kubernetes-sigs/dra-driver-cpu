@@ -182,7 +182,7 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 	})
 
 	devId := 0
-	devicesByNuma := make(map[int64][]resourceapi.Device)
+	var allDevices []resourceapi.Device
 	for _, group := range coreGroups {
 		for _, cpu := range group {
 			numaNode := int64(cpu.NUMANodeID)
@@ -208,42 +208,25 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 				},
 				Capacity: make(map[resourceapi.QualifiedName]resourceapi.DeviceCapacity),
 			}
-			devicesByNuma[numaNode] = append(devicesByNuma[numaNode], cpuDevice)
+			allDevices = append(allDevices, cpuDevice)
 		}
 	}
 
-	// Sort NUMA node IDs to ensure a deterministic slice ordering.
-	numaNodeIDs := make([]int, 0, len(devicesByNuma))
-	for id := range devicesByNuma {
-		numaNodeIDs = append(numaNodeIDs, int(id))
+	if len(allDevices) == 0 {
+		return nil
 	}
-	sort.Ints(numaNodeIDs)
 
 	var allSlices [][]resourceapi.Device
-	// If the total number of available CPUs is small enough, group them into a single resource slice.
-	// Otherwise, create one slice per NUMA node.
-	if len(availableCPUs) <= maxDevicesPerResourceSlice {
-		var allDevices []resourceapi.Device
-		for _, id := range numaNodeIDs {
-			allDevices = append(allDevices, devicesByNuma[int64(id)]...)
-		}
-		if len(allDevices) > 0 {
-			allSlices = append(allSlices, allDevices)
-		}
-		return allSlices
-	}
-
-	// Create one slice per NUMA node.
-	for _, id := range numaNodeIDs {
-		numaDevices := devicesByNuma[int64(id)]
-		// If devices per NUMA node exceeds the limit, we currently throw an error.
-		// TODO(pravk03) - We would need to handle this better. We can do smaller splits within a NUMA node.
-		if len(numaDevices) > maxDevicesPerResourceSlice {
-			klog.Errorf("number of devices for NUMA node %d (%d) exceeds the slice limit of %d", id, len(numaDevices), maxDevicesPerResourceSlice)
-			return nil
-		}
-		if len(numaDevices) > 0 {
-			allSlices = append(allSlices, numaDevices)
+	if len(allDevices) <= maxDevicesPerResourceSlice {
+		allSlices = append(allSlices, allDevices)
+	} else {
+		// Chunk devices into slices of at most maxDevicesPerResourceSlice
+		for i := 0; i < len(allDevices); i += maxDevicesPerResourceSlice {
+			end := i + maxDevicesPerResourceSlice
+			if end > len(allDevices) {
+				end = len(allDevices)
+			}
+			allSlices = append(allSlices, allDevices[i:end])
 		}
 	}
 	return allSlices
