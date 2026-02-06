@@ -66,6 +66,22 @@ The driver is deployed as a DaemonSet which contains two core components:
 - This driver currently only manages CPU resources. Memory allocation and management are not supported.
 - While the driver is topology-aware, the grouped mode currently abstracts some of the fine-grained details within the group. Future enhancements may explore combining [consumable capacity](https://github.com/kubernetes/enhancements/blob/master/keps/sig-scheduling/5075-dra-consumable-capacity/README.md) with [partitionable devices](https://github.com/kubernetes/enhancements/blob/master/keps/sig-scheduling/4815-dra-partitionable-devices/README.md) for more hierarchical control.
 
+#### Sharing resource claims
+
+This driver strictly enforces a 1-to-1 mapping between Claims and Containers.
+It does not support sharing a single ResourceClaim among multiple containers or multiple pods,
+if that claims includes a resource (`dra.cpu`) managed by this driver.
+Attempting to share a claim among containers or pods will make all but the first pod consuming
+the claim to fail to start with the error `CreateContainerError` and remain in `Pending` state.
+
+The rationale to disallow sharing is that sharing claim confuses resource accounting, which
+is currently fragile because the lack of integration between the classic resource accounting
+and DRA-managed core resources.
+
+This gap is meant to be addressed by KEP-5517 (Native Resource Management). However, until
+that KEP progresses and gets traction, the safest approach for this driver is to prevent
+any resource claim sharing.
+
 ## Getting Started
 
 ### Installation

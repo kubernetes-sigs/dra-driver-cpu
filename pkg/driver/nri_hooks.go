@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/containerd/nri/pkg/api"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/cpuset"
@@ -32,9 +33,10 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	klog.Infof("Synchronized state with the runtime (%d pods, %d containers)...",
 		len(pods), len(containers))
 
-	cpuAllocationStore := NewCPUAllocationStore(cp.cpuTopology, cp.reservedCPUs)
-	podConfigStore := NewPodConfigStore()
+	cpuAllocationStore := store.NewCPUAllocation(cp.cpuTopology, cp.reservedCPUs)
+	podConfigStore := store.NewPodConfig()
 
+	logger := klog.FromContext(ctx)
 	for _, pod := range pods {
 		klog.Infof("Synchronize pod %s/%s UID %s", pod.Namespace, pod.Name, pod.Uid)
 		for _, container := range containers {
@@ -47,23 +49,29 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				continue
 			}
 			containerUID := types.UID(container.GetId())
-			var state *ContainerState
+			var state *store.ContainerState
+			var claimUIDs []types.UID
 			if len(claimAllocations) == 0 {
-				state = NewContainerState(container.GetName(), containerUID)
+				state = store.NewContainerState(container.GetName(), containerUID)
 			} else {
 				allGuaranteedCPUs := cpuset.New()
-				claimUIDs := []types.UID{}
 				for uid, cpus := range claimAllocations {
+					err := cp.claimTracker.SetOwner(logger, uid, types.UID(pod.Uid), container.Name)
+					if err != nil {
+						return nil, err
+					}
+
 					allGuaranteedCPUs = allGuaranteedCPUs.Union(cpus)
 					claimUIDs = append(claimUIDs, uid)
 					cpuAllocationStore.AddResourceClaimAllocation(uid, cpus)
 				}
 				klog.Infof("Synchronize: Found guaranteed CPUs for pod %s/%s container %s with cpus: %v", pod.Namespace, pod.Name, container.Name, allGuaranteedCPUs.String())
-				state = NewContainerState(container.GetName(), containerUID, claimUIDs...)
+				state = store.NewContainerState(container.GetName(), containerUID, claimUIDs...)
 			}
 			podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
 		}
 	}
+
 	cp.podConfigStore = podConfigStore
 	cp.cpuAllocationStore = cpuAllocationStore
 	return nil, nil
@@ -120,7 +128,7 @@ func (cp *CPUDriver) getSharedContainerUpdates(excludeID types.UID) []*api.Conta
 }
 
 // CreateContainer handles container creation requests from the NRI.
-func (cp *CPUDriver) CreateContainer(_ context.Context, pod *api.PodSandbox, ctr *api.Container) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
+func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
 	klog.Infof("CreateContainer Pod:%s/%s PodUID:%s Container:%s ContainerID:%s", pod.Namespace, pod.Name, pod.Uid, ctr.Name, ctr.Id)
 	adjust := &api.ContainerAdjustment{}
 	var updates []*api.ContainerUpdate
@@ -135,7 +143,7 @@ func (cp *CPUDriver) CreateContainer(_ context.Context, pod *api.PodSandbox, ctr
 
 	if len(claimAllocations) == 0 {
 		// This is a shared container.
-		state := NewContainerState(ctr.GetName(), containerId)
+		state := store.NewContainerState(ctr.GetName(), containerId)
 		cp.podConfigStore.SetContainerState(podUID, state)
 
 		sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
@@ -145,11 +153,16 @@ func (cp *CPUDriver) CreateContainer(_ context.Context, pod *api.PodSandbox, ctr
 		guaranteedCPUs := cpuset.New()
 		claimUIDs := []types.UID{}
 		for uid, cpus := range claimAllocations {
+			err := cp.claimTracker.SetOwner(klog.FromContext(ctx), uid, types.UID(pod.Uid), ctr.Name)
+			if err != nil {
+				return nil, nil, err
+			}
+
 			guaranteedCPUs = guaranteedCPUs.Union(cpus)
 			claimUIDs = append(claimUIDs, uid)
 		}
 		klog.Infof("Guaranteed CPUs found for pod:%s container:%s with cpus:%v", pod.Name, ctr.Name, guaranteedCPUs.String())
-		state := NewContainerState(ctr.GetName(), containerId, claimUIDs...)
+		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs...)
 		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
 		cp.podConfigStore.SetContainerState(podUID, state)
 		// Remove the guaranteed CPUs from the containers with shared CPUs.
@@ -159,25 +172,26 @@ func (cp *CPUDriver) CreateContainer(_ context.Context, pod *api.PodSandbox, ctr
 	return adjust, updates, nil
 }
 
-func (cp *CPUDriver) StopContainer(_ context.Context, pod *api.PodSandbox, ctr *api.Container) ([]*api.ContainerUpdate, error) {
+func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) ([]*api.ContainerUpdate, error) {
 	klog.Infof("StopContainer Pod:%s/%s PodUID:%s Container:%s ContainerID:%s", pod.Namespace, pod.Name, pod.Uid, ctr.Name, ctr.Id)
 	updates := []*api.ContainerUpdate{}
-	updateNeeded := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
-	if updateNeeded {
+	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
+	entries := "none"
+	if len(claimUIDs) > 0 {
 		// Remove the guaranteed CPUs from the containers with shared CPUs.
 		updates = cp.getSharedContainerUpdates(types.UID(ctr.GetId()))
-		klog.Infof("StopContainer updates needed: %d entries", len(updates))
-	} else {
-		klog.Infof("StopContainer updates needed: none")
+		cp.claimTracker.Cleanup(klog.FromContext(ctx), claimUIDs...)
+		entries = fmt.Sprintf("%d entries", len(updates))
 	}
+	klog.Infof("StopContainer updates needed: %s", entries)
 	return updates, nil
 }
 
 // RemoveContainer handles container removal requests from the NRI.
 func (cp *CPUDriver) RemoveContainer(_ context.Context, pod *api.PodSandbox, ctr *api.Container) error {
 	klog.Infof("RemoveContainer Pod:%s/%s PodUID:%s Container:%s ContainerID:%s", pod.Namespace, pod.Name, pod.Uid, ctr.Name, ctr.Id)
-	updateNeeded := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
-	if updateNeeded {
+	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
+	if len(claimUIDs) > 0 {
 		// this serves only for debugging purposes. We should never get here
 		klog.Errorf("RemoveContainer spurious updates needed (unexpected, please file a bug): %v", cp.getSharedContainerUpdates(types.UID(ctr.GetId())))
 	}
