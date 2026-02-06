@@ -114,10 +114,22 @@ var (
 		{CpuID: 6, CoreID: 2, SocketID: 1, NUMANodeID: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 2},
 		{CpuID: 7, CoreID: 3, SocketID: 1, NUMANodeID: 1, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: 3},
 	}
-	mockCPUInfos_SingleNUMANodeExceedsSliceLimit = func() []cpuinfo.CPUInfo {
+	mockCPUInfos_DualSocket_EqualsResourceSliceLimit = func() []cpuinfo.CPUInfo {
 		var infos []cpuinfo.CPUInfo
-		for i := 0; i < maxDevicesPerResourceSlice+1; i++ {
-			infos = append(infos, cpuinfo.CPUInfo{CpuID: i, CoreID: i, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1})
+		cpusPerNumaNode := maxDevicesPerResourceSlice / 2
+		for i := 0; i < maxDevicesPerResourceSlice; i++ {
+			numaNodeID := i / cpusPerNumaNode
+			infos = append(infos, cpuinfo.CPUInfo{CpuID: i, CoreID: i, SocketID: numaNodeID, NUMANodeID: numaNodeID, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1})
+		}
+		return infos
+	}()
+	mockCPUInfos_DualSocket_ExceedsResourceSliceLimit = func() []cpuinfo.CPUInfo {
+		var infos []cpuinfo.CPUInfo
+		numCPUS := maxDevicesPerResourceSlice + 10
+		cpusPerNumaNode := numCPUS / 2
+		for i := 0; i < numCPUS; i++ {
+			numaNodeID := i / cpusPerNumaNode
+			infos = append(infos, cpuinfo.CPUInfo{CpuID: i, CoreID: i, SocketID: numaNodeID, NUMANodeID: numaNodeID, CoreType: cpuinfo.CoreTypePerformance, SiblingCpuID: -1})
 		}
 		return infos
 	}()
@@ -239,12 +251,22 @@ func TestPublishResources(t *testing.T) {
 			expectedDevices:   len(mockCPUInfos_SingleSocket_4CPUS_HT),
 		},
 		{
-			name:              "error because devices on one NUMA > maxDevicesPerResourceSlice",
-			cpuInfos:          mockCPUInfos_SingleNUMANodeExceedsSliceLimit,
-			reservedCPUs:      cpuset.New(),
-			expectPublish:     false,
-			expectedNumSlices: 0,
-			expectedDevices:   0,
+			name:                       "number of devices exceeds maxDevicesPerResourceSlice",
+			cpuInfos:                   mockCPUInfos_DualSocket_ExceedsResourceSliceLimit,
+			reservedCPUs:               cpuset.New(),
+			expectPublish:              true,
+			expectedNumSlices:          2,
+			expectedDevices:            len(mockCPUInfos_DualSocket_ExceedsResourceSliceLimit),
+			expectedDevicesPerNUMANode: map[int]int{0: (maxDevicesPerResourceSlice + 10) / 2, 1: (maxDevicesPerResourceSlice + 10) / 2},
+		},
+		{
+			name:                       "number of devices equal to maxDevicesPerResourceSlice",
+			cpuInfos:                   mockCPUInfos_DualSocket_EqualsResourceSliceLimit,
+			reservedCPUs:               cpuset.New(),
+			expectPublish:              true,
+			expectedNumSlices:          1,
+			expectedDevices:            len(mockCPUInfos_DualSocket_EqualsResourceSliceLimit),
+			expectedDevicesPerNUMANode: map[int]int{0: maxDevicesPerResourceSlice / 2, 1: maxDevicesPerResourceSlice / 2},
 		},
 		{
 			name:                       "publish with reserved cpus",
@@ -320,14 +342,6 @@ func TestPublishResources(t *testing.T) {
 			devicesPerNumaInSlices := make(map[int]int)
 			seenCPUIDs := make(map[int]bool)
 			for _, slice := range pool.Slices {
-				// If we expect more than one slice, all devices in a slice should belong to the same NUMA node.
-				if tc.expectedNumSlices > 1 {
-					numaNode := *slice.Devices[0].Attributes["dra.cpu/numaNodeID"].IntValue
-					for _, device := range slice.Devices {
-						require.Equal(t, numaNode, *device.Attributes["dra.cpu/numaNodeID"].IntValue)
-					}
-				}
-
 				for _, device := range slice.Devices {
 					cpuID, ok := cp.deviceNameToCPUID[device.Name]
 					require.True(t, ok)
