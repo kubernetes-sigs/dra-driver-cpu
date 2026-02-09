@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package driver
+package store
 
 import (
 	"testing"
@@ -25,17 +25,17 @@ import (
 	"k8s.io/utils/cpuset"
 )
 
-func newTestCPUAllocationStore(allCPUs, reserved cpuset.CPUSet) *CPUAllocationStore {
+func newTestCPUAllocation(allCPUs, reserved cpuset.CPUSet) *CPUAllocation {
 	var infos []cpuinfo.CPUInfo
 	for _, cpuID := range allCPUs.UnsortedList() {
 		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
 	}
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
 	topo, _ := mockProvider.GetCPUTopology()
-	return NewCPUAllocationStore(topo, reserved)
+	return NewCPUAllocation(topo, reserved)
 }
 
-func TestNewCPUAllocationStore(t *testing.T) {
+func TestNewCPUAllocation(t *testing.T) {
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	testCases := []struct {
 		name               string
@@ -61,7 +61,7 @@ func TestNewCPUAllocationStore(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			store := newTestCPUAllocationStore(tc.allCPUs, tc.reservedCPUs)
+			store := newTestCPUAllocation(tc.allCPUs, tc.reservedCPUs)
 			require.NotNil(t, store)
 			require.True(t, store.availableCPUs.Equals(tc.expectedAvailable))
 			require.True(t, store.GetSharedCPUs().Equals(tc.expectedSharedCPUs))
@@ -69,9 +69,9 @@ func TestNewCPUAllocationStore(t *testing.T) {
 	}
 }
 
-func TestCPUAllocationStoreResourceClaimAllocation(t *testing.T) {
+func TestCPUAllocationResourceClaimAllocation(t *testing.T) {
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
-	store := newTestCPUAllocationStore(allCPUs, cpuset.New())
+	store := newTestCPUAllocation(allCPUs, cpuset.New())
 	claimUID := types.UID("claim-uid-1")
 	cpus := cpuset.New(0, 1)
 
@@ -90,10 +90,10 @@ func TestCPUAllocationStoreResourceClaimAllocation(t *testing.T) {
 	store.RemoveResourceClaimAllocation(types.UID("non-existent"))
 }
 
-func TestCPUAllocationStoreGetSharedCPUs(t *testing.T) {
+func TestCPUAllocationGetSharedCPUs(t *testing.T) {
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	reserved := cpuset.New(0)
-	store := newTestCPUAllocationStore(allCPUs, reserved)
+	store := newTestCPUAllocation(allCPUs, reserved)
 	available := allCPUs.Difference(reserved)
 
 	// No allocations

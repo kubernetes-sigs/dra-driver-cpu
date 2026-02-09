@@ -25,6 +25,7 @@ import (
 
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
@@ -78,8 +79,8 @@ type CPUDriver struct {
 	kubeClient             kubernetes.Interface
 	draPlugin              KubeletPlugin
 	nriPlugin              stub.Stub
-	podConfigStore         *PodConfigStore
-	cpuAllocationStore     *CPUAllocationStore
+	podConfigStore         *store.PodConfig
+	cpuAllocationStore     *store.CPUAllocation
 	cdiMgr                 cdiManager
 	cpuTopology            *cpuinfo.CPUTopology
 	deviceNameToCPUID      map[string]int
@@ -88,6 +89,7 @@ type CPUDriver struct {
 	reservedCPUs           cpuset.CPUSet
 	cpuDeviceMode          string
 	cpuDeviceGroupBy       string
+	claimTracker           *store.ClaimTracker
 }
 
 // Config is the configuration for the CPUDriver.
@@ -111,6 +113,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		reservedCPUs:           config.ReservedCPUs,
 		cpuDeviceMode:          config.CpuDeviceMode,
 		cpuDeviceGroupBy:       config.CPUDeviceGroupBy,
+		claimTracker:           store.NewClaimTracker(),
 	}
 	cpuInfoProvider := cpuinfo.NewSystemCPUInfo()
 	topo, err := cpuInfoProvider.GetCPUTopology()
@@ -121,8 +124,8 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		return nil, fmt.Errorf("failed to get CPU topology: topology is nil")
 	}
 	plugin.cpuTopology = topo
-	plugin.cpuAllocationStore = NewCPUAllocationStore(plugin.cpuTopology, config.ReservedCPUs)
-	plugin.podConfigStore = NewPodConfigStore()
+	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.cpuTopology, config.ReservedCPUs)
+	plugin.podConfigStore = store.NewPodConfig()
 
 	driverPluginPath := filepath.Join(kubeletPluginPath, config.DriverName)
 	if err := os.MkdirAll(driverPluginPath, 0750); err != nil {

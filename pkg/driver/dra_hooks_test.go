@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/stretchr/testify/require"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -401,7 +402,7 @@ func TestPrepareResourceClaims(t *testing.T) {
 				"cpudev0": 0,
 				"cpudev1": 1,
 			},
-			cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 		}
 	}
 
@@ -569,7 +570,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 		driver.deviceNameToNUMANodeID = make(map[string]int)
 		mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
 		driver.cpuTopology, _ = mockProvider.GetCPUTopology()
-		driver.cpuAllocationStore = NewCPUAllocationStore(driver.cpuTopology, reservedCPUs)
+		driver.cpuAllocationStore = store.NewCPUAllocation(driver.cpuTopology, reservedCPUs)
 		for claimUID, cpus := range initialAllocations {
 			driver.cpuAllocationStore.AddResourceClaimAllocation(claimUID, cpus)
 		}
@@ -851,7 +852,7 @@ func TestUnprepareResourceClaims(t *testing.T) {
 			topo, _ := mockProvider.GetCPUTopology()
 			cp := &CPUDriver{
 				cdiMgr:             mockCdiMgr,
-				cpuAllocationStore: NewCPUAllocationStore(topo, cpuset.New()),
+				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 			}
 
 			unpreparedClaims, err := cp.UnprepareResourceClaims(context.Background(), tc.claims)
