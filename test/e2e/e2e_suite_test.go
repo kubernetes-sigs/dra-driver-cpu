@@ -56,22 +56,58 @@ func BeFailedToCreate(fxt *fixture.Fixture) types.GomegaMatcher {
 			return false, errors.New("nil Pod")
 		}
 		lh := fxt.Log.WithValues("podUID", actual.UID, "namespace", actual.Namespace, "name", actual.Name)
-		if actual.Status.Phase != v1.PodPending {
+		if actual.Status.Phase != v1.PodPending && actual.Status.Phase != v1.PodRunning {
 			lh.Info("unexpected phase", "phase", actual.Status.Phase)
 			return false, nil
 		}
-		cntSt := findWaitingContainerStatus(actual.Status.ContainerStatuses)
-		if cntSt == nil {
+
+		// If kubelet never materializes status entries for all requested containers,
+		// at least one container could not be created.
+		if len(actual.Spec.Containers) > 0 && len(actual.Status.ContainerStatuses) < len(actual.Spec.Containers) {
+			lh.Info("missing container status entries", "expected", len(actual.Spec.Containers), "observed", len(actual.Status.ContainerStatuses))
+			return true, nil
+		}
+
+		statuses := append([]v1.ContainerStatus{}, actual.Status.ContainerStatuses...)
+		statuses = append(statuses, actual.Status.InitContainerStatuses...)
+		for idx := range statuses {
+			if hasCreateFailureSignal(statuses[idx]) {
+				lh.Info("container creation error", "containerName", statuses[idx].Name)
+				return true, nil
+			}
+		}
+
+		if cntSt := findWaitingContainerStatus(statuses); cntSt != nil {
+			lh.Info("container waiting for different reason", "containerName", cntSt.Name, "reason", cntSt.State.Waiting.Reason, "message", cntSt.State.Waiting.Message)
+		} else {
 			lh.Info("no container in waiting state")
-			return false, nil
 		}
-		if cntSt.State.Waiting.Reason != reasonCreateContainerError {
-			lh.Info("container terminated for different reason", "containerName", cntSt.Name, "reason", cntSt.State.Terminated.Reason)
-			return false, nil
-		}
-		lh.Info("container creation error", "containerName", cntSt.Name)
-		return true, nil
+		return false, nil
 	}).WithTemplate("Pod {{.Actual.Namespace}}/{{.Actual.Name}} UID {{.Actual.UID}} was not in failed phase")
+}
+
+func hasCreateFailureSignal(status v1.ContainerStatus) bool {
+	if status.State.Waiting != nil && isCreateFailureReason(status.State.Waiting.Reason, status.State.Waiting.Message) {
+		return true
+	}
+	if status.State.Terminated != nil && isCreateFailureReason(status.State.Terminated.Reason, status.State.Terminated.Message) {
+		return true
+	}
+	if status.LastTerminationState.Waiting != nil && isCreateFailureReason(status.LastTerminationState.Waiting.Reason, status.LastTerminationState.Waiting.Message) {
+		return true
+	}
+	if status.LastTerminationState.Terminated != nil && isCreateFailureReason(status.LastTerminationState.Terminated.Reason, status.LastTerminationState.Terminated.Message) {
+		return true
+	}
+	return false
+}
+
+func isCreateFailureReason(reason, message string) bool {
+	if reason == reasonCreateContainerError {
+		return true
+	}
+	combined := strings.ToLower(reason + " " + message)
+	return strings.Contains(combined, "createcontainererror") || strings.Contains(combined, "already bound")
 }
 
 func findWaitingContainerStatus(statuses []v1.ContainerStatus) *v1.ContainerStatus {

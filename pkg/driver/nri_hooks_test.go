@@ -96,6 +96,44 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 	}
 }
 
+func TestParseCDIDevicesToClaimUIDs(t *testing.T) {
+	testCases := []struct {
+		name     string
+		devices  []*api.CDIDevice
+		expected []types.UID
+	}{
+		{
+			name: "extract claim uid from valid device",
+			devices: []*api.CDIDevice{
+				{Name: fmt.Sprintf("%s/%s=%s", cdiVendor, cdiClass, getCDIDeviceName(types.UID("claim-uid-1")))},
+			},
+			expected: []types.UID{"claim-uid-1"},
+		},
+		{
+			name: "ignores non-driver devices",
+			devices: []*api.CDIDevice{
+				{Name: "vendor/class=device-1"},
+			},
+			expected: []types.UID{},
+		},
+		{
+			name: "deduplicates claims",
+			devices: []*api.CDIDevice{
+				{Name: fmt.Sprintf("%s/%s=%s", cdiVendor, cdiClass, getCDIDeviceName(types.UID("claim-uid-1")))},
+				{Name: fmt.Sprintf("%s/%s=%s", cdiVendor, cdiClass, getCDIDeviceName(types.UID("claim-uid-1")))},
+			},
+			expected: []types.UID{"claim-uid-1"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := parseCDIDevicesToClaimUIDs(tc.devices)
+			require.ElementsMatch(t, tc.expected, actual)
+		})
+	}
+}
+
 func TestCreateContainer(t *testing.T) {
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	pod := &api.PodSandbox{Id: "pod-id-1", Name: "my-pod", Namespace: "my-ns", Uid: "pod-uid-1"}
@@ -130,6 +168,7 @@ func TestCreateContainer(t *testing.T) {
 		container                   *api.Container
 		expectedContainerAdjustment *api.ContainerAdjustment
 		expectedContainerUpdates    []*api.ContainerUpdate
+		expectedErrorContains       string
 	}{
 		{
 			name:               "guaranteed container triggers container adjustment with cpus in resource claim",
@@ -139,6 +178,28 @@ func TestCreateContainer(t *testing.T) {
 			container:          newTestContainer(claimUID, "0-3"),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-3"}}},
+			},
+			expectedContainerUpdates: []*api.ContainerUpdate{},
+		},
+		{
+			name:           "guaranteed container via CDI device lookup",
+			podConfigStore: store.NewPodConfig(),
+			cpuAllocationStore: func() *store.CPUAllocation {
+				cpuStore := store.NewCPUAllocation(topo, cpuset.New())
+				cpuStore.AddResourceClaimAllocation(types.UID(claimUID), cpuset.New(0, 1))
+				return cpuStore
+			}(),
+			claimTracker: store.NewClaimTracker(),
+			container: &api.Container{
+				Id:           "ctr-id-1",
+				PodSandboxId: pod.Id,
+				Name:         "my-ctr",
+				CDIDevices: []*api.CDIDevice{
+					{Name: fmt.Sprintf("%s/%s=%s", cdiVendor, cdiClass, getCDIDeviceName(types.UID(claimUID)))},
+				},
+			},
+			expectedContainerAdjustment: &api.ContainerAdjustment{
+				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1"}}},
 			},
 			expectedContainerUpdates: []*api.ContainerUpdate{},
 		},
@@ -198,6 +259,21 @@ func TestCreateContainer(t *testing.T) {
 			},
 			expectedContainerUpdates: []*api.ContainerUpdate{},
 		},
+		{
+			name:               "claim-backed CDI without known allocation errors",
+			podConfigStore:     store.NewPodConfig(),
+			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+			claimTracker:       store.NewClaimTracker(),
+			container: &api.Container{
+				Id:           "ctr-id-1",
+				PodSandboxId: pod.Id,
+				Name:         "my-ctr",
+				CDIDevices: []*api.CDIDevice{
+					{Name: fmt.Sprintf("%s/%s=%s", cdiVendor, cdiClass, getCDIDeviceName(types.UID(claimUID)))},
+				},
+			},
+			expectedErrorContains: "missing CPU allocation",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -208,8 +284,12 @@ func TestCreateContainer(t *testing.T) {
 				claimTracker:       tc.claimTracker,
 			}
 			adjust, updates, err := driver.CreateContainer(context.Background(), pod, tc.container)
+			if tc.expectedErrorContains != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expectedErrorContains)
+				return
+			}
 			require.NoError(t, err)
-
 			require.Equal(t, tc.expectedContainerAdjustment, adjust)
 			require.ElementsMatch(t, tc.expectedContainerUpdates, updates)
 		})
@@ -290,11 +370,12 @@ func TestNRISynchronize(t *testing.T) {
 	pod2 := &api.PodSandbox{Id: "pod-id-2", Name: "my-pod-2", Namespace: "my-ns", Uid: "pod-uid-2"}
 
 	testCases := []struct {
-		name          string
-		driver        *CPUDriver
-		runtimePods   []*api.PodSandbox
-		runtimeCtrs   []*api.Container
-		expectedError bool
+		name                string
+		driver              *CPUDriver
+		runtimePods         []*api.PodSandbox
+		runtimeCtrs         []*api.Container
+		expectedError       bool
+		expectedClaimOwners int
 	}{
 		{
 			name: "empty runtime state clears the store",
@@ -308,8 +389,9 @@ func TestNRISynchronize(t *testing.T) {
 				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState("stale-ctr", "stale-id", types.UID("stale-claim")))
 				return driver
 			}(),
-			runtimePods: []*api.PodSandbox{},
-			runtimeCtrs: []*api.Container{},
+			runtimePods:         []*api.PodSandbox{},
+			runtimeCtrs:         []*api.Container{},
+			expectedClaimOwners: 0,
 		},
 		{
 			name: "mixed containers across multiple pods",
@@ -325,6 +407,28 @@ func TestNRISynchronize(t *testing.T) {
 				{Id: "p1-shared", PodSandboxId: pod1.Id, Name: "shared-ctr"},
 				{Id: "p2-shared", PodSandboxId: pod2.Id, Name: "shared-ctr"},
 			},
+			expectedClaimOwners: 1,
+		},
+		{
+			name: "guaranteed container via CDI device only",
+			driver: &CPUDriver{
+				podConfigStore:     store.NewPodConfig(),
+				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+				claimTracker:       store.NewClaimTracker(),
+				cpuTopology:        topo,
+			},
+			runtimePods: []*api.PodSandbox{pod1},
+			runtimeCtrs: []*api.Container{
+				{
+					Id:           "p1-guaranteed",
+					PodSandboxId: pod1.Id,
+					Name:         "guaranteed-ctr",
+					CDIDevices: []*api.CDIDevice{
+						{Name: fmt.Sprintf("%s/%s=%s", cdiVendor, cdiClass, getCDIDeviceName(types.UID("claim-A")))},
+					},
+				},
+			},
+			expectedClaimOwners: 1,
 		},
 	}
 
@@ -349,6 +453,7 @@ func TestNRISynchronize(t *testing.T) {
 					require.NotNil(t, state)
 				}
 			}
+			require.Equal(t, tc.expectedClaimOwners, tc.driver.claimTracker.Len())
 		})
 	}
 }
