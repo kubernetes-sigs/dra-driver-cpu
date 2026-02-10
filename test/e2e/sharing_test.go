@@ -272,3 +272,19 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 		})
 	})
 })
+
+func pinPodToNode(pod *v1.Pod, node *v1.Node) *v1.Pod {
+	pod.Spec.NodeSelector = map[string]string{
+		"kubernetes.io/hostname": node.Name,
+	}
+	if len(node.Spec.Taints) > 0 {
+		for _, taint := range node.Spec.Taints {
+			pod.Spec.Tolerations = append(pod.Spec.Tolerations, v1.Toleration{
+				Key:      taint.Key,
+				Operator: v1.TolerationOpExists,
+				Effect:   taint.Effect,
+			})
+		}
+	}
+	return pod
+}

@@ -28,32 +28,6 @@ import (
 	"k8s.io/utils/cpuset"
 )
 
-func parseCDIDevicesToClaimUIDs(cdiDevices []*api.CDIDevice) []types.UID {
-	cdiDevicePrefix := fmt.Sprintf("%s/%s=", cdiVendor, cdiClass)
-	claimUIDByValue := make(map[types.UID]struct{})
-	for _, cdiDevice := range cdiDevices {
-		if cdiDevice == nil {
-			continue
-		}
-		deviceName := cdiDevice.GetName()
-		if !strings.HasPrefix(deviceName, cdiDevicePrefix) {
-			continue
-		}
-		claimUID := types.UID(strings.TrimPrefix(deviceName, cdiDevicePrefix))
-		// getCDIDeviceName prefixes claims as "claim-<uid>".
-		claimUID = types.UID(strings.TrimPrefix(string(claimUID), "claim-"))
-		if claimUID == "" {
-			continue
-		}
-		claimUIDByValue[claimUID] = struct{}{}
-	}
-	claimUIDs := make([]types.UID, 0, len(claimUIDByValue))
-	for claimUID := range claimUIDByValue {
-		claimUIDs = append(claimUIDs, claimUID)
-	}
-	return claimUIDs
-}
-
 // Synchronize is called by the NRI to synchronize the state of the driver during bootstrap.
 func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, containers []*api.Container) ([]*api.ContainerUpdate, error) {
 	klog.Infof("Synchronized state with the runtime (%d pods, %d containers)...",
@@ -142,6 +116,32 @@ func parseDRAEnvToClaimAllocations(envs []string) (map[types.UID]cpuset.CPUSet, 
 	}
 
 	return allocations, nil
+}
+
+func parseCDIDevicesToClaimUIDs(cdiDevices []*api.CDIDevice) []types.UID {
+	cdiDevicePrefix := fmt.Sprintf("%s/%s=", cdiVendor, cdiClass)
+	claimUIDByValue := make(map[types.UID]struct{})
+	for _, cdiDevice := range cdiDevices {
+		if cdiDevice == nil {
+			continue
+		}
+		deviceName := cdiDevice.GetName()
+		if !strings.HasPrefix(deviceName, cdiDevicePrefix) {
+			continue
+		}
+		claimUID := types.UID(strings.TrimPrefix(deviceName, cdiDevicePrefix))
+		// getCDIDeviceName prefixes claims as "claim-<uid>".
+		claimUID = types.UID(strings.TrimPrefix(string(claimUID), "claim-"))
+		if claimUID == "" {
+			continue
+		}
+		claimUIDByValue[claimUID] = struct{}{}
+	}
+	claimUIDs := make([]types.UID, 0, len(claimUIDByValue))
+	for claimUID := range claimUIDByValue {
+		claimUIDs = append(claimUIDs, claimUID)
+	}
+	return claimUIDs
 }
 
 func parseCDIDevicesToClaimAllocations(cdiDevices []*api.CDIDevice, cpuAllocationStore *store.CPUAllocation) map[types.UID]cpuset.CPUSet {
