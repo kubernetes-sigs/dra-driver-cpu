@@ -170,6 +170,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				fixture.By("checking the best-effort reference pod %s has access to all the non-reserved node CPUs through the shared pool", e2epod.Identify(shrPod1))
 				sharedAllocPre := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, shrPod1)
 				fxt.Log.Info("checking shared allocation", "pod", e2epod.Identify(shrPod1), "cpuAllocated", sharedAllocPre.CPUAssigned.String(), "cpuAffinity", sharedAllocPre.CPUAffinity.String())
+				baselineSharedCPUs := sharedAllocPre.CPUAssigned
 
 				numCPUs := availableCPUs.Size()
 				// Ensure at least 1 CPU is available for the shared pool
@@ -216,7 +217,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				rootFxt.Log.Info("All exclusive allocation", "pod", "exclusive CPUs", allAllocatedCPUs.String(), "expected Shared CPUs", availableCPUs.Difference(allAllocatedCPUs).String())
 
 				fixture.By("checking the shared pool does not include anymore the exclusively allocated CPUs")
-				expectedSharedCPUs := availableCPUs.Difference(allAllocatedCPUs)
+				expectedSharedCPUs := baselineSharedCPUs.Difference(allAllocatedCPUs)
 
 				fixture.By("creating a second best-effort reference pod")
 				shrPod2 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
@@ -230,8 +231,8 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					gomega.Expect(e2epod.DeleteSync(ctx, fxt.K8SClientset, pod)).To(gomega.Succeed(), "cannot delete pod %s", e2epod.Identify(pod))
 				}
 
-				verifySharedPoolMatches(ctx, fxt, shrPod1, availableCPUs)
-				verifySharedPoolMatches(ctx, fxt, shrPod2, availableCPUs)
+				verifySharedPoolMatches(ctx, fxt, shrPod1, baselineSharedCPUs)
+				verifySharedPoolMatches(ctx, fxt, shrPod2, baselineSharedCPUs)
 			})
 		})
 	})

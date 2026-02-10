@@ -144,6 +144,22 @@ the claim would need to be updated or recreated manually.
   manifest
   - `kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/dra-driver-cpu/refs/heads/main/install.yaml`
 
+### Validating Admission Controller
+
+The optional validating admission controller rejects invalid `ResourceClaim`
+requests for the `dra.cpu` device class (for example, unsupported allocation
+modes or non-integer capacity requests). It also validates pods so that when a
+CPU request/limit is specified alongside `dra.cpu` claims, the CPU count matches
+the claim count.
+
+To install it:
+
+- Apply the webhook deployment and configuration:
+  - `kubectl apply -f install-admission.yaml`
+- Generate a self-signed certificate, create the TLS secret, and patch the
+  webhook CA bundle:
+  - `hack/webhook/generate-certs.sh`
+
 ### Example Usage
 
 The driver supports two modes of operation. Each mode has a complete example manifest that includes both the ResourceClaim(s) and a sample Pod. The ResourceClaim requests a specific number of exclusive CPUs from the driver, and is referenced in the Pod spec to receive the allocated CPUs.
