@@ -184,7 +184,9 @@ kind-install-cpu-dra: kind-uninstall-cpu-dra build-image kind-load-image ## inst
 	kubectl apply -f install.yaml
 
 kind-install-admission: kind-uninstall-admission build-image kind-load-image ## install admission controller only
+	kind load docker-image ${IMAGE_CI} --name ${CLUSTER_NAME}
 	kubectl apply -f install-admission.yaml
+	kubectl -n kube-system set image deploy/dracpu-admission dracpu-admission=${IMAGE_CI} --record
 	kubectl -n kube-system patch deploy dracpu-admission --type='json' -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"IfNotPresent"}]'
 	kubectl -n kube-system set env deploy/dracpu-admission \
 		DRACPU_ADMISSION_CLAIM_GET_RETRY_WAIT="$(ADMISSION_CLAIM_GET_RETRY_WAIT)" \
