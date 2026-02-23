@@ -120,8 +120,6 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices() [][]resourceapi.Device {
 					"dra.cpu/socketID":   {IntValue: &socketID},
 					"dra.cpu/numCPUs":    {IntValue: &availableCPUsInNUMANode},
 					"dra.cpu/smtEnabled": {BoolValue: &smtEnabled},
-					// TODO(pravk03): Remove. Hack to align with NIC (DRANet). We need some standard attribute to align other resources with CPU.
-					"dra.net/numaNode": {IntValue: &numaID},
 				},
 				Capacity:                 deviceCapacity,
 				AllowMultipleAllocations: ptr.To(true),
@@ -234,8 +232,6 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 					"dra.cpu/socketID":   {IntValue: &socketID},
 					"dra.cpu/coreID":     {IntValue: &coreID},
 					"dra.cpu/cpuID":      {IntValue: &cpuID},
-					// TODO(pravk03): Remove. Hack to align with NIC (DRANet). We need some standard attribute to align other resources with CPU.
-					"dra.net/numaNode": {IntValue: &numaNode},
 				},
 				Capacity: make(map[resourceapi.QualifiedName]resourceapi.DeviceCapacity),
 			}
