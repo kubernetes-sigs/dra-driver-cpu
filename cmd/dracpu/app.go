@@ -62,6 +62,9 @@ func newCPUDeviceModeValue(val *string, def string) *cpuDeviceModeValue {
 }
 
 func (v *cpuDeviceModeValue) String() string {
+	if v == nil || v.value == nil {
+		return ""
+	}
 	return *v.value
 }
 
@@ -83,6 +86,9 @@ func newGroupByValue(val *string, def string) *groupByValue {
 }
 
 func (v *groupByValue) String() string {
+	if v == nil || v.value == nil {
+		return ""
+	}
 	return *v.value
 }
 
