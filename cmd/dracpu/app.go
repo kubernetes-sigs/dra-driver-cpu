@@ -25,6 +25,8 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -79,12 +81,18 @@ func (v *cpuDeviceModeValue) Set(s string) error {
 }
 
 type groupByValue struct {
-	value *string
+	groups       []string
+	experimental []string
+	value        *string
 }
 
 func newGroupByValue(val *string, def string) *groupByValue {
 	*val = def
-	return &groupByValue{value: val}
+	return &groupByValue{
+		groups:       []string{driver.GROUP_BY_SOCKET, driver.GROUP_BY_NUMA_NODE, driver.GROUP_BY_PCIE_ROOT},
+		experimental: []string{driver.GROUP_BY_PCIE_ROOT},
+		value:        val,
+	}
 }
 
 func (v *groupByValue) String() string {
@@ -95,11 +103,25 @@ func (v *groupByValue) String() string {
 }
 
 func (v *groupByValue) Set(s string) error {
-	if s != driver.GROUP_BY_SOCKET && s != driver.GROUP_BY_NUMA_NODE {
-		return fmt.Errorf("invalid value: %q, must be %s or %s", s, driver.GROUP_BY_SOCKET, driver.GROUP_BY_NUMA_NODE)
+	if !slices.Contains(v.groups, s) {
+		return fmt.Errorf("invalid value: %q, must be one of %q", s, strings.Join(v.groups, ", "))
 	}
 	*v.value = s
 	return nil
+}
+
+func (v *groupByValue) HelpText() string {
+	var sb strings.Builder
+	for idx, group := range v.groups {
+		if idx > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString("'" + group + "'")
+		if slices.Contains(v.experimental, group) {
+			sb.WriteString(" (experimental)")
+		}
+	}
+	return sb.String()
 }
 
 func init() {
@@ -108,7 +130,8 @@ func init() {
 	flag.StringVar(&bindAddress, "bind-address", ":8080", "The address to bind the HTTP server for /healthz and /metrics endpoints")
 	flag.StringVar(&reservedCPUs, "reserved-cpus", "", "cpuset of CPUs to be excluded from ResourceSlice.")
 	flag.Var(newCPUDeviceModeValue(&cpuDeviceMode, driver.CPU_DEVICE_MODE_GROUPED), "cpu-device-mode", "Sets the mode for exposing CPU devices. 'grouped' exposes a single device per socket or numa node (based on --group-by). 'individual' exposes each CPU as a separate device.")
-	flag.Var(newGroupByValue(&groupBy, driver.GROUP_BY_NUMA_NODE), "group-by", "When --cpu-device-mode=grouped, sets the criteria for grouping CPUs. Can be set to 'socket' or 'numanode'.")
+	gv := newGroupByValue(&groupBy, driver.GROUP_BY_NUMA_NODE)
+	flag.Var(gv, "group-by", "When --cpu-device-mode=grouped, sets the criteria for grouping CPUs. Can be set to one of: "+gv.HelpText())
 }
 
 func main() {

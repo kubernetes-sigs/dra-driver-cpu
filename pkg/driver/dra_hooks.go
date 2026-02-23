@@ -53,6 +53,7 @@ const (
 
 	cpuDeviceSocketGroupedPrefix = "cpudevsocket"
 	cpuDeviceNUMAGroupedPrefix   = "cpudevnuma"
+	cpuDevicePCIeGroupedPrefix   = "cpudevpcieroot"
 )
 
 // createGroupedCPUDeviceSlices creates Device objects based on the CPU topology, grouped by a specific criteria.
@@ -127,6 +128,35 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 			devices = append(devices, resourceapi.Device{
 				Name:                     deviceName,
 				Attributes:               deviceAttrs,
+				Capacity:                 deviceCapacity,
+				AllowMultipleAllocations: ptr.To(true),
+			})
+		}
+	case GROUP_BY_PCIE_ROOT:
+		for domID := range cp.pcieDomains {
+			domain := &cp.pcieDomains[domID]
+
+			deviceName := fmt.Sprintf("%s%03d", cpuDevicePCIeGroupedPrefix, domID)
+			allocatableCPUs := domain.LocalCPUs.Difference(cp.reservedCPUs)
+			availableCPUsInPCIeRoot := int64(allocatableCPUs.Size())
+
+			if allocatableCPUs.Size() == 0 {
+				continue
+			}
+
+			deviceCapacity := map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
+				cpuResourceQualifiedName: {Value: *resource.NewQuantity(availableCPUsInPCIeRoot, resource.DecimalSI)},
+			}
+
+			cp.deviceNameToPCIeRoot[deviceName] = domain
+
+			devices = append(devices, resourceapi.Device{
+				Name: deviceName,
+				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+					"dra.cpu/numCPUs":        {IntValue: ptr.To(availableCPUsInPCIeRoot)},
+					"dra.cpu/smtEnabled":     {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
+					domain.PCIeRootAttr.Name: domain.PCIeRootAttr.Value,
+				},
 				Capacity:                 deviceCapacity,
 				AllowMultipleAllocations: ptr.To(true),
 			})
@@ -312,7 +342,8 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		topo := cp.cpuTopology
 
 		var availableCPUsForDevice cpuset.CPUSet
-		if cp.cpuDeviceGroupBy == GROUP_BY_SOCKET {
+		switch cp.cpuDeviceGroupBy {
+		case GROUP_BY_SOCKET:
 			socketID, ok := cp.deviceNameToSocketID[alloc.Device]
 			if !ok {
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid socket ID found for device %s", alloc.Device)}
@@ -320,7 +351,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			socketCPUs := topo.CPUDetails.CPUsInSockets(socketID)
 			availableCPUsForDevice = sharedCPUs.Difference(cpuAssignment).Intersection(socketCPUs)
 			logger.V(4).Info("socket CPU availability", "socketID", socketID, "socketCPUs", socketCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
-		} else { // numanode
+		case GROUP_BY_NUMA_NODE:
 			numaNodeID, ok := cp.deviceNameToNUMANodeID[alloc.Device]
 			if !ok {
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid NUMA node ID found for device %s", alloc.Device)}
@@ -328,6 +359,20 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			numaCPUs := topo.CPUDetails.CPUsInNUMANodes(numaNodeID)
 			availableCPUsForDevice = sharedCPUs.Difference(cpuAssignment).Intersection(numaCPUs)
 			logger.V(4).Info("NUMA node CPU availability", "numaNodeID", numaNodeID, "numaCPUs", numaCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
+		case GROUP_BY_PCIE_ROOT:
+			domain, ok := cp.deviceNameToPCIeRoot[alloc.Device]
+			if !ok {
+				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid PCIe Root ID found for device %s", alloc.Device)}
+			}
+			// should we need more than LocalCPUs, we should:
+			// 1. find the NUMA node of these CPUs, use it as internal derived attribute
+			// 2. find the closer neighbouring NUMA node by reported NUMA distance; prefer NUMA nodes sharing the same physical_package_id
+			//    as the initial one.
+			// 3. pick CPUs from the closes neighbouring NUMA node
+			// 4. iterate as needed
+			// note the expansion order for each PCIe domain can be pre-computed as startup.
+			availableCPUsForDevice = sharedCPUs.Difference(cpuAssignment).Intersection(domain.LocalCPUs)
+			logger.V(4).Info("PCIe Root CPU availability", "pcieRoot", domain, "localCPUs", domain.LocalCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
 		}
 
 		cur, err := cpumanager.TakeByTopologyNUMAPacked(logger, topo, availableCPUsForDevice, int(claimCPUCount), cpumanager.CPUSortingStrategyPacked, true)

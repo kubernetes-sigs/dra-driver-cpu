@@ -22,12 +22,14 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -48,6 +50,8 @@ const (
 	GROUP_BY_SOCKET = "socket"
 	// GROUP_BY_NUMA_NODE groups CPUs by NUMA node.
 	GROUP_BY_NUMA_NODE = "numanode"
+	// GROUP_BY_PCIE_ROOT groups CPUs by PCIe Root locality.
+	GROUP_BY_PCIE_ROOT = "pcieroot"
 )
 
 const (
@@ -87,6 +91,7 @@ type CPUDriver struct {
 	cpuAllocationStore     *store.CPUAllocation
 	cdiMgr                 cdiManager
 	cpuTopology            *cpuinfo.CPUTopology
+	pcieDomains            []device.PCIeDomain
 	deviceNameToCPUID      map[string]int
 	deviceNameToSocketID   map[string]int
 	deviceNameToNUMANodeID map[string]int
@@ -94,6 +99,7 @@ type CPUDriver struct {
 	cpuDeviceMode          string
 	cpuDeviceGroupBy       string
 	claimTracker           *store.ClaimTracker
+	deviceNameToPCIeRoot   map[string]*device.PCIeDomain
 }
 
 // Config is the configuration for the CPUDriver.
@@ -107,10 +113,15 @@ type Config struct {
 
 // Start creates and starts a new CPUDriver.
 func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) (*CPUDriver, <-chan error, error) {
+	asyncErr := make(chan error, 1)
+
+	if config.CPUDeviceGroupBy == GROUP_BY_PCIE_ROOT && runtime.GOARCH != "amd64" {
+		return nil, asyncErr, fmt.Errorf("PCIe root grouping is not supported on %s, only on x86_64", runtime.GOARCH)
+	}
+
 	var logger logr.Logger
 	ctx, logger = ctxlog.WithValues(ctx, "driver", config.DriverName)
 
-	asyncErr := make(chan error, 1)
 	plugin := &CPUDriver{
 		driverName:             config.DriverName,
 		nodeName:               config.NodeName,
@@ -118,11 +129,19 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		deviceNameToCPUID:      make(map[string]int),
 		deviceNameToSocketID:   make(map[string]int),
 		deviceNameToNUMANodeID: make(map[string]int),
+		deviceNameToPCIeRoot:   make(map[string]*device.PCIeDomain),
 		reservedCPUs:           config.ReservedCPUs,
 		cpuDeviceMode:          config.CPUDeviceMode,
 		cpuDeviceGroupBy:       config.CPUDeviceGroupBy,
 		claimTracker:           store.NewClaimTracker(),
 	}
+	sysfs := os.DirFS(device.SysfsRoot).(device.SysFS)
+
+	onlineCPUs, err := device.OnlineCPUs(logger, sysfs)
+	if err != nil {
+		return nil, asyncErr, fmt.Errorf("failed to get online CPUs: %w", err)
+	}
+	logger.Info("detected online CPUs", "cpus", onlineCPUs.String())
 
 	cpuInfoProvider := cpuinfo.NewSystemCPUInfo()
 	topo, err := cpuInfoProvider.GetCPUTopology(logger)
@@ -133,6 +152,24 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		return nil, asyncErr, fmt.Errorf("failed to get CPU topology: topology is nil")
 	}
 	plugin.cpuTopology = topo
+
+	if config.CPUDeviceGroupBy == GROUP_BY_PCIE_ROOT {
+		plugin.pcieDomains, err = device.PCIeDomainsFromFS(logger, sysfs)
+		if err != nil {
+			return nil, asyncErr, fmt.Errorf("failed to list PCIe domains: %w", err)
+		}
+		if len(plugin.pcieDomains) > 0 {
+			logger.Info("PCIe domains: detected from the system", "count", len(plugin.pcieDomains))
+		} else {
+			logger.Info("PCIe domains: none detected, device attributes will not be available")
+		}
+
+		extraCPUs := device.FindOrphanedCPUs(plugin.pcieDomains, onlineCPUs)
+		if !extraCPUs.IsEmpty() {
+			return nil, asyncErr, fmt.Errorf("found cpus not local to any detected PCIe Root: %s", extraCPUs.String())
+		}
+	}
+
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.cpuTopology, config.ReservedCPUs)
 	plugin.podConfigStore = store.NewPodConfig()
 
