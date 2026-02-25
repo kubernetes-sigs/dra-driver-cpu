@@ -35,10 +35,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	resourceapi "k8s.io/api/resource/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -360,20 +357,7 @@ func (h *admissionHandler) claimCPUCount(ctx context.Context, namespace, name st
 		return 0, admission.ErrClaimAlreadyAllocated
 	}
 
-	// Prefer allocated device info when available.
-	if total, err := h.claimCPUCountFromSlices(ctx, claim); err != nil || total > 0 {
-		return total, err
-	}
-
-	var total int64
-	for _, request := range claim.Spec.Devices.Requests {
-		if request.Exactly == nil || request.Exactly.DeviceClassName != h.driverName {
-			continue
-		}
-		total += exactRequestCPUCount(request.Exactly)
-	}
-
-	return total, nil
+	return admission.ClaimCPUCountFromSpec(claim, h.driverName), nil
 }
 
 func durationFromEnv(name string, fallback time.Duration) time.Duration {
@@ -387,86 +371,4 @@ func durationFromEnv(name string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return value
-}
-
-// claimCPUCountFromSlices counts CPU total by looking up allocated devices in ResourceSlices. Returns: total, error.
-func (h *admissionHandler) claimCPUCountFromSlices(ctx context.Context, claim *resourceapi.ResourceClaim) (int64, error) {
-	if claim == nil || claim.Status.Allocation == nil || len(claim.Status.Allocation.Devices.Results) == 0 {
-		return 0, nil
-	}
-
-	deviceNames := sets.New[string]()
-	for _, result := range claim.Status.Allocation.Devices.Results {
-		if result.Driver != h.driverName {
-			continue
-		}
-		if result.Device == "" {
-			continue
-		}
-		deviceNames.Insert(result.Device)
-	}
-	if deviceNames.Len() == 0 {
-		return 0, nil
-	}
-
-	selector := fields.SelectorFromSet(fields.Set{
-		resourceapi.ResourceSliceSelectorDriver: h.driverName,
-	})
-	slices, err := h.clientset.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{
-		FieldSelector: selector.String(),
-	})
-	if err != nil {
-		return 0, err
-	}
-
-	deviceCapacities := make(map[string]map[resourceapi.QualifiedName]resourceapi.DeviceCapacity)
-	for _, slice := range slices.Items {
-		for _, device := range slice.Spec.Devices {
-			deviceCapacities[device.Name] = device.Capacity
-		}
-	}
-
-	var total int64
-	for deviceName := range deviceNames {
-		capacities, ok := deviceCapacities[deviceName]
-		if !ok {
-			continue
-		}
-
-		// If grouped mode, capacity carries core count; otherwise each device is one core.
-		if capacity, ok := capacities[admission.CPUResourceQualifiedNameKey]; ok {
-			total += capacity.Value.Value()
-			continue
-		}
-		total++
-	}
-	return total, nil
-}
-
-// exactRequestCPUCount determines the CPU count for a single request. Returns: count.
-func exactRequestCPUCount(req *resourceapi.ExactDeviceRequest) int64 {
-	// Prefer consumable capacity requests when present, otherwise use Count.
-	if req == nil {
-		return 0
-	}
-	count := req.Count
-	if count < 1 {
-		count = 1
-	}
-	if req.Capacity != nil && len(req.Capacity.Requests) > 0 {
-		quantity, ok := req.Capacity.Requests[admission.CPUResourceQualifiedNameKey]
-		if !ok {
-			return 0
-		}
-		value, ok := quantity.AsInt64()
-		if !ok || value < 1 {
-			return 0
-		}
-		intQuantity := resource.NewQuantity(value, quantity.Format)
-		if quantity.Cmp(*intQuantity) != 0 {
-			return 0
-		}
-		return value * count
-	}
-	return count
 }
