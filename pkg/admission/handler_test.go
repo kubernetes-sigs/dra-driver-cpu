@@ -14,13 +14,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package admission
 
 import (
 	"context"
 	"testing"
 
-	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/admission"
 	corev1 "k8s.io/api/core/v1"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -28,9 +27,9 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-// TestAdmissionHandler_ValidatePodClaimsWiring ensures the handler implements
-// ClaimCPUCountGetter and that admission.ValidatePodClaims works when called with it.
-func TestAdmissionHandler_ValidatePodClaimsWiring(t *testing.T) {
+// TestHandler_ValidatePodClaimsWiring ensures the Handler implements ClaimCPUCountGetter
+// and that ValidatePodClaims works when called with it (claim fetched via clientset).
+func TestHandler_ValidatePodClaimsWiring(t *testing.T) {
 	claim := &resourceapi.ResourceClaim{ //nolint:exhaustruct
 		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "claim-4"},
 		Spec: resourceapi.ResourceClaimSpec{
@@ -38,19 +37,14 @@ func TestAdmissionHandler_ValidatePodClaimsWiring(t *testing.T) {
 				Requests: []resourceapi.DeviceRequest{
 					{
 						Name:    "req",
-						Exactly: &resourceapi.ExactDeviceRequest{DeviceClassName: admission.DefaultDriverName, Count: 4},
+						Exactly: &resourceapi.ExactDeviceRequest{DeviceClassName: DefaultDriverName, Count: 4},
 					},
 				},
 			},
 		},
 	}
 	clientset := fake.NewSimpleClientset(claim)
-	handler := &admissionHandler{
-		driverName:         admission.DefaultDriverName,
-		clientset:          clientset,
-		claimGetRetryWait:  0,
-		claimGetRetryTotal: 0,
-	}
+	handler := NewHandler(DefaultDriverName, clientset, 0, 0)
 
 	pod := &corev1.Pod{ //nolint:exhaustruct
 		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod-ok"},
@@ -70,10 +64,8 @@ func TestAdmissionHandler_ValidatePodClaimsWiring(t *testing.T) {
 		},
 	}
 
-	errs := admission.ValidatePodClaims(context.Background(), pod, admission.DefaultDriverName, handler)
+	errs := ValidatePodClaims(context.Background(), pod, DefaultDriverName, handler)
 	if len(errs) != 0 {
 		t.Fatalf("expected no errors, got %v", errs)
 	}
 }
-
-func strPtr(s string) *string { return &s }
