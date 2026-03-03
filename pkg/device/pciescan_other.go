@@ -1,3 +1,5 @@
+//go:build !amd64
+
 /*
 Copyright The Kubernetes Authors.
 
@@ -17,13 +19,18 @@ limitations under the License.
 package device
 
 import (
-	resourceapi "k8s.io/api/resource/v1"
-	"k8s.io/utils/ptr"
+	"github.com/go-logr/logr"
 )
 
-// SetCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other
-// DRA resource drivers leveraging attributes which are not kubernetes standard.
-// This is the "staging area" which enables attribute sharing until (or before) they become standard.
-func SetCompatibilityAttributes(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, numaID int64) {
-	attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: ptr.To(numaID)}
+// IMPORTANT NOTE: the code is functionally identical to the x86_64/amd64 variant,
+// we only scan sysfs and make logic on arch-neutral data; but we don't have yet
+// enough experience on and hw access to arm64 machine to fully support pcie
+// processing on non-x86_64 hardware.
+
+func ScanPCIeDevices(logger logr.Logger, sysfs SysFS, processDevice func(PCIeDevice) error) error {
+	return nil
+}
+
+func PCIeDomainsFromFS(logger logr.Logger, sysfs SysFS) ([]PCIeDomain, error) {
+	return nil, nil
 }
