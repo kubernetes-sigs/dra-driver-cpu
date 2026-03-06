@@ -48,6 +48,7 @@ const (
 
 	cpuDeviceSocketGroupedPrefix = "cpudevsocket"
 	cpuDeviceNUMAGroupedPrefix   = "cpudevnuma"
+	cpuDevicePCIEGroupedPrefix   = "cpudevpcieroot"
 )
 
 // createGroupedCPUDeviceSlices creates Device objects based on the CPU topology, grouped by a specific criteria.
@@ -119,8 +120,35 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices() [][]resourceapi.Device {
 					"dra.cpu/socketID":   {IntValue: &socketID},
 					"dra.cpu/numCPUs":    {IntValue: &availableCPUsInNUMANode},
 					"dra.cpu/smtEnabled": {BoolValue: &smtEnabled},
-					// TODO(pravk03): Remove. Hack to align with NIC (DRANet). We need some standard attribute to align other resources with CPU.
-					"dra.net/numaNode": {IntValue: &numaID},
+				},
+				Capacity:                 deviceCapacity,
+				AllowMultipleAllocations: ptr.To(true),
+			})
+		}
+	case GROUP_BY_PCIE_ROOT:
+		for domID := range cp.pcieDomains {
+			domain := &cp.pcieDomains[domID]
+
+			deviceName := fmt.Sprintf("%s%03d", cpuDevicePCIEGroupedPrefix, domID)
+			allocatableCPUs := domain.LocalCPUs.Difference(cp.reservedCPUs)
+			availableCPUsInPCIERoot := int64(allocatableCPUs.Size())
+
+			if allocatableCPUs.Size() == 0 {
+				continue
+			}
+
+			deviceCapacity := map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
+				cpuResourceQualifiedName: {Value: *resource.NewQuantity(availableCPUsInPCIERoot, resource.DecimalSI)},
+			}
+
+			cp.deviceNameToPCIERoot[deviceName] = domain
+
+			devices = append(devices, resourceapi.Device{
+				Name: deviceName,
+				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+					"dra.cpu/numCPUs":        {IntValue: &availableCPUsInPCIERoot},
+					"dra.cpu/smtEnabled":     {BoolValue: &smtEnabled},
+					domain.PCIERootAttr.Name: domain.PCIERootAttr.Value,
 				},
 				Capacity:                 deviceCapacity,
 				AllowMultipleAllocations: ptr.To(true),
@@ -204,8 +232,6 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 					"dra.cpu/socketID":   {IntValue: &socketID},
 					"dra.cpu/coreID":     {IntValue: &coreID},
 					"dra.cpu/cpuID":      {IntValue: &cpuID},
-					// TODO(pravk03): Remove. Hack to align with NIC (DRANet). We need some standard attribute to align other resources with CPU.
-					"dra.net/numaNode": {IntValue: &numaNode},
 				},
 				Capacity: make(map[resourceapi.QualifiedName]resourceapi.DeviceCapacity),
 			}
@@ -305,7 +331,8 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(ctx context.Context, claim *res
 		topo := cp.cpuTopology
 
 		var availableCPUsForDevice cpuset.CPUSet
-		if cp.cpuDeviceGroupBy == GROUP_BY_SOCKET {
+		switch cp.cpuDeviceGroupBy {
+		case GROUP_BY_SOCKET:
 			socketID, ok := cp.deviceNameToSocketID[alloc.Device]
 			if !ok {
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid socket ID found for device %s", alloc.Device)}
@@ -313,7 +340,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(ctx context.Context, claim *res
 			socketCPUs := topo.CPUDetails.CPUsInSockets(socketID)
 			availableCPUsForDevice = cp.cpuAllocationStore.GetSharedCPUs().Intersection(socketCPUs)
 			klog.Infof("Socket %d CPUs:%s available CPUs: %s", socketID, socketCPUs.String(), availableCPUsForDevice.String())
-		} else { // numanode
+		case GROUP_BY_NUMA_NODE:
 			numaNodeID, ok := cp.deviceNameToNUMANodeID[alloc.Device]
 			if !ok {
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid NUMA node ID found for device %s", alloc.Device)}
@@ -321,6 +348,20 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(ctx context.Context, claim *res
 			numaCPUs := topo.CPUDetails.CPUsInNUMANodes(numaNodeID)
 			availableCPUsForDevice = cp.cpuAllocationStore.GetSharedCPUs().Intersection(numaCPUs)
 			klog.Infof("NUMA node %d CPUs:%s available CPUs: %s", numaNodeID, numaCPUs.String(), availableCPUsForDevice.String())
+		case GROUP_BY_PCIE_ROOT:
+			domain, ok := cp.deviceNameToPCIERoot[alloc.Device]
+			if !ok {
+				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid PCIE Root ID found for device %s", alloc.Device)}
+			}
+			// should we need more than LocalCPUs, we should:
+			// 1. find the NUMA node of these CPUs, use it as internal derived attribute
+			// 2. find the closer neighbouring NUMA node by reported NUMA distance; prefer NUMA nodes sharing the same physical_package_id
+			//    as the initial one.
+			// 3. pick CPUs from the closes neighbouring NUMA node
+			// 4. iterate as needed
+			// note the expansion order for each PCIE domain can be pre-computed as startup.
+			availableCPUsForDevice = cp.cpuAllocationStore.GetSharedCPUs().Intersection(domain.LocalCPUs)
+			klog.Infof("PCIE Root %s CPUs:%s available CPUs: %s", alloc.Device, domain.LocalCPUs.String(), availableCPUsForDevice.String())
 		}
 
 		logger := klog.FromContext(ctx)
