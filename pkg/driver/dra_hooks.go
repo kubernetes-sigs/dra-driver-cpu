@@ -24,6 +24,7 @@ import (
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpumanager"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
@@ -56,15 +57,13 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices() [][]resourceapi.Device {
 	var devices []resourceapi.Device
 
 	topo := cp.cpuTopology
-	smtEnabled := topo.SMTEnabled
 
 	switch cp.cpuDeviceGroupBy {
 	case GROUP_BY_SOCKET:
 		socketIDs := topo.CPUDetails.Sockets().List()
-		for _, socketIDInt := range socketIDs {
-			socketID := int64(socketIDInt)
-			deviceName := fmt.Sprintf("%s%03d", cpuDeviceSocketGroupedPrefix, socketIDInt)
-			socketCPUSet := topo.CPUDetails.CPUsInSockets(socketIDInt)
+		for _, socketID := range socketIDs {
+			deviceName := fmt.Sprintf("%s%03d", cpuDeviceSocketGroupedPrefix, socketID)
+			socketCPUSet := topo.CPUDetails.CPUsInSockets(socketID)
 			allocatableCPUs := socketCPUSet.Difference(cp.reservedCPUs)
 			availableCPUsInSocket := int64(allocatableCPUs.Size())
 
@@ -76,25 +75,26 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices() [][]resourceapi.Device {
 				cpuResourceQualifiedName: {Value: *resource.NewQuantity(availableCPUsInSocket, resource.DecimalSI)},
 			}
 
-			cp.deviceNameToSocketID[deviceName] = socketIDInt
+			cp.deviceNameToSocketID[deviceName] = socketID
+
+			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+				"dra.cpu/socketID":   {IntValue: ptr.To(int64(socketID))},
+				"dra.cpu/numCPUs":    {IntValue: ptr.To(availableCPUsInSocket)},
+				"dra.cpu/smtEnabled": {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
+			}
 
 			devices = append(devices, resourceapi.Device{
-				Name: deviceName,
-				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					"dra.cpu/socketID":   {IntValue: &socketID},
-					"dra.cpu/numCPUs":    {IntValue: &availableCPUsInSocket},
-					"dra.cpu/smtEnabled": {BoolValue: &smtEnabled},
-				},
+				Name:                     deviceName,
+				Attributes:               deviceAttrs,
 				Capacity:                 deviceCapacity,
 				AllowMultipleAllocations: ptr.To(true),
 			})
 		}
 	case GROUP_BY_NUMA_NODE:
 		numaNodeIDs := topo.CPUDetails.NUMANodes().List()
-		for _, numaIDInt := range numaNodeIDs {
-			numaID := int64(numaIDInt)
-			deviceName := fmt.Sprintf("%s%03d", cpuDeviceNUMAGroupedPrefix, numaIDInt)
-			numaNodeCPUSet := topo.CPUDetails.CPUsInNUMANodes(numaIDInt)
+		for _, numaID := range numaNodeIDs {
+			deviceName := fmt.Sprintf("%s%03d", cpuDeviceNUMAGroupedPrefix, numaID)
+			numaNodeCPUSet := topo.CPUDetails.CPUsInNUMANodes(numaID)
 			allocatableCPUs := numaNodeCPUSet.Difference(cp.reservedCPUs)
 			availableCPUsInNUMANode := int64(allocatableCPUs.Size())
 
@@ -110,18 +110,19 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices() [][]resourceapi.Device {
 				cpuResourceQualifiedName: {Value: *resource.NewQuantity(availableCPUsInNUMANode, resource.DecimalSI)},
 			}
 
-			cp.deviceNameToNUMANodeID[deviceName] = numaIDInt
+			cp.deviceNameToNUMANodeID[deviceName] = numaID
+
+			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+				"dra.cpu/numaNodeID": {IntValue: ptr.To(int64(numaID))},
+				"dra.cpu/socketID":   {IntValue: ptr.To(socketID)},
+				"dra.cpu/numCPUs":    {IntValue: ptr.To(availableCPUsInNUMANode)},
+				"dra.cpu/smtEnabled": {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
+			}
+			device.SetCompatibilityAttributes(deviceAttrs, int64(numaID))
 
 			devices = append(devices, resourceapi.Device{
-				Name: deviceName,
-				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					"dra.cpu/numaNodeID": {IntValue: &numaID},
-					"dra.cpu/socketID":   {IntValue: &socketID},
-					"dra.cpu/numCPUs":    {IntValue: &availableCPUsInNUMANode},
-					"dra.cpu/smtEnabled": {BoolValue: &smtEnabled},
-					// TODO(pravk03): Remove. Hack to align with NIC (DRANet). We need some standard attribute to align other resources with CPU.
-					"dra.net/numaNode": {IntValue: &numaID},
-				},
+				Name:                     deviceName,
+				Attributes:               deviceAttrs,
 				Capacity:                 deviceCapacity,
 				AllowMultipleAllocations: ptr.To(true),
 			})
@@ -186,28 +187,23 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 	var allDevices []resourceapi.Device
 	for _, group := range coreGroups {
 		for _, cpu := range group {
-			numaNode := int64(cpu.NUMANodeID)
-			cacheL3ID := int64(cpu.UncoreCacheID)
-			socketID := int64(cpu.SocketID)
-			coreID := int64(cpu.CoreID)
-			cpuID := int64(cpu.CpuID)
-			coreType := cpu.CoreType.String()
+			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+				"dra.cpu/numaNodeID": {IntValue: ptr.To(int64(cpu.NUMANodeID))},
+				"dra.cpu/cacheL3ID":  {IntValue: ptr.To(int64(cpu.UncoreCacheID))},
+				"dra.cpu/coreType":   {StringValue: ptr.To(cpu.CoreType.String())},
+				"dra.cpu/socketID":   {IntValue: ptr.To(int64(cpu.SocketID))},
+				"dra.cpu/coreID":     {IntValue: ptr.To(int64(cpu.CoreID))},
+				"dra.cpu/cpuID":      {IntValue: ptr.To(int64(cpu.CpuID))},
+			}
+			device.SetCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID))
+
 			deviceName := fmt.Sprintf("%s%03d", cpuDevicePrefix, devId)
 			devId++
 			cp.deviceNameToCPUID[deviceName] = cpu.CpuID
 			cpuDevice := resourceapi.Device{
-				Name: deviceName,
-				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					"dra.cpu/numaNodeID": {IntValue: &numaNode},
-					"dra.cpu/cacheL3ID":  {IntValue: &cacheL3ID},
-					"dra.cpu/coreType":   {StringValue: &coreType},
-					"dra.cpu/socketID":   {IntValue: &socketID},
-					"dra.cpu/coreID":     {IntValue: &coreID},
-					"dra.cpu/cpuID":      {IntValue: &cpuID},
-					// TODO(pravk03): Remove. Hack to align with NIC (DRANet). We need some standard attribute to align other resources with CPU.
-					"dra.net/numaNode": {IntValue: &numaNode},
-				},
-				Capacity: make(map[resourceapi.QualifiedName]resourceapi.DeviceCapacity),
+				Name:       deviceName,
+				Attributes: deviceAttrs,
+				Capacity:   make(map[resourceapi.QualifiedName]resourceapi.DeviceCapacity),
 			}
 			allDevices = append(allDevices, cpuDevice)
 		}
