@@ -151,7 +151,7 @@ func TestCoresNeededInUncoreCache(t *testing.T) {
 }
 
 func TestCoresInUncoreCache(t *testing.T) {
-	assert.True(t, cpuset.New(0, 1).Equals(testCPUDetails.coresInUncoreCache(0)))
-	assert.True(t, cpuset.New(2, 3).Equals(testCPUDetails.coresInUncoreCache(1)))
-	assert.True(t, cpuset.New().Equals(testCPUDetails.coresInUncoreCache(2)))
+	assert.True(t, cpuset.New(0, 1).Equals(testCPUDetails.CoresInUncoreCache(0)))
+	assert.True(t, cpuset.New(2, 3).Equals(testCPUDetails.CoresInUncoreCache(1)))
+	assert.True(t, cpuset.New().Equals(testCPUDetails.CoresInUncoreCache(2)))
 }

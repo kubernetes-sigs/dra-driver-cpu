@@ -333,7 +333,7 @@ func (a *cpuAccumulator) isNUMANodeFree(numaID int) bool {
 // Returns true if the supplied socket is fully available in `a.details`.
 // "fully available" means that all the CPUs in it are free.
 func (a *cpuAccumulator) isSocketFree(socketID int) bool {
-	return a.details.CPUsInSockets(socketID).Size() == a.topo.CPUsPerSocket()
+	return a.details.CPUsInSockets(socketID).Size() == a.topo.CPUDetails.CPUsInSockets(socketID).Size()
 }
 
 // Returns true if the supplied UnCoreCache is fully available,
@@ -345,7 +345,7 @@ func (a *cpuAccumulator) isUncoreCacheFree(uncoreID int) bool {
 // Returns true if the supplied core is fully available in `a.details`.
 // "fully available" means that all the CPUs in it are free.
 func (a *cpuAccumulator) isCoreFree(coreID int) bool {
-	return a.details.CPUsInCores(coreID).Size() == a.topo.CPUsPerCore()
+	return a.details.CPUsInCores(coreID).Size() == a.topo.CPUDetails.CPUsInCores(coreID).Size()
 }
 
 // Returns free NUMA Node IDs as a slice sorted by sortAvailableNUMANodes().
@@ -566,20 +566,31 @@ func (a *cpuAccumulator) takeFullUncore() {
 }
 
 func (a *cpuAccumulator) takePartialUncore(uncoreID int) {
-	// determine the number of cores needed whether SMT/hyperthread is enabled or disabled
-	numCoresNeeded := (a.numCPUsNeeded + a.topo.CPUsPerCore() - 1) / a.topo.CPUsPerCore()
+	cpusInUncore := a.topo.CPUDetails.CPUsInUncoreCaches(uncoreID)
+	if cpusInUncore.Size() == 0 {
+		return
+	}
+
+	numCores := a.topo.CPUDetails.CoresInUncoreCache(uncoreID).Size()
+	if numCores == 0 {
+		return
+	}
+
+	// Calculate CPUs per core in this uncore cache (rounding up for asymmetric cases)
+	cpusPerCore := (cpusInUncore.Size() + numCores - 1) / numCores
+	numCoresNeeded := (a.numCPUsNeeded + cpusPerCore - 1) / cpusPerCore
 
 	// determine the N number of free cores (physical cpus) within the UncoreCache, then
 	// determine the M number of free cpus (virtual cpus) that correspond with the free cores
-	freeCores := a.details.CoresNeededInUncoreCache(numCoresNeeded, uncoreID)
-	freeCPUs := a.details.CPUsInCores(freeCores.UnsortedList()...)
+	coreIDs := a.details.CoresNeededInUncoreCache(numCoresNeeded, uncoreID)
+	freeCPUs := a.details.CPUsInCores(coreIDs.UnsortedList()...)
 
 	// when SMT/hyperthread is enabled and remaining cpu requirement is an odd integer value:
 	// sort the free CPUs that were determined based on the cores that have available cpus.
 	// if the amount of free cpus is greater than the cpus needed, we can drop the last cpu
 	// since the odd integer request will only require one out of the two free cpus that
 	// correspond to the last core
-	if a.numCPUsNeeded%2 != 0 && a.topo.CPUsPerCore() > 1 {
+	if a.numCPUsNeeded%2 != 0 && a.topo.SMTEnabled {
 		// we sort freeCPUs to ensure we pack virtual cpu allocations, meaning we allocate
 		// whole core's worth of cpus as much as possible to reduce smt-misalignment
 		sortFreeCPUs := freeCPUs.List()
@@ -597,7 +608,7 @@ func (a *cpuAccumulator) takePartialUncore(uncoreID int) {
 		"uncore", uncoreID,
 		"claimed", claimed,
 		"needed", a.numCPUsNeeded,
-		"cores", freeCores.String(),
+		"cores", coreIDs.String(),
 		"cpus", freeCPUs.String())
 	if !claimed {
 		return
@@ -608,8 +619,8 @@ func (a *cpuAccumulator) takePartialUncore(uncoreID int) {
 // First try to take full UncoreCache, if available and need is at least the size of the UncoreCache group.
 // Second try to take the partial UncoreCache if available and the request size can fit w/in the UncoreCache.
 func (a *cpuAccumulator) takeUncoreCache() {
-	numCPUsInUncore := a.topo.CPUsPerUncore()
 	for _, uncore := range a.sortAvailableUncoreCaches() {
+		numCPUsInUncore := a.topo.CPUDetails.CPUsInUncoreCaches(uncore).Size()
 		// take full UncoreCache if the CPUs needed is greater than free UncoreCache size
 		if a.needsAtLeast(numCPUsInUncore) {
 			a.takeFullUncore()

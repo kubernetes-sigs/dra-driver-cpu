@@ -113,7 +113,7 @@ type CPUInfo struct {
 	UncoreCacheID int `json:"uncoreCacheID"`
 }
 
-// CPUTopology contains details of node cpu, where :
+// CPUTopology contains details of node cpu topology.
 // CPU  - logical CPU, cadvisor - thread
 // Core - physical CPU, cadvisor - Core
 // Socket - socket, cadvisor - Socket
@@ -159,6 +159,7 @@ func (s *SystemCPUInfo) GetCPUTopology() (*CPUTopology, error) {
 		cpuDetails[info.CpuID] = info
 		sockets.Insert(info.SocketID)
 		numaNodes.Insert(info.NUMANodeID)
+
 		// A core is unique by socket and core id
 		coreKey := coreIdent{SocketID: info.SocketID, coreID: info.CoreID}
 		cores[coreKey] = struct{}{}
@@ -547,32 +548,4 @@ func combinePath(value string, combineWith ...string) string {
 		copy(all[1:], combineWith)
 		return filepath.Join(all...)
 	}
-}
-
-// TODO: Refactor topology representation to handle asymmetric CPU distributions.
-// The current funcs CPUsPerCore, CPUsPerSocket, CPUsPerUncore assume symmetry
-// and would be inaccurate if CPUs are offlined asymmetrically or on heterogeneous systems.
-// See https://github.com/kubernetes-sigs/dra-driver-cpu/pull/16#discussion_r2588301122
-func (t *CPUTopology) CPUsPerCore() int {
-	if t.NumCores == 0 {
-		return 0
-	}
-	return t.NumCPUs / t.NumCores
-}
-
-func (t *CPUTopology) CPUsPerSocket() int {
-	if t.NumSockets == 0 {
-		return 0
-	}
-	return t.NumCPUs / t.NumSockets
-}
-
-func (t *CPUTopology) CPUsPerUncore() int {
-	if t.NumUncoreCache == 0 {
-		// Avoid division by zero. If there are no uncore caches, then
-		// no CPUs can be in one.
-		return 0
-	}
-	// Note: this is an approximation that assumes all uncore caches have the same number of CPUs.
-	return t.NumCPUs / t.NumUncoreCache
 }
