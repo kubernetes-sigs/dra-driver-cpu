@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/identifiers"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sys/unix"
 	"k8s.io/client-go/kubernetes"
@@ -36,10 +37,6 @@ import (
 	nodeutil "k8s.io/component-helpers/node/util"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/cpuset"
-)
-
-const (
-	driverName = "dra.cpu"
 )
 
 var (
@@ -189,7 +186,7 @@ func main() {
 	signal.Notify(signalCh, os.Interrupt, unix.SIGINT)
 
 	driverConfig := &driver.Config{
-		DriverName:       driverName,
+		DriverName:       identifiers.DriverName,
 		NodeName:         nodeName,
 		ReservedCPUs:     reservedCPUSet,
 		CpuDeviceMode:    cpuDeviceMode,

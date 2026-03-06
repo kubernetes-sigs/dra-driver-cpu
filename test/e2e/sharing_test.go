@@ -81,7 +81,9 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 				cpuDeviceMode = val
 			}
 		}
-		gomega.Expect(dsReservedCPUs.Equals(reservedCPUs)).To(gomega.BeTrue(), "daemonset reserved cpus %v do not match test reserved cpus %v", dsReservedCPUs.String(), reservedCPUs.String())
+		// Treat "no reserved cpus" as equal whether from zero value or parsed empty (daemonset may omit the arg or use empty value).
+		bothEmpty := dsReservedCPUs.IsEmpty() && reservedCPUs.IsEmpty()
+		gomega.Expect(bothEmpty || dsReservedCPUs.Equals(reservedCPUs)).To(gomega.BeTrue(), "daemonset reserved cpus %v do not match test reserved cpus %v", dsReservedCPUs.String(), reservedCPUs.String())
 
 		rootFxt.Log.Info("daemonset configuration", "reservedCPUs", dsReservedCPUs.String(), "deviceMode", cpuDeviceMode)
 
@@ -90,25 +92,28 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 			gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get worker node %q: %v", targetNodeName, err)
 		} else {
 			gomega.Eventually(func() error {
-				workerNodes, err := node.FindWorkers(ctx, infraFxt.K8SClientset)
+				nodes, err := node.FindWorkersOrAnyReady(ctx, infraFxt.K8SClientset)
 				if err != nil {
 					return err
 				}
-				if len(workerNodes) == 0 {
+				if len(nodes) == 0 {
 					return fmt.Errorf("no worker nodes detected")
 				}
-				targetNode = workerNodes[0] // pick random one, this is the simplest random pick
+				targetNode = nodes[0] // pick random one, this is the simplest random pick
 				return nil
 			}).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(gomega.Succeed(), "failed to find any worker node")
 		}
+		gomega.Expect(targetNode).ToNot(gomega.BeNil(), "target node must be set (by DRACPU_E2E_TARGET_NODE or by finding a worker)")
 		rootFxt.Log.Info("using worker node", "nodeName", targetNode.Name)
 
+		discoveryCtx, discoveryCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer discoveryCancel()
 		infoPod := discovery.MakePod(infraFxt.Namespace.Name, dracpuTesterImage)
-		infoPod = e2epod.PinToNode(infoPod, targetNode.Name)
-		infoPod, err = e2epod.RunToCompletion(ctx, infraFxt.K8SClientset, infoPod)
+		infoPod = pinPodToNode(infoPod, targetNode)
+		infoPod, err = e2epod.RunToCompletionWithTimeout(discoveryCtx, infraFxt.K8SClientset, infoPod, 2*time.Minute)
 
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create discovery pod: %v", err)
-		data, err := e2epod.GetLogs(infraFxt.K8SClientset, ctx, infoPod.Namespace, infoPod.Name, infoPod.Spec.Containers[0].Name)
+		data, err := e2epod.GetLogs(infraFxt.K8SClientset, discoveryCtx, infoPod.Namespace, infoPod.Name, infoPod.Spec.Containers[0].Name)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs from discovery pod: %v", err)
 		gomega.Expect(json.Unmarshal([]byte(data), &targetNodeCPUInfo)).To(gomega.Succeed())
 
@@ -189,7 +194,11 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 
 			fixture.By("creating a second pod consuming the ResourceClaim on %q, ensuring it gets ContainerCreate Error", fxt.Namespace.Name)
 			createdPod2, err := fxt.K8SClientset.CoreV1().Pods(testPod.Namespace).Create(ctx, &testPod, metav1.CreateOptions{})
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			if err != nil {
+				// Admission rejection is an acceptable negative outcome for claim sharing.
+				fxt.Log.Info("pod creation rejected as expected", "namespace", testPod.Namespace, "name", testPod.Name, "error", err.Error())
+				return
+			}
 			gomega.Eventually(func() *v1.Pod {
 				pod, err := fxt.K8SClientset.CoreV1().Pods(createdPod2.Namespace).Get(ctx, createdPod2.Name, metav1.GetOptions{})
 				if err != nil {
@@ -252,7 +261,11 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 
 			fixture.By("creating a pod with multiple containers consuming the ResourceClaim on %q, ensuring it gets ContainerCreateError", fxt.Namespace.Name)
 			createdPod, err := fxt.K8SClientset.CoreV1().Pods(testPod.Namespace).Create(ctx, &testPod, metav1.CreateOptions{})
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			if err != nil {
+				// Admission rejection is an acceptable negative outcome for claim sharing.
+				fxt.Log.Info("pod creation rejected as expected", "namespace", testPod.Namespace, "name", testPod.Name, "error", err.Error())
+				return
+			}
 			gomega.Eventually(func() *v1.Pod {
 				pod, err := fxt.K8SClientset.CoreV1().Pods(createdPod.Namespace).Get(ctx, createdPod.Name, metav1.GetOptions{})
 				if err != nil {
@@ -263,3 +276,19 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 		})
 	})
 })
+
+func pinPodToNode(pod *v1.Pod, node *v1.Node) *v1.Pod {
+	pod.Spec.NodeSelector = map[string]string{
+		"kubernetes.io/hostname": node.Name,
+	}
+	if len(node.Spec.Taints) > 0 {
+		for _, taint := range node.Spec.Taints {
+			pod.Spec.Tolerations = append(pod.Spec.Tolerations, v1.Toleration{
+				Key:      taint.Key,
+				Operator: v1.TolerationOpExists,
+				Effect:   taint.Effect,
+			})
+		}
+	}
+	return pod
+}

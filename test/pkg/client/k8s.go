@@ -34,6 +34,9 @@ func NewK8SClientset() (kubernetes.Interface, error) {
 	if err != nil {
 		return nil, fmt.Errorf("can not create client-go configuration: %w", err)
 	}
+	// Avoid "rate: Wait(n=1) would exceed context deadline" during e2e polling.
+	config.QPS = 50
+	config.Burst = 100
 
 	return kubernetes.NewForConfig(config)
 }

@@ -32,7 +32,7 @@ import (
 
 const (
 	PollInterval = time.Second * 10
-	PollTimeout  = time.Minute * 2
+	PollTimeout  = time.Minute
 )
 
 func CreateSync(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod) (*v1.Pod, error) {
@@ -60,15 +60,19 @@ func DeleteSync(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod) error
 }
 
 func RunToCompletion(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod) (*v1.Pod, error) {
+	return RunToCompletionWithTimeout(ctx, cs, pod, PollTimeout)
+}
+
+// RunToCompletionWithTimeout creates the pod and waits for it to reach Succeeded, using phaseWaitTimeout for the phase-poll loop.
+func RunToCompletionWithTimeout(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod, phaseWaitTimeout time.Duration) (*v1.Pod, error) {
 	createdPod, err := cs.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("error creating pod %s/%s: %w", createdPod.Namespace, createdPod.Name, err)
+		return nil, fmt.Errorf("error creating pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
-	_, err = WaitForPhase(ctx, cs, createdPod.Namespace, createdPod.Name, v1.PodSucceeded)
+	_, err = WaitForPhaseWithTimeout(ctx, cs, createdPod.Namespace, createdPod.Name, v1.PodSucceeded, phaseWaitTimeout)
 	if err != nil {
 		return nil, err
 	}
-	// Get the newest pod after it becomes running and ready, some status may change after pod created, such as pod ip.
 	return cs.CoreV1().Pods(createdPod.Namespace).Get(ctx, createdPod.Name, metav1.GetOptions{})
 }
 
@@ -99,9 +103,15 @@ func WaitToBeDeleted(ctx context.Context, cs kubernetes.Interface, podNamespace,
 }
 
 func WaitForPhase(ctx context.Context, cs kubernetes.Interface, podNamespace, podName string, desiredPhase v1.PodPhase) (v1.PodPhase, error) {
+	return WaitForPhaseWithTimeout(ctx, cs, podNamespace, podName, desiredPhase, PollTimeout)
+}
+
+// WaitForPhaseWithTimeout polls until the pod reaches desiredPhase or the given timeout.
+// The timeout is used for the poll loop context so rate limiter waits do not hit a short deadline.
+func WaitForPhaseWithTimeout(ctx context.Context, cs kubernetes.Interface, podNamespace, podName string, desiredPhase v1.PodPhase, timeout time.Duration) (v1.PodPhase, error) {
 	immediate := true
 	podPhase := v1.PodUnknown
-	err := wait.PollUntilContextTimeout(ctx, PollInterval, PollTimeout, immediate, func(ctx2 context.Context) (done bool, err error) {
+	err := wait.PollUntilContextTimeout(ctx, PollInterval, timeout, immediate, func(ctx2 context.Context) (done bool, err error) {
 		pod, err := cs.CoreV1().Pods(podNamespace).Get(ctx2, podName, metav1.GetOptions{})
 		if err != nil {
 			return false, err
@@ -129,9 +139,18 @@ func GetLogs(cs kubernetes.Interface, ctx context.Context, podNamespace, podName
 	return string(logs), err
 }
 
-func PinToNode(pod *v1.Pod, nodeName string) *v1.Pod {
+// PinToNode pins the pod to the given node and adds tolerations for that node's taints
+// so the pod can schedule (e.g. control-plane NoSchedule taint in kind).
+func PinToNode(pod *v1.Pod, node *v1.Node) *v1.Pod {
 	pod.Spec.NodeSelector = map[string]string{
-		"kubernetes.io/hostname": nodeName,
+		"kubernetes.io/hostname": node.Name,
+	}
+	for _, taint := range node.Spec.Taints {
+		pod.Spec.Tolerations = append(pod.Spec.Tolerations, v1.Toleration{
+			Key:      taint.Key,
+			Operator: v1.TolerationOpExists,
+			Effect:   taint.Effect,
+		})
 	}
 	return pod
 }

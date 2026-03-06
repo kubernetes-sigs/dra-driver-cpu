@@ -17,6 +17,7 @@
 package driver
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,7 +44,7 @@ func TestAddDevice(t *testing.T) {
 			name: "empty",
 			expectedSpec: &cdiSpec.Spec{
 				Version: cdiSpecVersion,
-				Kind:    cdiVendor + "/" + cdiClass,
+				Kind:    fmt.Sprintf("%s/%s", cdiVendor, cdiClass),
 				Devices: []cdiSpec.Device{},
 			},
 		},
@@ -57,7 +58,7 @@ func TestAddDevice(t *testing.T) {
 			},
 			expectedSpec: &cdiSpec.Spec{
 				Version: cdiSpecVersion,
-				Kind:    cdiVendor + "/" + cdiClass,
+				Kind:    fmt.Sprintf("%s/%s", cdiVendor, cdiClass),
 				Devices: []cdiSpec.Device{
 					{
 						Name: "foodev",
@@ -83,7 +84,7 @@ func TestAddDevice(t *testing.T) {
 			mgr, err := NewCdiManager(testDriverName)
 			require.NoError(t, err)
 
-			_, err = os.Stat(filepath.Join(cdiSpecDir, testDriverName+".json"))
+			_, err = os.Stat(filepath.Join(cdiSpecDir, fmt.Sprintf("%s.json", testDriverName)))
 			require.NoError(t, err)
 
 			for _, dev := range tcase.devices {
@@ -132,7 +133,7 @@ func TestRemoveDevice(t *testing.T) {
 			},
 			expectedSpec: &cdiSpec.Spec{
 				Version: cdiSpecVersion,
-				Kind:    cdiVendor + "/" + cdiClass,
+				Kind:    fmt.Sprintf("%s/%s", cdiVendor, cdiClass),
 				Devices: []cdiSpec.Device{
 					{
 						Name: "foodev",
