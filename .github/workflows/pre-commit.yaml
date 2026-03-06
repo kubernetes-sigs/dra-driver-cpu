@@ -7,7 +7,10 @@ on:
 jobs:
   pre-commit:
     runs-on: ubuntu-latest
-
+    env:
+      # remove once either we bump golang to 1.26
+      # or https://github.com/golang/go/issues/75031 is fixed
+      GOTOOLCHAIN: go1.25.0+auto
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
