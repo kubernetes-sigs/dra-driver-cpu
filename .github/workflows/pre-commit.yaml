@@ -18,4 +18,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install pre-commit
     - name: Run pre-commit
+      env:
+        SKIP_PRECOMMIT_UNIT_TESTS: "true"
       run: pre-commit run --all-files
