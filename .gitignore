@@ -8,6 +8,8 @@
 *.so
 *.dylib
 *~
+dracpu
+dracpu-admission
 
 # Test binary, built with `go test -c`
 *.test

@@ -18,6 +18,7 @@ package node
 
 import (
 	"context"
+	"errors"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,6 +41,32 @@ func FindWorkers(ctx context.Context, cs kubernetes.Interface) ([]*v1.Node, erro
 		workerNodes = append(workerNodes, &n)
 	}
 	return workerNodes, nil
+}
+
+// FindWorkersOrAnyReady returns nodes with node-role.kubernetes.io/worker that are ready.
+// If none are found (e.g. kind or clusters that do not use that label), it returns any ready nodes.
+// Returns an error if listing fails or there are no ready nodes at all.
+func FindWorkersOrAnyReady(ctx context.Context, cs kubernetes.Interface) ([]*v1.Node, error) {
+	nodes, err := FindWorkers(ctx, cs)
+	if err != nil {
+		return nil, err
+	}
+	if len(nodes) > 0 {
+		return nodes, nil
+	}
+	allNodes, err := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	for i := range allNodes.Items {
+		if IsReady(&allNodes.Items[i]) {
+			nodes = append(nodes, &allNodes.Items[i])
+		}
+	}
+	if len(nodes) == 0 {
+		return nil, errors.New("no ready nodes")
+	}
+	return nodes, nil
 }
 
 func IsReady(node *v1.Node) bool {

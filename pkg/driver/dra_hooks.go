@@ -24,6 +24,7 @@ import (
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpumanager"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/identifiers"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
@@ -44,7 +45,7 @@ const (
 
 	// Grouped Mode
 	// cpuResourceQualifiedName is the qualified name for the CPU resource capacity.
-	cpuResourceQualifiedName = "dra.cpu/cpu"
+	cpuResourceQualifiedName = identifiers.CPUResourceQualifiedNameKey
 
 	cpuDeviceSocketGroupedPrefix = "cpudevsocket"
 	cpuDeviceNUMAGroupedPrefix   = "cpudevnuma"
