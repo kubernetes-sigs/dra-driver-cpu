@@ -63,7 +63,7 @@ repos:
       # https://github.com/golangci/golangci-lint/blob/main/.pre-commit-hooks.yaml
       - id: make-tests
         name: Make Tests
-        entry: make test-unit
+        entry: bash -c 'if [ "${SKIP_PRECOMMIT_UNIT_TESTS}" != "true" ]; then make test-unit; fi'
         types: [go]
         language: system
         pass_filenames: false
