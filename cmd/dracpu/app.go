@@ -24,10 +24,12 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sys/unix"
 	"k8s.io/client-go/kubernetes"
@@ -50,6 +52,7 @@ var (
 	ready            atomic.Bool
 	cpuDeviceMode    string
 	groupBy          string
+	showMetrics      bool
 )
 
 type cpuDeviceModeValue struct {
@@ -107,11 +110,17 @@ func init() {
 	flag.StringVar(&reservedCPUs, "reserved-cpus", "", "cpuset of CPUs to be excluded from ResourceSlice.")
 	flag.Var(newCPUDeviceModeValue(&cpuDeviceMode, driver.CPU_DEVICE_MODE_GROUPED), "cpu-device-mode", "Sets the mode for exposing CPU devices. 'grouped' exposes a single device per socket or numa node (based on --group-by). 'individual' exposes each CPU as a separate device.")
 	flag.Var(newGroupByValue(&groupBy, driver.GROUP_BY_NUMA_NODE), "group-by", "When --cpu-device-mode=grouped, sets the criteria for grouping CPUs. Can be set to 'socket' or 'numanode'.")
+	flag.BoolVar(&showMetrics, "show-metrics", false, "Print all registered metrics to stdout and exit.")
 }
 
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
+
+	if showMetrics {
+		printRegisteredMetrics()
+		os.Exit(0)
+	}
 
 	printVersion()
 	flag.VisitAll(func(f *flag.Flag) {
@@ -234,4 +243,19 @@ func printVersion() {
 		}
 	}
 	klog.Infof("dracpu go %s build: %s time: %s", info.GoVersion, vcsRevision, vcsTime)
+}
+
+func printRegisteredMetrics() {
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error gathering metrics: %v\n", err)
+		os.Exit(1)
+	}
+	for _, mf := range families {
+		if !strings.HasPrefix(mf.GetName(), "dra_cpu_") {
+			continue
+		}
+		fmt.Printf("# %s\n", mf.GetHelp())
+		fmt.Printf("%s (type: %s)\n\n", mf.GetName(), mf.GetType())
+	}
 }

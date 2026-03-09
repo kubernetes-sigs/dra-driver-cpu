@@ -43,12 +43,15 @@ func NewCPUAllocation(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUS
 	allCPUsSet := cpuset.New(cpuIDs...)
 	availableCPUs := allCPUsSet.Difference(reservedCPUs)
 
-	return &CPUAllocation{
+	s := &CPUAllocation{
 		availableCPUs:            availableCPUs,
 		reservedCPUs:             reservedCPUs,
 		resourceClaimAllocations: make(map[types.UID]cpuset.CPUSet),
 		allocatedCPUs:            cpuset.New(),
 	}
+	reservedCPUsGauge.Set(float64(reservedCPUs.Size()))
+	s.updateMetrics()
+	return s
 }
 
 // AddResourceClaimAllocation adds a new resource claim allocation to the store.
@@ -57,6 +60,7 @@ func (s *CPUAllocation) AddResourceClaimAllocation(claimUID types.UID, cpus cpus
 	defer s.mu.Unlock()
 	s.resourceClaimAllocations[claimUID] = cpus
 	s.allocatedCPUs = s.allocatedCPUs.Union(cpus)
+	s.updateMetrics()
 	klog.Infof("Added allocation for resource claim %s: CPUs %s", claimUID, cpus.String())
 }
 
@@ -67,6 +71,7 @@ func (s *CPUAllocation) RemoveResourceClaimAllocation(claimUID types.UID) {
 	if cpus, ok := s.resourceClaimAllocations[claimUID]; ok {
 		delete(s.resourceClaimAllocations, claimUID)
 		s.allocatedCPUs = s.allocatedCPUs.Difference(cpus)
+		s.updateMetrics()
 		klog.Infof("Removed allocation for resource claim %s", claimUID)
 	}
 }
@@ -84,4 +89,12 @@ func (s *CPUAllocation) GetResourceClaimAllocation(claimUID types.UID) (cpuset.C
 	defer s.mu.RUnlock()
 	cpus, ok := s.resourceClaimAllocations[claimUID]
 	return cpus, ok
+}
+
+// updateMetrics updates the Prometheus gauge metrics based on the current state.
+// Must be called with s.mu held, or during construction before the store is shared.
+func (s *CPUAllocation) updateMetrics() {
+	allocatedCPUsGauge.Set(float64(s.allocatedCPUs.Size()))
+	availableCPUsGauge.Set(float64(s.availableCPUs.Difference(s.allocatedCPUs).Size()))
+	activeResourceClaimsGauge.Set(float64(len(s.resourceClaimAllocations)))
 }
