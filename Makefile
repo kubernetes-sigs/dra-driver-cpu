@@ -31,7 +31,7 @@ GOLANGCI_LINT = $(OUT_DIR)/golangci-lint
 # disable CGO by default for static binaries
 CGO_ENABLED=0
 # remove once either we bump golang to 1.26 or https://github.com/golang/go/issues/75031 is fixed
-TOOOLCHAIN_MODE ?= $(shell go env GOVERSION)+auto
+TOOOLCHAIN_MODE ?= "$(shell go env GOVERSION)+auto"
 export GOROOT GO111MODULE CGO_ENABLED
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
