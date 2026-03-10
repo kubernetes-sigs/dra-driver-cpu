@@ -1,0 +1,114 @@
+# Copyright The Kubernetes Authors.
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "dra-driver-cpu.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dra-driver-cpu.labels" . | nindent 4 }}
+    tier: node
+    k8s-app: {{ include "dra-driver-cpu.name" . }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "dra-driver-cpu.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dra-driver-cpu.labels" . | nindent 8 }}
+        tier: node
+        k8s-app: {{ include "dra-driver-cpu.name" . }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      hostNetwork: true
+      priorityClassName: system-node-critical
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      serviceAccountName: {{ include "dra-driver-cpu.fullname" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: dracpu
+        args:
+          - /dracpu
+          - --v={{ .Values.args.logLevel }}
+          - --cpu-device-mode={{ .Values.args.cpuDeviceMode }}
+          - --group-by={{ .Values.args.groupBy }}
+          {{- if .Values.healthzPort }}
+          - --bind-address=:{{ .Values.healthzPort }}
+          {{- end }}
+          {{- if .Values.args.reservedCPUs }}
+          - --reserved-cpus={{ .Values.args.reservedCPUs }}
+          {{- end }}
+          {{- if .Values.args.hostnameOverride }}
+          - --hostname-override={{ .Values.args.hostnameOverride }}
+          {{- end }}
+        image: {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+          - name: healthz
+            containerPort: {{ .Values.healthzPort }}
+        livenessProbe:
+          httpGet:
+            path: {{ .Values.healthzPath }}
+            port: healthz
+          initialDelaySeconds: 10
+        readinessProbe:
+          httpGet:
+            path: {{ .Values.healthzPath }}
+            port: healthz
+          initialDelaySeconds: 5
+        resources:
+          requests:
+            {{- toYaml .Values.resources.requests | nindent 12 }}
+          {{- with .Values.resources.limits }}
+          limits:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        securityContext:
+          capabilities:
+            add: ["NET_ADMIN", "SYS_ADMIN"]
+        volumeMounts:
+        - name: device-plugin
+          mountPath: /var/lib/kubelet/plugins
+        - name: plugin-registry
+          mountPath: /var/lib/kubelet/plugins_registry
+        - name: nri-plugin
+          mountPath: /var/run/nri
+        - name: cdi-dir
+          mountPath: /var/run/cdi
+      volumes:
+      - name: device-plugin
+        hostPath:
+          path: /var/lib/kubelet/plugins
+      - name: plugin-registry
+        hostPath:
+          path: /var/lib/kubelet/plugins_registry
+      - name: nri-plugin
+        hostPath:
+          path: /var/run/nri
+      - name: cdi-dir
+        hostPath:
+          path: /var/run/cdi
+          type: DirectoryOrCreate
