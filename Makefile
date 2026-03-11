@@ -231,3 +231,6 @@ install-yq: $(OUT_DIR)  ## make sure the yq tool is available locally
 .PHONY: install-golangci-lint
 install-golangci-lint: $(OUT_DIR) ## make sure the golangci-lint tool is available locally
 	@hack/fetch-golangci-lint.sh $(OUT_DIR) $(GOLANGCI_LINT_VERSION)
+
+helm-lint:
+	helm lint --strict deployment/helm/dra-driver-cpu
