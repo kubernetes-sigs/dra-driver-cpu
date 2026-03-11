@@ -221,6 +221,16 @@ This discrepancy is a known issue being addressed by [KEP-5517: Native Resource 
   kubectl apply -f dist/install.yaml
   ```
 
+### Installation via Helm
+
+The driver can also be installed using the provided Helm chart:
+
+```bash
+helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system
+```
+
+See the [Helm chart README](deployment/helm/dra-driver-cpu/README.md) for the full list of configuration options.
+
 ### Example Usage
 
 The driver supports two modes of operation. Each mode has a complete example manifest that includes both the ResourceClaim(s) and a sample Pod. The ResourceClaim requests a specific number of exclusive CPUs from the driver, and is referenced in the Pod spec to receive the allocated CPUs.
