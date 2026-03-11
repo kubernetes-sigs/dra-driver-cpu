@@ -1,0 +1,4 @@
+chart-dirs:
+  - deployment/helm
+remote: origin
+target-branch: main
