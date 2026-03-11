@@ -700,6 +700,56 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			expectedCPUSet: cpuset.New(0, 2, 4, 6),
 		},
 		{
+			name:     "SocketGrouped_SingleSocketHT_SameSocketTwice_NoCPUOverlap",
+			cpuInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
+			groupBy:  GROUP_BY_SOCKET,
+			claims: []*resourceapi.ResourceClaim{
+				testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{
+					{
+						Driver:           testDriverName,
+						Pool:             testNodeName,
+						Device:           "cpudevsocket0",
+						Request:          "req-0",
+						ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{cpuResourceQualifiedName: *resource.NewQuantity(1, resource.DecimalSI)},
+					},
+					{
+						Driver:           testDriverName,
+						Pool:             testNodeName,
+						Device:           "cpudevsocket0",
+						Request:          "req-1",
+						ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{cpuResourceQualifiedName: *resource.NewQuantity(1, resource.DecimalSI)},
+					},
+				}),
+			},
+			// Two distinct CPUs must be allocated, no overlap
+			expectedCPUSet: cpuset.New(0, 2),
+		},
+		{
+			name:     "NUMAGrouped_SingleSocketHT_SameNUMATwice_NoCPUOverlap",
+			cpuInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
+			groupBy:  GROUP_BY_NUMA_NODE,
+			claims: []*resourceapi.ResourceClaim{
+				testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{
+					{
+						Driver:           testDriverName,
+						Pool:             testNodeName,
+						Device:           "cpudevnuma0",
+						Request:          "req-0",
+						ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{cpuResourceQualifiedName: *resource.NewQuantity(1, resource.DecimalSI)},
+					},
+					{
+						Driver:           testDriverName,
+						Pool:             testNodeName,
+						Device:           "cpudevnuma0",
+						Request:          "req-1",
+						ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{cpuResourceQualifiedName: *resource.NewQuantity(1, resource.DecimalSI)},
+					},
+				}),
+			},
+			// Two distinct CPUs must be allocated, no overlap
+			expectedCPUSet: cpuset.New(0, 2),
+		},
+		{
 			name:               "SocketGrouped_SingleSocketHT_FullAlloc_Socket",
 			cpuInfos:           mockCPUInfos_SingleSocket_4CPUS_HT,
 			groupBy:            GROUP_BY_SOCKET,
@@ -881,6 +931,19 @@ func TestUnprepareResourceClaims(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func testClaimWithResults(claimUID types.UID, results []resourceapi.DeviceRequestAllocationResult) *resourceapi.ResourceClaim {
+	return &resourceapi.ResourceClaim{
+		ObjectMeta: metav1.ObjectMeta{UID: claimUID, Name: string(claimUID)},
+		Status: resourceapi.ResourceClaimStatus{
+			Allocation: &resourceapi.AllocationResult{
+				Devices: resourceapi.DeviceAllocationResult{
+					Results: results,
+				},
+			},
+		},
 	}
 }
 
