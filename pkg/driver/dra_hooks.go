@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpumanager"
@@ -263,12 +264,19 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 	}
 
 	for _, claim := range claims {
+		start := time.Now()
 		if cp.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
 			klog.Infof("Claim %s/%s is for a grouped resource", claim.Namespace, claim.Name)
 			result[claim.UID] = cp.prepareGroupedResourceClaim(ctx, claim)
 		} else {
 			klog.Infof("Claim %s/%s is for an individual resource", claim.Namespace, claim.Name)
 			result[claim.UID] = cp.prepareResourceClaim(ctx, claim)
+		}
+		prepareClaimDuration.Observe(time.Since(start).Seconds())
+		if result[claim.UID].Err != nil {
+			prepareClaimErrorTotal.Inc()
+		} else {
+			prepareClaimSuccessTotal.Inc()
 		}
 	}
 	return result, nil
@@ -335,6 +343,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(ctx context.Context, claim *res
 	}
 
 	cp.cpuAllocationStore.AddResourceClaimAllocation(claim.UID, cpuAssignment)
+	claimAllocatedCPUs.Observe(float64(cpuAssignment.Size()))
 
 	deviceName := getCDIDeviceName(claim.UID)
 	envVar := fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claim.UID, cpuAssignment.String())
@@ -391,6 +400,7 @@ func (cp *CPUDriver) prepareResourceClaim(_ context.Context, claim *resourceapi.
 
 	claimCPUSet := cpuset.New(claimCPUIDs...)
 	cp.cpuAllocationStore.AddResourceClaimAllocation(claim.UID, claimCPUSet)
+	claimAllocatedCPUs.Observe(float64(claimCPUSet.Size()))
 	deviceName := getCDIDeviceName(claim.UID)
 	envVar := fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claim.UID, claimCPUSet.String())
 	if err := cp.cdiMgr.AddDevice(deviceName, envVar); err != nil {
@@ -431,6 +441,7 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 		if err != nil {
 			klog.Infof("error unpreparing resources for claim %s/%s : %v", claim.Namespace, claim.Name, err)
 		}
+		unprepareClaimTotal.Inc()
 	}
 	return result, nil
 }
