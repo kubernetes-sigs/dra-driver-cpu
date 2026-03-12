@@ -24,7 +24,6 @@ import (
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpumanager"
-	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
@@ -119,7 +118,6 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices() [][]resourceapi.Device {
 				"dra.cpu/smtEnabled": {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
 				"dra.cpu/numCPUs":    {IntValue: ptr.To(availableCPUsInNUMANode)},
 			}
-			device.SetCompatibilityAttributes(deviceAttrs, int64(numaID))
 
 			devices = append(devices, resourceapi.Device{
 				Name:                     deviceName,
@@ -226,7 +224,6 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 				"dra.cpu/coreID":     {IntValue: ptr.To(int64(cpu.CoreID))},
 				"dra.cpu/cpuID":      {IntValue: ptr.To(int64(cpu.CpuID))},
 			}
-			device.SetCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID))
 
 			deviceName := fmt.Sprintf("%s%03d", cpuDevicePrefix, devId)
 			devId++
