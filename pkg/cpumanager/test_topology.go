@@ -29,6 +29,7 @@ var (
 		NumCPUs:    8,
 		NumSockets: 1,
 		NumCores:   4,
+		SMTEnabled: true,
 		CPUDetails: map[int]topology.CPUInfo{
 			0: {CoreID: 0, SocketID: 0, NUMANodeID: 0},
 			1: {CoreID: 1, SocketID: 0, NUMANodeID: 0},
@@ -46,6 +47,7 @@ var (
 		NumSockets:     2,
 		NumCores:       6,
 		NumUncoreCache: 1,
+		SMTEnabled:     true,
 		CPUDetails: map[int]topology.CPUInfo{
 			0:  {CoreID: 0, SocketID: 0, NUMANodeID: 0},
 			1:  {CoreID: 1, SocketID: 1, NUMANodeID: 1},
@@ -117,6 +119,7 @@ var (
 		NumSockets:     1,
 		NumCores:       8,
 		NumUncoreCache: 2,
+		SMTEnabled:     true,
 		CPUDetails: map[int]topology.CPUInfo{
 			0:  {CoreID: 0, SocketID: 0, NUMANodeID: 0, UncoreCacheID: 0},
 			1:  {CoreID: 1, SocketID: 0, NUMANodeID: 0, UncoreCacheID: 0},
@@ -184,6 +187,7 @@ var (
 		NumCPUs:    18,
 		NumSockets: 3,
 		NumCores:   9,
+		SMTEnabled: true,
 		CPUDetails: map[int]topology.CPUInfo{
 			0:  {CoreID: 0, SocketID: 1, NUMANodeID: 1},
 			1:  {CoreID: 0, SocketID: 1, NUMANodeID: 1},
@@ -224,6 +228,7 @@ var (
 		NumSockets:   2,
 		NumCores:     40,
 		NumNUMANodes: 4,
+		SMTEnabled:   true,
 		CPUDetails: map[int]topology.CPUInfo{
 			0:  {CoreID: 0, SocketID: 0, NUMANodeID: 0},
 			1:  {CoreID: 1, SocketID: 0, NUMANodeID: 0},
@@ -319,6 +324,7 @@ var (
 		NumSockets:   4,
 		NumCores:     40,
 		NumNUMANodes: 2,
+		SMTEnabled:   true,
 		CPUDetails: map[int]topology.CPUInfo{
 			0:  {CoreID: 0, SocketID: 0, NUMANodeID: 0},
 			1:  {CoreID: 1, SocketID: 0, NUMANodeID: 0},
@@ -425,6 +431,7 @@ var (
 		NumSockets:   2,
 		NumCores:     128,
 		NumNUMANodes: 8,
+		SMTEnabled:   true,
 		CPUDetails: map[int]topology.CPUInfo{
 			0:   {CoreID: 0, SocketID: 0, NUMANodeID: 0},
 			1:   {CoreID: 1, SocketID: 0, NUMANodeID: 0},
