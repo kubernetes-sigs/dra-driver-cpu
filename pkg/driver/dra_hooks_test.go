@@ -540,6 +540,33 @@ func TestPrepareResourceClaims(t *testing.T) {
 			expectedResultsCount: 1,
 			expectedError:        true,
 		},
+		{
+			name:   "multi-driver claim - only our devices in preparedDevices",
+			driver: baseCPUDriver(),
+			claims: []*resourceapi.ResourceClaim{
+				{
+					ObjectMeta: metav1.ObjectMeta{UID: claimUID, Name: "my-claim"},
+					Status: resourceapi.ResourceClaimStatus{
+						Allocation: &resourceapi.AllocationResult{
+							Devices: resourceapi.DeviceAllocationResult{
+								Results: []resourceapi.DeviceRequestAllocationResult{
+									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev0"},
+									{Driver: "other-driver", Pool: testNodeName, Device: "other-device"},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedResultsCount:    1,
+			expectedCdiDevicesCount: 1,
+			expectedCdiDevice:       cdiDeviceName,
+			expectedCdiEnvVar:       fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, "0"),
+			// only our driver's device should appear in preparedDevices
+			expectedPreparedDevices: []kubeletplugin.Device{
+				{PoolName: testNodeName, DeviceName: "cpudev0", CDIDeviceIDs: []string{cdiQualifiedName}},
+			},
+		},
 	}
 
 	for _, tc := range testCases {
