@@ -16,6 +16,7 @@
 FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
 ARG TARGETARCH
 ARG GOARCH=${TARGETARCH} CGO_ENABLED=0
+ARG LDFLAGS=-s -w
 
 # cache go modules
 WORKDIR /go/src/app
@@ -24,7 +25,7 @@ RUN go mod download
 
 # build
 COPY . .
-RUN go build -o /go/bin/dracpu ./cmd/dracpu
+RUN go build -ldflags "${LDFLAGS}" -o /go/bin/dracpu ./cmd/dracpu
 
 # copy binary onto base image
 FROM gcr.io/distroless/base-debian12
