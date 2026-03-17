@@ -50,6 +50,22 @@ build-dracpu: ## build dracpu
 clean: ## clean
 	rm -rf "$(OUT_DIR)/"
 
+with-kind: ## run a command with a temporary kind cluster (create if missing, delete on exit if created)
+	@if [ -z "$$CMD" ]; then \
+		echo "CMD is required. Example: CMD='echo hello' $(MAKE) with-kind"; \
+		exit 1; \
+	fi; \
+	created=0; \
+	while read -r name; do \
+		if [ "$$name" = "$(CLUSTER_NAME)" ]; then created=2; fi; \
+	done < <(kind get clusters 2>/dev/null || true); \
+	if [ "$$created" -eq 0 ]; then \
+		kind create cluster --name ${CLUSTER_NAME} --config hack/kind.yaml; \
+		created=1; \
+	fi; \
+	trap 'if [ "$$created" -eq 1 ]; then kind delete cluster --name ${CLUSTER_NAME}; fi' EXIT; \
+	bash -c "$$CMD"
+
 test-unit: ## run tests
 	CGO_ENABLED=1 go test -v -race -count 1 -coverprofile=coverage.out ./pkg/...
 
@@ -96,7 +112,16 @@ export DOCKER_CLI_EXPERIMENTAL=enabled
 image: ## docker build load
 	docker build . -t ${STAGING_IMAGE_NAME} --load
 
-build-image: ## build image
+build-image: ## build image (skip if already exists unless FORCE_BUILD=1)
+	@if [ "$(FORCE_BUILD)" = "1" ]; then \
+		$(MAKE) build-image-force; \
+	elif docker image inspect "${IMAGE}" >/dev/null 2>&1; then \
+		echo "Image ${IMAGE} already exists; skipping build."; \
+	else \
+		$(MAKE) build-image-force; \
+	fi
+
+build-image-force: ## force build image
 	docker buildx build . \
 		--platform="${PLATFORMS}" \
 		--tag="${IMAGE}" \
@@ -115,6 +140,9 @@ kind-cluster:  ## create kind cluster
 
 kind-load-image: build-image  ## load the current container image into kind
 	kind load docker-image ${IMAGE} ${IMAGE_LATEST} --name ${CLUSTER_NAME}
+
+kind-load-test-image: build-test-image ## load the test image into kind
+	kind load docker-image ${IMAGE_TEST} --name ${CLUSTER_NAME}
 
 kind-uninstall-cpu-dra: ## remove cpu dra from kind cluster
 	kubectl delete -f install.yaml || true
@@ -162,7 +190,16 @@ ifneq ($(DRACPU_E2E_VERBOSE),)
 endif
 	$(call kind_setup,$(CI_MANIFEST_FILE))
 
-build-test-image: ## build tests image
+build-test-image: ## build tests image (skip if already exists unless FORCE_BUILD=1)
+	@if [ "$(FORCE_BUILD)" = "1" ]; then \
+		$(MAKE) build-test-image-force; \
+	elif docker image inspect "${IMAGE_TEST}" >/dev/null 2>&1; then \
+		echo "Image ${IMAGE_TEST} already exists; skipping build."; \
+	else \
+		$(MAKE) build-test-image-force; \
+	fi
+
+build-test-image-force: ## force build tests image
 	docker buildx build . \
 		--file test/image/Dockerfile \
 		--platform="${PLATFORMS}" \
