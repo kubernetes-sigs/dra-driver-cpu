@@ -213,10 +213,14 @@ This discrepancy is a known issue being addressed by [KEP-5517: Native Resource 
 
 - If needed, create a kind cluster. We have one in the repo, if needed, that
   can be deplayed as follows:
-  - `make kind-cluster`
-- Deploy the driver and all necessary RBAC configurations using the provided
-  manifest
-  - `kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/dra-driver-cpu/refs/heads/main/install.yaml`
+  ```bash
+  make kind-cluster
+  ```
+- Deploy the driver and all necessary RBAC configurations using the provided manifest
+  ```bash
+  make manifests
+  kubectl apply -f dist/install.yaml
+  ```
 
 ### Example Usage
 
