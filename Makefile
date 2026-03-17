@@ -108,9 +108,15 @@ build-image: ## build image
 
 # no need to push the test image
 # never push the CI image! it intentionally refers to a non-existing registry
-push-image: build-image ## build and push image
-	docker push ${IMAGE}
-	docker push ${IMAGE_LATEST}
+push-image: ## build and push image directly to registry (supports multi-arch)
+	-docker buildx create --name dracpu-builder
+	docker buildx use dracpu-builder
+	-docker buildx build . \
+		--platform="${PLATFORMS}" \
+		--tag="${IMAGE}" \
+		--tag="${IMAGE_LATEST}" \
+		--push
+	-docker buildx rm dracpu-builder
 
 kind-cluster:  ## create kind cluster
 	kind create cluster --name ${CLUSTER_NAME} --config hack/kind.yaml
