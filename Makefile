@@ -162,7 +162,7 @@ ci-manifests: install.yaml install-yq ## create the CI install manifests
 ifneq ($(DRACPU_E2E_VERBOSE),)
 	@echo "setting up manifests for mode=$(DRACPU_E2E_CPU_DEVICE_MODE)"
 endif
-	$(call generate_ci_manifest,$(CI_MANIFEST_FILE),.spec.template.spec.containers[0].args |= (del(.[] | select(. == "--cpu-device-mode=*")) | . + ["--cpu-device-mode=individual", "--reserved-cpus=$(DRACPU_E2E_RESERVED_CPUS)"]))
+	$(call generate_ci_manifest,$(CI_MANIFEST_FILE),.spec.template.spec.containers[0].args |= (del(.[] | select(. == "--cpu-device-mode=*")) | . + ["--cpu-device-mode=$(DRACPU_E2E_CPU_DEVICE_MODE)", "--reserved-cpus=$(DRACPU_E2E_RESERVED_CPUS)"]))
 
 ci-kind-setup: ci-manifests build-image build-test-image ## setup a CI cluster from scratch using reserved CPUs
 ifneq ($(DRACPU_E2E_VERBOSE),)
