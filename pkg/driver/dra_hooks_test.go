@@ -829,6 +829,87 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 	}
 }
 
+func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
+	claimUID := types.UID("claim-1")
+	cdiDeviceName := getCDIDeviceName(claimUID)
+
+	testCases := []struct {
+		name           string
+		firstDevices   []string
+		secondDevices  []string
+		expectedCPUSet cpuset.CPUSet
+		expectedShared cpuset.CPUSet
+	}{
+		{
+			name:           "individual mode - same devices repeated",
+			firstDevices:   []string{"cpudev0", "cpudev1"},
+			secondDevices:  []string{"cpudev0", "cpudev1"},
+			expectedCPUSet: cpuset.New(0, 1),
+			expectedShared: cpuset.New(2, 3),
+		},
+		{
+			name:           "individual mode - different devices repeated",
+			firstDevices:   []string{"cpudev0", "cpudev1"},
+			secondDevices:  []string{"cpudev2", "cpudev3"},
+			expectedCPUSet: cpuset.New(2, 3),
+			expectedShared: cpuset.New(0, 1),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
+			topo, _ := mockProvider.GetCPUTopology()
+			driver := &CPUDriver{
+				driverName: testDriverName,
+				deviceNameToCPUID: map[string]int{
+					"cpudev0": 0,
+					"cpudev1": 1,
+					"cpudev2": 2,
+					"cpudev3": 3,
+				},
+				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+				cdiMgr:             newMockCdiMgr(),
+			}
+
+			makeClaim := func(devices []string) []*resourceapi.ResourceClaim {
+				results := make([]resourceapi.DeviceRequestAllocationResult, len(devices))
+				for i, d := range devices {
+					results[i] = resourceapi.DeviceRequestAllocationResult{Driver: testDriverName, Pool: testNodeName, Device: d}
+				}
+				return []*resourceapi.ResourceClaim{
+					{
+						ObjectMeta: metav1.ObjectMeta{UID: claimUID},
+						Status: resourceapi.ResourceClaimStatus{
+							Allocation: &resourceapi.AllocationResult{
+								Devices: resourceapi.DeviceAllocationResult{Results: results},
+							},
+						},
+					},
+				}
+			}
+
+			_, err := driver.PrepareResourceClaims(context.Background(), makeClaim(tc.firstDevices))
+			require.NoError(t, err)
+
+			_, err = driver.PrepareResourceClaims(context.Background(), makeClaim(tc.secondDevices))
+			require.NoError(t, err)
+
+			gotCPUs, ok := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
+			require.True(t, ok)
+			require.True(t, tc.expectedCPUSet.Equals(gotCPUs), "claim cpus: got %s, want %s", gotCPUs, tc.expectedCPUSet)
+			require.True(t, tc.expectedShared.Equals(driver.cpuAllocationStore.GetSharedCPUs()), "shared cpus: got %s, want %s", driver.cpuAllocationStore.GetSharedCPUs(), tc.expectedShared)
+
+			envVar := driver.cdiMgr.(*mockCdiMgr).devices[cdiDeviceName]
+			parts := strings.SplitN(envVar, "=", 2)
+			require.Len(t, parts, 2)
+			actualCPUSet, err := cpuset.Parse(parts[1])
+			require.NoError(t, err)
+			require.True(t, tc.expectedCPUSet.Equals(actualCPUSet), "cdi env cpus: got %s, want %s", actualCPUSet, tc.expectedCPUSet)
+		})
+	}
+}
+
 func TestUnprepareResourceClaims(t *testing.T) {
 	claimUID := types.UID("test-claim-uid")
 

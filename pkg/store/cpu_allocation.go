@@ -55,6 +55,9 @@ func NewCPUAllocation(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUS
 func (s *CPUAllocation) AddResourceClaimAllocation(claimUID types.UID, cpus cpuset.CPUSet) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if old, ok := s.resourceClaimAllocations[claimUID]; ok {
+		s.allocatedCPUs = s.allocatedCPUs.Difference(old)
+	}
 	s.resourceClaimAllocations[claimUID] = cpus
 	s.allocatedCPUs = s.allocatedCPUs.Union(cpus)
 	klog.Infof("Added allocation for resource claim %s: CPUs %s", claimUID, cpus.String())
