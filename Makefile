@@ -67,7 +67,7 @@ CLUSTER_NAME=dra-driver-cpu
 STAGING_REPO_NAME=dra-driver-cpu
 IMAGE_NAME=dra-driver-cpu
 # docker image registry, default to upstream
-REGISTRY := us-central1-docker.pkg.dev/k8s-staging-images
+REGISTRY ?= us-central1-docker.pkg.dev/k8s-staging-images
 # this is an intentionally non-existent registry to be used only by local CI using the local image loading
 REGISTRY_CI := dev.kind.local/ci
 STAGING_IMAGE_NAME := ${REGISTRY}/${STAGING_REPO_NAME}/${IMAGE_NAME}
@@ -125,10 +125,10 @@ kind-load-image: build-image  ## load the current container image into kind
 	kind load docker-image ${IMAGE} ${IMAGE_LATEST} --name ${CLUSTER_NAME}
 
 kind-uninstall-cpu-dra: ## remove cpu dra from kind cluster
-	kubectl delete -f install.yaml || true
+	kubectl delete -f dist/install.yaml || true
 
 kind-install-cpu-dra: kind-uninstall-cpu-dra build-image kind-load-image ## install on cluster
-	kubectl apply -f install.yaml
+	kubectl apply -f dist/install.yaml
 
 delete-kind-cluster: ## delete kind cluster
 	kind delete cluster --name ${CLUSTER_NAME}
@@ -153,12 +153,28 @@ define generate_ci_manifest
 		hack/ci/serviceaccount-dracpu.part.yaml \
 		hack/ci/clusterrolebinding-dracpu.part.yaml \
 		hack/ci/daemonset-dracpu.part.yaml \
-		hack/ci/deviceclass-dra.cpu.part.yaml \
+		hack/ci/deviceclass-dracpu.part.yaml \
 		> $(1)
 	@rm hack/ci/*.part.yaml
 endef
 
-ci-manifests: install.yaml install-yq ## create the CI install manifests
+dist:
+	@mkdir -p dist
+
+manifests: dist install-yq ## create the install manifest
+	@cd dist && cp -a ../manifests/base/*.part.yaml .
+	@$(YQ) -i '.spec.template.spec.containers[0].image = "${IMAGE}"' dist/daemonset-dracpu.part.yaml
+	@$(YQ) -i '.spec.template.metadata.labels["build"] = "${GIT_VERSION}"' dist/daemonset-dracpu.part.yaml
+	@$(YQ) '.' \
+		dist/clusterrole-dracpu.part.yaml \
+		dist/serviceaccount-dracpu.part.yaml \
+		dist/clusterrolebinding-dracpu.part.yaml \
+		dist/daemonset-dracpu.part.yaml \
+		dist/deviceclass-dracpu.part.yaml \
+		> dist/install.yaml
+	@rm dist/*.part.yaml
+
+ci-manifests: install-yq ## create the CI install manifests
 ifneq ($(DRACPU_E2E_VERBOSE),)
 	@echo "setting up manifests for mode=$(DRACPU_E2E_CPU_DEVICE_MODE)"
 endif
