@@ -114,6 +114,53 @@ func TestCPUAllocationGetSharedCPUs(t *testing.T) {
 	require.True(t, store.GetSharedCPUs().Equals(expectedShared))
 }
 
+func TestAddResourceClaimAllocationRepeatedCalls(t *testing.T) {
+	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
+	testCases := []struct {
+		name           string
+		firstCPUs      cpuset.CPUSet
+		secondCPUs     cpuset.CPUSet
+		expectedClaim  cpuset.CPUSet
+		expectedShared cpuset.CPUSet
+	}{
+		{
+			name:           "same cpus repeated",
+			firstCPUs:      cpuset.New(0, 1),
+			secondCPUs:     cpuset.New(0, 1),
+			expectedClaim:  cpuset.New(0, 1),
+			expectedShared: cpuset.New(2, 3, 4, 5, 6, 7),
+		},
+		{
+			name:           "different cpus repeated",
+			firstCPUs:      cpuset.New(0, 1),
+			secondCPUs:     cpuset.New(2, 3),
+			expectedClaim:  cpuset.New(2, 3),
+			expectedShared: cpuset.New(0, 1, 4, 5, 6, 7),
+		},
+		{
+			name:           "overlapping cpus repeated",
+			firstCPUs:      cpuset.New(0, 1, 2),
+			secondCPUs:     cpuset.New(1, 2, 3),
+			expectedClaim:  cpuset.New(1, 2, 3),
+			expectedShared: cpuset.New(0, 4, 5, 6, 7),
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestCPUAllocation(allCPUs, cpuset.New())
+			claimUID := types.UID("claim-uid-1")
+
+			store.AddResourceClaimAllocation(claimUID, tc.firstCPUs)
+			store.AddResourceClaimAllocation(claimUID, tc.secondCPUs)
+
+			gotCPUs, ok := store.GetResourceClaimAllocation(claimUID)
+			require.True(t, ok)
+			require.True(t, tc.expectedClaim.Equals(gotCPUs), "claim cpus mismatch: got %s, want %s", gotCPUs, tc.expectedClaim)
+			require.True(t, tc.expectedShared.Equals(store.GetSharedCPUs()), "shared cpus mismatch: got %s, want %s", store.GetSharedCPUs(), tc.expectedShared)
+		})
+	}
+}
+
 func TestCPUAllocationStoreCacheConsistency(t *testing.T) {
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
 	store := newTestCPUAllocation(allCPUs, cpuset.New())
