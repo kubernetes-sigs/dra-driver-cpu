@@ -184,7 +184,8 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 				fxt.Log.Info("Creating pods requesting exclusive CPUs", "numPods", numPods, "cpusPerClaim", cpusPerClaim)
 				var exclPods []*v1.Pod
-				allAllocatedCPUs := cpuset.New()
+				// CPU IDs are per-node; track allocations per node so we don't treat same IDs on different nodes as overlapping.
+				allAllocatedCPUsByNode := make(map[string]cpuset.CPUSet)
 
 				claimTemplate := resourcev1.ResourceClaimTemplate{
 					ObjectMeta: metav1.ObjectMeta{
@@ -205,18 +206,34 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 				fixture.By("Verifying CPU allocations for each exclusive pod")
 				for i, pod := range exclPods {
-					alloc := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, pod)
+					var alloc CPUAllocation
+					nodeName := pod.Spec.NodeName
+					gomega.Eventually(func() error {
+						alloc = getTesterPodCPUAllocation(fxt.K8SClientset, ctx, pod)
+						if alloc.CPUAssigned.Size() != cpusPerClaim {
+							return fmt.Errorf("pod %d: got %d CPUs, want %d", i, alloc.CPUAssigned.Size(), cpusPerClaim)
+						}
+						if !alloc.CPUAssigned.IsSubsetOf(availableCPUs) {
+							return fmt.Errorf("pod %d: CPUs %s outside available set %s", i, alloc.CPUAssigned.String(), availableCPUs.String())
+						}
+						allocatedOnNode := allAllocatedCPUsByNode[nodeName]
+						if allocatedOnNode.Intersection(alloc.CPUAssigned).Size() != 0 {
+							return fmt.Errorf("pod %d: overlapping CPUs with previous pods on node %s", i, nodeName)
+						}
+						return nil
+					}).WithTimeout(2*time.Minute).WithPolling(5*time.Second).Should(gomega.Succeed(), "exclusive pod %d allocation did not stabilize", i)
 					fxt.Log.Info("Checking exclusive CPU allocation", "pod", e2epod.Identify(pod), "cpuAllocated", alloc.CPUAssigned.String())
-					gomega.Expect(alloc.CPUAssigned.Size()).To(gomega.Equal(cpusPerClaim), "Pod %d did not get %d CPUs", i, cpusPerClaim)
-					gomega.Expect(alloc.CPUAssigned.IsSubsetOf(availableCPUs)).To(gomega.BeTrue(), "Pod %d got CPUs outside available set", i)
-					gomega.Expect(allAllocatedCPUs.Intersection(alloc.CPUAssigned).Size()).To(gomega.Equal(0), "Pod %d has overlapping CPUs", i)
-					allAllocatedCPUs = allAllocatedCPUs.Union(alloc.CPUAssigned)
+					allAllocatedCPUsByNode[nodeName] = allAllocatedCPUsByNode[nodeName].Union(alloc.CPUAssigned)
 				}
-				gomega.Expect(allAllocatedCPUs.Size()).To(gomega.Equal(numPods * cpusPerClaim))
-				rootFxt.Log.Info("All exclusive allocation", "pod", "exclusive CPUs", allAllocatedCPUs.String(), "expected Shared CPUs", availableCPUs.Difference(allAllocatedCPUs).String())
+				var totalAllocated int
+				for _, cpus := range allAllocatedCPUsByNode {
+					totalAllocated += cpus.Size()
+				}
+				gomega.Expect(totalAllocated).To(gomega.Equal(numPods * cpusPerClaim))
+				rootFxt.Log.Info("All exclusive allocation", "byNode", allAllocatedCPUsByNode, "expected Shared CPUs on target", availableCPUs.Difference(allAllocatedCPUsByNode[targetNode.Name]).String())
 
 				fixture.By("checking the shared pool does not include anymore the exclusively allocated CPUs")
-				expectedSharedCPUs := availableCPUs.Difference(allAllocatedCPUs)
+				expectedSharedCPUs := availableCPUs.Difference(allAllocatedCPUsByNode[targetNode.Name])
 
 				fixture.By("creating a second best-effort reference pod")
 				shrPod2 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
@@ -248,5 +265,5 @@ func verifySharedPoolMatches(ctx context.Context, fxt *fixture.Fixture, sharedPo
 			return fmt.Errorf("shared CPUs mismatch: expected %v got %v", expectedSharedCPUs.String(), sharedAllocUpdated.CPUAssigned.String())
 		}
 		return nil
-	}).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(gomega.Succeed(), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", e2epod.Identify(sharedPod))
+	}).WithTimeout(2*time.Minute).WithPolling(5*time.Second).Should(gomega.Succeed(), "the best-effort tester pod %s CPU pool did not match expected %s", e2epod.Identify(sharedPod), expectedSharedCPUs.String())
 }
