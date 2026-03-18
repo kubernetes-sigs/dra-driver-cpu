@@ -23,10 +23,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"golang.org/x/sys/unix"
 	"k8s.io/utils/cpuset"
@@ -55,14 +55,7 @@ func getAffinity() (cpuset.CPUSet, error) {
 	if err != nil {
 		return cpuset.New(), err
 	}
-
-	var allowedCPUs []int
-	for i := 0; i < runtime.NumCPU(); i++ {
-		if unixCS.IsSet(i) {
-			allowedCPUs = append(allowedCPUs, i)
-		}
-	}
-	return cpuset.New(allowedCPUs...), nil
+	return cpuinfo.FromAffinityMask(&unixCS), nil
 }
 
 func main() {

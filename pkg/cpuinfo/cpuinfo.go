@@ -576,3 +576,26 @@ func (t *CPUTopology) CPUsPerUncore() int {
 	// Note: this is an approximation that assumes all uncore caches have the same number of CPUs.
 	return t.NumCPUs / t.NumUncoreCache
 }
+
+// AffinityMaxCPUID is the upper bound when scanning a scheduler affinity mask (e.g. from
+// sched_getaffinity). The number of CPUs visible to the process (e.g. runtime.NumCPU()
+// or cgroup size) may be less than the highest CPU ID in the mask, so the scan must
+// use a fixed limit to avoid missing CPUs (e.g. 9-13 when cpuset is 2-5,9-13 and
+// NumCPU() is 8).
+const AffinityMaxCPUID = 2048
+
+// AffinityMask is satisfied by kernel affinity masks (e.g. unix.CPUSet) and by test doubles.
+type AffinityMask interface {
+	IsSet(i int) bool
+}
+
+// FromAffinityMask scans the mask from 0 to AffinityMaxCPUID and returns the set of set CPU IDs.
+func FromAffinityMask(mask AffinityMask) cpuset.CPUSet {
+	var allowedCPUs []int
+	for i := 0; i < AffinityMaxCPUID; i++ {
+		if mask.IsSet(i) {
+			allowedCPUs = append(allowedCPUs, i)
+		}
+	}
+	return cpuset.New(allowedCPUs...)
+}
