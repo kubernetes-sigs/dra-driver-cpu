@@ -373,6 +373,26 @@ The full documentation for all the supported environment variables is found in t
 **NOTE** the custom-setup kind cluster is _not_ automatically tear down once the tests terminate
 **NOTE** if you want to run again the tests, just use `make test-e2e`. Please see `make help` for more details.
 
+## Developer Notes
+
+These notes collect contributor-oriented commands and repository quirks.
+
+### Linting
+
+Run the linter against the codebase:
+
+```bash
+make lint
+```
+
+To automatically fix lint issues, pass `--fix` via the `GOLANGCI_LINT_EXTRA_ARGS` variable:
+
+```bash
+GOLANGCI_LINT_EXTRA_ARGS=--fix make lint
+```
+
+`GOLANGCI_LINT_EXTRA_ARGS` is forwarded verbatim to `golangci-lint run`, so any other supported flags can be passed the same way.
+
 ## Community, discussion, contribution, and support
 
 Learn how to engage with the Kubernetes community on the [community page](http://kubernetes.io/community/).

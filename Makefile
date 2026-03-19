@@ -88,6 +88,9 @@ PLATFORMS?=linux/amd64
 # set convenient defaults for user variables
 DRACPU_E2E_CPU_DEVICE_MODE ?= grouped
 DRACPU_E2E_RESERVED_CPUS ?= 0
+# Extra arguments passed to golangci-lint in the lint target.
+# For example, set GOLANGCI_LINT_EXTRA_ARGS=--fix to auto-fix issues.
+GOLANGCI_LINT_EXTRA_ARGS ?=
 
 # shortcut
 CI_MANIFEST_FILE := hack/ci/install-ci-$(DRACPU_E2E_CPU_DEVICE_MODE)-mode.yaml
@@ -205,7 +208,7 @@ test-e2e: ## run e2e test against an existing configured cluster
 test-e2e-kind: ci-kind-setup test-e2e ## run e2e test against a purpose-built kind cluster
 
 lint:  ## run the linter against the codebase
-	$(GOLANGCI_LINT) run ./...
+	$(GOLANGCI_LINT) run ./... $(GOLANGCI_LINT_EXTRA_ARGS)
 
 # dependencies
 .PHONY: install-yq
