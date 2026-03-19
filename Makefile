@@ -34,6 +34,11 @@ CGO_ENABLED=0
 TOOOLCHAIN_MODE ?= "$(shell go env GOVERSION)+auto"
 export GOROOT GO111MODULE CGO_ENABLED
 
+# Controls manifest generation behavior.
+# Use OVERRIDE_IMAGE=true to patch the image and tag.
+# Example: make manifests OVERRIDE_IMAGE=true
+OVERRIDE_IMAGE ?= false
+
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
 SHELL = /usr/bin/env bash -o pipefail
@@ -163,8 +168,10 @@ dist:
 
 manifests: dist install-yq ## create the install manifest
 	@cd dist && cp -a ../manifests/base/*.part.yaml .
+ifeq ($(OVERRIDE_IMAGE),true)
 	@$(YQ) -i '.spec.template.spec.containers[0].image = "${IMAGE}"' dist/daemonset-dracpu.part.yaml
 	@$(YQ) -i '.spec.template.metadata.labels["build"] = "${GIT_VERSION}"' dist/daemonset-dracpu.part.yaml
+endif
 	@$(YQ) '.' \
 		dist/clusterrole-dracpu.part.yaml \
 		dist/serviceaccount-dracpu.part.yaml \

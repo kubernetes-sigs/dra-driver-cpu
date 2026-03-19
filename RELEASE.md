@@ -73,7 +73,7 @@ Before publishing the release, verify the images are available at k8s-registry:
 - Generate the release manifests:
   ```sh
   rm -rf ./dist
-  REGISTRY=registry.k8s.io TAG=vX.Y.Z make manifests
+  REGISTRY=registry.k8s.io TAG=vX.Y.Z make manifests OVERRIDE_IMAGE=true
   ls ./dist   # to confirm the generated artifacts
   ```
 - Run a local E2E test in Kind (see references in `README.md`) using the generated manifests from the `dist/` directory to ensure they pull the correct images and function as expected.
