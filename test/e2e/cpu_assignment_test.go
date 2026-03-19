@@ -60,13 +60,14 @@ Please note "Serial" is however unavoidable because we manage the shared node st
 */
 var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
 	var (
-		rootFxt           *fixture.Fixture
-		targetNode        *v1.Node
-		targetNodeCPUInfo discovery.DRACPUInfo
-		availableCPUs     cpuset.CPUSet
-		dracpuTesterImage string
-		reservedCPUs      cpuset.CPUSet
-		cpuDeviceMode     string
+		rootFxt             *fixture.Fixture
+		targetNode          *v1.Node
+		targetNodeCPUInfo   discovery.DRACPUInfo
+		availableCPUs       cpuset.CPUSet
+		availableCPUsByNode map[string]cpuset.CPUSet
+		dracpuTesterImage   string
+		reservedCPUs        cpuset.CPUSet
+		cpuDeviceMode       string
 	)
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
@@ -106,38 +107,50 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		gomega.Expect(dsReservedCPUs.Equals(reservedCPUs)).To(gomega.BeTrue(), "daemonset reserved cpus %v do not match test reserved cpus %v", dsReservedCPUs.String(), reservedCPUs.String())
 		rootFxt.Log.Info("daemonset --cpu-device-mode configuration", "mode", cpuDeviceMode)
 
+		var workerNodes []*v1.Node
 		if targetNodeName := os.Getenv("DRACPU_E2E_TARGET_NODE"); len(targetNodeName) > 0 {
 			targetNode, err = rootFxt.K8SClientset.CoreV1().Nodes().Get(ctx, targetNodeName, metav1.GetOptions{})
 			gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get worker node %q: %v", targetNodeName, err)
+			workerNodes = []*v1.Node{targetNode}
 		} else {
 			gomega.Eventually(func() error {
-				workerNodes, err := node.FindWorkers(ctx, infraFxt.K8SClientset)
-				if err != nil {
-					return err
+				var findErr error
+				workerNodes, findErr = node.FindWorkers(ctx, infraFxt.K8SClientset)
+				if findErr != nil {
+					return findErr
 				}
 				if len(workerNodes) == 0 {
 					return fmt.Errorf("no worker nodes detected")
 				}
-				targetNode = workerNodes[0] // pick random one, this is the simplest random pick
+				targetNode = workerNodes[0]
 				return nil
 			}).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(gomega.Succeed(), "failed to find any worker node")
 		}
 		rootFxt.Log.Info("using worker node", "nodeName", targetNode.Name)
 
-		infoPod := discovery.MakePod(infraFxt.Namespace.Name, dracpuTesterImage)
-		infoPod = e2epod.PinToNode(infoPod, targetNode.Name)
-		infoPod, err = e2epod.RunToCompletion(ctx, infraFxt.K8SClientset, infoPod)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create discovery pod: %v", err)
-		data, err := e2epod.GetLogs(infraFxt.K8SClientset, ctx, infoPod.Namespace, infoPod.Name, infoPod.Spec.Containers[0].Name)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs from discovery pod: %v", err)
-		gomega.Expect(json.Unmarshal([]byte(data), &targetNodeCPUInfo)).To(gomega.Succeed())
-
-		allocatableCPUs := makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
-		availableCPUs = allocatableCPUs.Difference(reservedCPUs)
-		if reservedCPUs.Size() > 0 {
-			gomega.Expect(availableCPUs.Intersection(reservedCPUs).Size()).To(gomega.BeZero(), "available cpus %v overlap with reserved cpus %v", availableCPUs.String(), reservedCPUs.String())
+		availableCPUsByNode = make(map[string]cpuset.CPUSet)
+		for _, n := range workerNodes {
+			infoPod := discovery.MakePod(infraFxt.Namespace.Name, dracpuTesterImage)
+			infoPod.Name = "discovery-pod-" + n.Name
+			infoPod = e2epod.PinToNode(infoPod, n.Name)
+			infoPod, err = e2epod.RunToCompletion(ctx, infraFxt.K8SClientset, infoPod)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create discovery pod on node %q: %v", n.Name, err)
+			data, err := e2epod.GetLogs(infraFxt.K8SClientset, ctx, infoPod.Namespace, infoPod.Name, infoPod.Spec.Containers[0].Name)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs from discovery pod: %v", err)
+			var nodeCPUInfo discovery.DRACPUInfo
+			gomega.Expect(json.Unmarshal([]byte(data), &nodeCPUInfo)).To(gomega.Succeed())
+			if n.Name == targetNode.Name {
+				targetNodeCPUInfo = nodeCPUInfo
+			}
+			allocatable := makeCPUSetFromDiscoveredCPUInfo(nodeCPUInfo)
+			available := allocatable.Difference(reservedCPUs)
+			if reservedCPUs.Size() > 0 {
+				gomega.Expect(available.Intersection(reservedCPUs).Size()).To(gomega.BeZero(), "node %q: available cpus %v overlap reserved %v", n.Name, available.String(), reservedCPUs.String())
+			}
+			availableCPUsByNode[n.Name] = available
+			rootFxt.Log.Info("checking worker node", "nodeName", n.Name, "coreCount", len(nodeCPUInfo.CPUs), "allocatableCPUs", allocatable.String(), "availableCPUs", available.String())
 		}
-		rootFxt.Log.Info("checking worker node", "nodeName", infoPod.Spec.NodeName, "coreCount", len(targetNodeCPUInfo.CPUs), "allocatableCPUs", allocatableCPUs.String(), "reservedCPUs", reservedCPUs.String(), "availableCPUs", availableCPUs.String())
+		availableCPUs = availableCPUsByNode[targetNode.Name]
 	})
 
 	ginkgo.When("setting resource claims", func() {
@@ -213,8 +226,12 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 						if alloc.CPUAssigned.Size() != cpusPerClaim {
 							return fmt.Errorf("pod %d: got %d CPUs, want %d", i, alloc.CPUAssigned.Size(), cpusPerClaim)
 						}
-						if !alloc.CPUAssigned.IsSubsetOf(availableCPUs) {
-							return fmt.Errorf("pod %d: CPUs %s outside available set %s", i, alloc.CPUAssigned.String(), availableCPUs.String())
+						availableOnNode := availableCPUsByNode[nodeName]
+						if availableOnNode.Size() == 0 {
+							availableOnNode = availableCPUs
+						}
+						if !alloc.CPUAssigned.IsSubsetOf(availableOnNode) {
+							return fmt.Errorf("pod %d on node %s: CPUs %s outside node available set %s", i, nodeName, alloc.CPUAssigned.String(), availableOnNode.String())
 						}
 						allocatedOnNode := allAllocatedCPUsByNode[nodeName]
 						if allocatedOnNode.Intersection(alloc.CPUAssigned).Size() != 0 {
@@ -232,15 +249,28 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				gomega.Expect(totalAllocated).To(gomega.Equal(numPods * cpusPerClaim))
 				rootFxt.Log.Info("All exclusive allocation", "byNode", allAllocatedCPUsByNode, "expected Shared CPUs on target", availableCPUs.Difference(allAllocatedCPUsByNode[targetNode.Name]).String())
 
-				fixture.By("checking the shared pool does not include anymore the exclusively allocated CPUs")
-				expectedSharedCPUs := availableCPUs.Difference(allAllocatedCPUsByNode[targetNode.Name])
-
-				fixture.By("creating a second best-effort reference pod")
-				shrPod2 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
-				verifySharedPoolMatches(ctx, fxt, shrPod2, expectedSharedCPUs)
-
-				ginkgo.By("checking the CPU pool of the best-effort pod created before the pods with CPU resource claims")
-				verifySharedPoolMatches(ctx, fxt, shrPod1, expectedSharedCPUs)
+				fixture.By("checking the shared pool does not include anymore the exclusively allocated CPUs on each node with exclusive pods")
+				var shrPod2 *v1.Pod
+				var otherNodeSharedPods []*v1.Pod
+				for nodeName := range allAllocatedCPUsByNode {
+					availableOnNode := availableCPUsByNode[nodeName]
+					if availableOnNode.Size() == 0 {
+						availableOnNode = availableCPUs
+					}
+					expectedSharedOnNode := availableOnNode.Difference(allAllocatedCPUsByNode[nodeName])
+					if nodeName == targetNode.Name {
+						fixture.By("creating a second best-effort reference pod on target node")
+						shrPod2 = mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
+						verifySharedPoolMatches(ctx, fxt, shrPod2, expectedSharedOnNode)
+						ginkgo.By("checking the CPU pool of the best-effort pod created before the pods with CPU resource claims")
+						verifySharedPoolMatches(ctx, fxt, shrPod1, expectedSharedOnNode)
+						continue
+					}
+					fixture.By("creating best-effort pod on node %s to verify shared pool", nodeName)
+					shrPodOther := mustCreateBestEffortPod(ctx, fxt, nodeName, dracpuTesterImage)
+					verifySharedPoolMatches(ctx, fxt, shrPodOther, expectedSharedOnNode)
+					otherNodeSharedPods = append(otherNodeSharedPods, shrPodOther)
+				}
 
 				fixture.By("deleting the pods with exclusive CPUs")
 				for _, pod := range exclPods {
@@ -248,7 +278,18 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				}
 
 				verifySharedPoolMatches(ctx, fxt, shrPod1, availableCPUs)
-				verifySharedPoolMatches(ctx, fxt, shrPod2, availableCPUs)
+				if shrPod2 != nil {
+					verifySharedPoolMatches(ctx, fxt, shrPod2, availableCPUs)
+				}
+				for _, shrPodOther := range otherNodeSharedPods {
+					nodeName := shrPodOther.Spec.NodeName
+					availableOnNode := availableCPUsByNode[nodeName]
+					if availableOnNode.Size() == 0 {
+						availableOnNode = availableCPUs
+					}
+					verifySharedPoolMatches(ctx, fxt, shrPodOther, availableOnNode)
+					gomega.Expect(e2epod.DeleteSync(ctx, fxt.K8SClientset, shrPodOther)).To(gomega.Succeed(), "cannot delete helper pod %s", e2epod.Identify(shrPodOther))
+				}
 			})
 		})
 	})
