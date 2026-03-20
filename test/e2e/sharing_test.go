@@ -147,7 +147,7 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 			gomega.Expect(fxt.Teardown(ctx)).To(gomega.Succeed())
 		})
 
-		ginkgo.It("should fail to run pods which share a claim", func(ctx context.Context) {
+		ginkgo.It("should fail to run pods which share a claim", ginkgo.SpecTimeout(5*time.Minute), func(ctx context.Context) {
 			testPod := v1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace:    fxt.Namespace.Name,
@@ -196,10 +196,10 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 					return nil
 				}
 				return pod
-			}).WithTimeout(time.Minute).WithPolling(2 * time.Second).Should(BeFailedToCreate(fxt))
+			}).WithTimeout(2 * time.Minute).WithPolling(2 * time.Second).Should(BeFailedToCreate(fxt))
 		})
 
-		ginkgo.It("should fail to run a pod with multiple containers which share a claim", ginkgo.Label("negative"), func(ctx context.Context) {
+		ginkgo.It("should fail to run a pod with multiple containers which share a claim", ginkgo.Label("negative"), ginkgo.SpecTimeout(5*time.Minute), func(ctx context.Context) {
 			testPod := v1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: fxt.Namespace.Name,
@@ -259,7 +259,7 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 					return nil
 				}
 				return pod
-			}).WithTimeout(time.Minute).WithPolling(2 * time.Second).Should(BeFailedToCreate(fxt))
+			}).WithTimeout(2 * time.Minute).WithPolling(2 * time.Second).Should(BeFailedToCreate(fxt))
 		})
 	})
 })

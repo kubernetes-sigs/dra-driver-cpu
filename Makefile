@@ -52,6 +52,22 @@ build-dracpu: ## build dracpu
 clean: ## clean
 	rm -rf "$(OUT_DIR)/"
 
+with-kind: ## run a command with a temporary kind cluster (create if missing, delete on exit if created)
+	@if [ -z "$$CMD" ]; then \
+		echo "CMD is required. Example: CMD='echo hello' $(MAKE) with-kind"; \
+		exit 1; \
+	fi; \
+	created=0; \
+	while read -r name; do \
+		if [ "$$name" = "$(CLUSTER_NAME)" ]; then created=2; fi; \
+	done < <(kind get clusters 2>/dev/null || true); \
+	if [ "$$created" -eq 0 ]; then \
+		kind create cluster --name ${CLUSTER_NAME} --config hack/kind.yaml; \
+		created=1; \
+	fi; \
+	trap 'if [ "$$created" -eq 1 ]; then kind delete cluster --name ${CLUSTER_NAME}; fi' EXIT; \
+	bash -c "$$CMD"
+
 test-unit: ## run tests
 	CGO_ENABLED=1 GOTOOLCHAIN=${TOOOLCHAIN_MODE} go test -v -race -count 1 -coverprofile=coverage.out ./pkg/...
 
@@ -101,7 +117,16 @@ export DOCKER_CLI_EXPERIMENTAL=enabled
 image: ## docker build load
 	docker build . -t ${STAGING_IMAGE_NAME} --load
 
-build-image: ## build image
+build-image: ## build image (skip if already exists unless FORCE_BUILD=1)
+	@if [ "$(FORCE_BUILD)" = "1" ]; then \
+		$(MAKE) build-image-force; \
+	elif docker image inspect "${IMAGE}" >/dev/null 2>&1; then \
+		echo "Image ${IMAGE} already exists; skipping build."; \
+	else \
+		$(MAKE) build-image-force; \
+	fi
+
+build-image-force: ## force build image
 	docker buildx build . \
 		--platform="${PLATFORMS}" \
 		--tag="${IMAGE}" \
@@ -126,6 +151,9 @@ kind-cluster:  ## create kind cluster
 
 kind-load-image: build-image  ## load the current container image into kind
 	kind load docker-image ${IMAGE} ${IMAGE_LATEST} --name ${CLUSTER_NAME}
+
+kind-load-test-image: build-test-image ## load the test image into kind
+	kind load docker-image ${IMAGE_TEST} --name ${CLUSTER_NAME}
 
 kind-uninstall-cpu-dra: ## remove cpu dra from kind cluster
 	kubectl delete -f dist/install.yaml || true
@@ -189,7 +217,16 @@ ifneq ($(DRACPU_E2E_VERBOSE),)
 endif
 	$(call kind_setup,$(CI_MANIFEST_FILE))
 
-build-test-image: ## build tests image
+build-test-image: ## build tests image (skip if already exists unless FORCE_BUILD=1)
+	@if [ "$(FORCE_BUILD)" = "1" ]; then \
+		$(MAKE) build-test-image-force; \
+	elif docker image inspect "${IMAGE_TEST}" >/dev/null 2>&1; then \
+		echo "Image ${IMAGE_TEST} already exists; skipping build."; \
+	else \
+		$(MAKE) build-test-image-force; \
+	fi
+
+build-test-image-force: ## force build tests image
 	docker buildx build . \
 		--file test/image/Dockerfile \
 		--platform="${PLATFORMS}" \
@@ -202,10 +239,35 @@ build-test-dracputester: ## build helper to serve as entry point and report cpu 
 build-test-dracpuinfo: ## build helper to expose hardware info in the internal dracpu format
 	go build -v -o "$(OUT_DIR)/dracpuinfo" ./test/image/dracpuinfo
 
-test-e2e: ## run e2e test against an existing configured cluster
-	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) go test -v ./test/e2e/ --ginkgo.v
+# E2E: shared setup and run targets (assume cluster exists; use with-kind for "create if missing, delete if we created").
+define e2e_daemonset_patch
+[{"op":"replace","path":"/spec/template/spec/containers/0/args","value":["/dracpu","--v=4","--cpu-device-mode=$(1)","--reserved-cpus=$(DRACPU_E2E_RESERVED_CPUS)"]}]
+endef
+
+kind-e2e-setup: ## label workers, load test image, install DRA, wait for rollout (cluster must exist)
+	kubectl label nodes -l '!node-role.kubernetes.io/control-plane' node-role.kubernetes.io/worker='' --overwrite
+	$(MAKE) kind-load-test-image kind-install-cpu-dra
+	kubectl -n kube-system rollout status daemonset/dracpu --timeout=120s
+
+test-e2e-grouped-run: ## patch daemonset to grouped and run e2e (requires kind-e2e-setup)
+	kubectl -n kube-system patch daemonset dracpu --type=json -p='$(call e2e_daemonset_patch,grouped)'
+	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) DRACPU_E2E_CPU_DEVICE_MODE=grouped go test -v ./test/e2e/ --ginkgo.v
+
+test-e2e-individual-run: ## patch daemonset to individual and run e2e (requires kind-e2e-setup)
+	kubectl -n kube-system patch daemonset dracpu --type=json -p='$(call e2e_daemonset_patch,individual)'
+	kubectl -n kube-system rollout status daemonset/dracpu --timeout=120s
+	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) DRACPU_E2E_CPU_DEVICE_MODE=individual go test -v ./test/e2e/ --ginkgo.v
+
+test-e2e: ## run e2e in both grouped and individual mode (one cluster: create if missing, run both, delete if we created)
+	CMD='$(MAKE) kind-e2e-setup; $(MAKE) test-e2e-grouped-run; r1=$$?; $(MAKE) test-e2e-individual-run; r2=$$?; exit $$((r1|r2))' $(MAKE) with-kind
 
 test-e2e-kind: ci-kind-setup test-e2e ## run e2e test against a purpose-built kind cluster
+
+test-e2e-grouped-mode: ## run e2e tests in grouped mode (with-kind)
+	CMD='$(MAKE) kind-e2e-setup test-e2e-grouped-run' $(MAKE) with-kind
+
+test-e2e-individual-mode: ## run e2e tests in individual mode (with-kind)
+	CMD='$(MAKE) kind-e2e-setup test-e2e-individual-run' $(MAKE) with-kind
 
 lint:  ## run the linter against the codebase
 	$(GOLANGCI_LINT) run ./... $(GOLANGCI_LINT_EXTRA_ARGS)

@@ -75,9 +75,48 @@ func RunToCompletion(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod) 
 func WaitToBeRunning(ctx context.Context, cs kubernetes.Interface, podNamespace, podName string) error {
 	phase, err := WaitForPhase(ctx, cs, podNamespace, podName, v1.PodRunning)
 	if err != nil {
-		return fmt.Errorf("pod=%s/%s is not Running; phase=%q; %w", podNamespace, podName, phase, err)
+		hint := formatPodEventsHint(ctx, cs, podNamespace, podName)
+		return fmt.Errorf("pod=%s/%s is not Running; phase=%q; %w%s", podNamespace, podName, phase, err, hint)
 	}
 	return nil
+}
+
+// formatPodEventsHint returns a short hint (pod events, newest first) for debugging Pending pods. Safe to call on failure.
+func formatPodEventsHint(ctx context.Context, cs kubernetes.Interface, podNamespace, podName string) string {
+	eventList, err := cs.CoreV1().Events(podNamespace).List(ctx, metav1.ListOptions{
+		FieldSelector: "involvedObject.name=" + podName,
+		Limit:         15,
+	})
+	if err != nil || len(eventList.Items) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("; pod events (newest first): ")
+	const maxHintLen = 600
+	for i := len(eventList.Items) - 1; i >= 0 && b.Len() < maxHintLen; i-- {
+		e := eventList.Items[i]
+		if b.Len() > 30 {
+			b.WriteString("; ")
+		}
+		b.WriteString("[")
+		b.WriteString(string(e.Type))
+		b.WriteString("] ")
+		b.WriteString(e.Reason)
+		if e.Message != "" {
+			msg := e.Message
+			if len(msg) > 120 {
+				msg = msg[:117] + "..."
+			}
+			b.WriteString(": ")
+			b.WriteString(msg)
+		}
+		if !e.LastTimestamp.IsZero() {
+			b.WriteString(" (")
+			b.WriteString(e.LastTimestamp.Format("15:04:05"))
+			b.WriteString(")")
+		}
+	}
+	return b.String()
 }
 
 func WaitToBeDeleted(ctx context.Context, cs kubernetes.Interface, podNamespace, podName string) error {
