@@ -114,13 +114,13 @@ func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod
 	return ret
 }
 
-func makeTesterPodWithExclusiveCPUClaim(ns, image, cpuClaimTemplateName string, numCPUs int64) *v1.Pod {
+func makeTesterPodWithExclusiveCPUClaim(ns, image, cpuClaimTemplateName string, numCPUs int64, nodeName string) *v1.Pod {
 	ginkgo.GinkgoHelper()
 	cpuQty := resource.NewQuantity(numCPUs, resource.DecimalSI)
 	memQty, err := resource.ParseQuantity("256Mi") // random "low enough" value
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
-	return &v1.Pod{
+	podWithClaim := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "tester-pod-excl-cpu-claim-",
 			Namespace:    ns,
@@ -157,6 +157,7 @@ func makeTesterPodWithExclusiveCPUClaim(ns, image, cpuClaimTemplateName string, 
 			RestartPolicy: v1.RestartPolicyAlways,
 		},
 	}
+	return e2epod.PinToNode(podWithClaim, nodeName)
 }
 
 func makeTesterPodBestEffort(ns, image string) *v1.Pod {
