@@ -288,6 +288,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(ctx context.Context, claim *res
 	}
 
 	var cpuAssignment cpuset.CPUSet
+	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
 	for _, alloc := range claim.Status.Allocation.Devices.Results {
 		claimCPUCount := int64(0)
 		if alloc.Driver != cp.driverName {
@@ -308,7 +309,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(ctx context.Context, claim *res
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid socket ID found for device %s", alloc.Device)}
 			}
 			socketCPUs := topo.CPUDetails.CPUsInSockets(socketID)
-			availableCPUsForDevice = cp.cpuAllocationStore.GetSharedCPUs().Intersection(socketCPUs)
+			availableCPUsForDevice = sharedCPUs.Difference(cpuAssignment).Intersection(socketCPUs)
 			klog.Infof("Socket %d CPUs:%s available CPUs: %s", socketID, socketCPUs.String(), availableCPUsForDevice.String())
 		} else { // numanode
 			numaNodeID, ok := cp.deviceNameToNUMANodeID[alloc.Device]
@@ -316,7 +317,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(ctx context.Context, claim *res
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid NUMA node ID found for device %s", alloc.Device)}
 			}
 			numaCPUs := topo.CPUDetails.CPUsInNUMANodes(numaNodeID)
-			availableCPUsForDevice = cp.cpuAllocationStore.GetSharedCPUs().Intersection(numaCPUs)
+			availableCPUsForDevice = sharedCPUs.Difference(cpuAssignment).Intersection(numaCPUs)
 			klog.Infof("NUMA node %d CPUs:%s available CPUs: %s", numaNodeID, numaCPUs.String(), availableCPUsForDevice.String())
 		}
 
