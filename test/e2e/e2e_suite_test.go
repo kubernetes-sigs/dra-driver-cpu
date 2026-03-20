@@ -212,6 +212,50 @@ func parseCPUDeviceModeArg(arg string) (string, bool) {
 	return strings.TrimPrefix(arg, prefix), true
 }
 
+func makeTesterPodWithNamedClaim(ns, image, claimName string, nodeName string) *v1.Pod {
+	ginkgo.GinkgoHelper()
+	cpuQty := resource.NewQuantity(2, resource.DecimalSI)
+	memQty, err := resource.ParseQuantity("256Mi")
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "tester-pod-named-claim-",
+			Namespace:    ns,
+		},
+		Spec: v1.PodSpec{
+			Containers: []v1.Container{
+				{
+					Name:    "tester-container-1",
+					Image:   image,
+					Command: []string{"/dracputester"},
+					Resources: v1.ResourceRequirements{
+						Requests: v1.ResourceList{
+							v1.ResourceCPU:    *cpuQty,
+							v1.ResourceMemory: memQty,
+						},
+						Limits: v1.ResourceList{
+							v1.ResourceCPU:    *cpuQty,
+							v1.ResourceMemory: memQty,
+						},
+						Claims: []v1.ResourceClaim{
+							{Name: "cpu-claim"},
+						},
+					},
+				},
+			},
+			ResourceClaims: []v1.PodResourceClaim{
+				{
+					Name:              "cpu-claim",
+					ResourceClaimName: ptr.To(claimName),
+				},
+			},
+			RestartPolicy: v1.RestartPolicyAlways,
+		},
+	}
+	return e2epod.PinToNode(pod, nodeName)
+}
+
 func makeResourceClaimSpec(cpus int, isConsumable bool) resourcev1.ResourceClaimSpec {
 	if !isConsumable {
 		return resourcev1.ResourceClaimSpec{

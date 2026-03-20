@@ -31,6 +31,7 @@ import (
 	"github.com/onsi/gomega"
 	v1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/cpuset"
 )
@@ -232,6 +233,65 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 				verifySharedPoolMatches(ctx, fxt, shrPod1, availableCPUs)
 				verifySharedPoolMatches(ctx, fxt, shrPod2, availableCPUs)
+			})
+
+			ginkgo.It("should allocate non-overlapping CPUs for multiple requests in the same grouped claim", func(ctx context.Context) {
+				if cpuDeviceMode != "grouped" {
+					ginkgo.Skip("this test only applies to grouped CPU device mode")
+				}
+				if availableCPUs.Size() < 2 {
+					ginkgo.Skip("need at least 2 available CPUs for this test")
+				}
+
+				fixture.By("creating a ResourceClaim with two requests each asking for 1 CPU")
+				cpuClaim := &resourcev1.ResourceClaim{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace:    fxt.Namespace.Name,
+						GenerateName: "claim-multi-request-",
+					},
+					Spec: resourcev1.ResourceClaimSpec{
+						Devices: resourcev1.DeviceClaim{
+							Requests: []resourcev1.DeviceRequest{
+								{
+									Name: "request-0",
+									Exactly: &resourcev1.ExactDeviceRequest{
+										DeviceClassName: "dra.cpu",
+										Capacity: &resourcev1.CapacityRequirements{
+											Requests: map[resourcev1.QualifiedName]resource.Quantity{
+												"dra.cpu/cpu": *resource.NewQuantity(1, resource.DecimalSI),
+											},
+										},
+									},
+								},
+								{
+									Name: "request-1",
+									Exactly: &resourcev1.ExactDeviceRequest{
+										DeviceClassName: "dra.cpu",
+										Capacity: &resourcev1.CapacityRequirements{
+											Requests: map[resourcev1.QualifiedName]resource.Quantity{
+												"dra.cpu/cpu": *resource.NewQuantity(1, resource.DecimalSI),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+				createdClaim, err := fxt.K8SClientset.ResourceV1().ResourceClaims(fxt.Namespace.Name).Create(ctx, cpuClaim, metav1.CreateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				fixture.By("creating a pod consuming the multi-request claim")
+				pod := makeTesterPodWithNamedClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaim.Name, targetNode.Name)
+				createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				fixture.By("verifying the pod got 2 distinct CPUs with no overlap")
+				alloc := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, createdPod)
+				fxt.Log.Info("multi-request claim allocation", "cpuAssigned", alloc.CPUAssigned.String())
+				gomega.Expect(alloc.CPUAssigned.Size()).To(gomega.Equal(2), "expected 2 distinct CPUs allocated")
+				gomega.Expect(alloc.CPUAssigned.IsSubsetOf(availableCPUs)).To(gomega.BeTrue(), "allocated CPUs must be within available set")
+
 			})
 		})
 	})

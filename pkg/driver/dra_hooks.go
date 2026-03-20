@@ -347,6 +347,9 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(ctx context.Context, claim *res
 	klog.Infof("prepareResourceClaim CDIDeviceName:%s envVar:%s qualifiedName:%v", deviceName, envVar, qualifiedName)
 	preparedDevices := []kubeletplugin.Device{}
 	for _, allocResult := range claim.Status.Allocation.Devices.Results {
+		if allocResult.Driver != cp.driverName {
+			continue
+		}
 		preparedDevice := kubeletplugin.Device{
 			PoolName:     allocResult.Pool,
 			DeviceName:   allocResult.Device,
@@ -402,6 +405,9 @@ func (cp *CPUDriver) prepareResourceClaim(_ context.Context, claim *resourceapi.
 	klog.Infof("prepareResourceClaim CDIDeviceName:%s envVar:%s qualifiedName:%v", deviceName, envVar, qualifiedName)
 	preparedDevices := []kubeletplugin.Device{}
 	for _, allocResult := range claim.Status.Allocation.Devices.Results {
+		if allocResult.Driver != cp.driverName {
+			continue
+		}
 		preparedDevice := kubeletplugin.Device{
 			PoolName:     allocResult.Pool,
 			DeviceName:   allocResult.Device,
