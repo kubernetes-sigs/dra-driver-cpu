@@ -1,8 +1,7 @@
 # dra-driver-cpu
 
-Kubernetes Device Resource Assignment (DRA) driver for CPU resources.
-
-This repository implements a DRA driver that enables Kubernetes clusters to manage and assign CPU resources to workloads using the DRA framework.
+Kubernetes Dynamic Resource Allocation (DRA) driver for CPU resources.
+This repository implements a DRA driver that enables Kubernetes clusters to manage and assign exclusive CPUs to workloads using the DRA framework.
 
 ## Configuration
 
