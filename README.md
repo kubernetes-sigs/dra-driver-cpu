@@ -376,6 +376,15 @@ The full documentation for all the supported environment variables is found in t
 
 These notes collect contributor-oriented commands and repository quirks.
 
+### Testing Local Changes in a Kind Cluster
+
+To deploy a kind cluster using a locally built image (instead of pulling from a registry), first generate manifests that reference the local image and then install the driver. `OVERRIDE_IMAGE=true` patches the generated manifests to use the image built from local sources. `kind-install-cpu-dra` calls `build-image` internally to build the image first, then loads it into the kind cluster and deploys the manifests.
+
+```bash
+make manifests OVERRIDE_IMAGE=true
+make kind-install-cpu-dra
+```
+
 ### Linting
 
 Run the linter against the codebase:
