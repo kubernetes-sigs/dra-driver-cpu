@@ -536,6 +536,15 @@ func TestSMTDetection(t *testing.T) {
 			expectedSMT:   false,
 		},
 		{
+			name: "SMT notimplemented - ARM specific value indicating no SMT support",
+			topology: fakeCPUTopology{
+				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 1, cpusPerCore: 1, coresPerL3: 1,
+			},
+			createSMTFile: true,
+			smtContent:    "notimplemented\n",
+			expectedSMT:   false,
+		},
+		{
 			name: "SMT unknown content from sysfs",
 			topology: fakeCPUTopology{
 				numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 1, cpusPerCore: 2, coresPerL3: 1,

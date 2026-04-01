@@ -199,7 +199,7 @@ func (s *SystemCPUInfo) IsSMTEnabled() (bool, error) {
 	if status == "on" {
 		return true, nil
 	}
-	if status == "off" || status == "forceoff" || status == "notsupported" {
+	if status == "off" || status == "forceoff" || status == "notsupported" || status == "notimplemented" {
 		return false, nil
 	}
 	return false, fmt.Errorf("unknown SMT status: %s", status)
