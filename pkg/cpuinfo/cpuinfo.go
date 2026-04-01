@@ -299,15 +299,6 @@ func populateL3CacheIDs(cpuInfos []CPUInfo) error {
 
 			if strings.TrimSpace(levelStr) == "3" {
 				l3CacheDir := filepath.Join(cachePath, entry.Name())
-				cacheIdPath := filepath.Join(l3CacheDir, "id")
-				idStr, err := ReadFile(cacheIdPath)
-				if err != nil {
-					return fmt.Errorf("could not read L3 cache id from %s: %w", cacheIdPath, err)
-				}
-				id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
-				if err != nil {
-					return fmt.Errorf("could not parse L3 cache id '%s': %w", idStr, err)
-				}
 
 				sharedCPUListPath := filepath.Join(l3CacheDir, "shared_cpu_list")
 				sharedCPUListStr, err := ReadFile(sharedCPUListPath)
@@ -318,6 +309,23 @@ func populateL3CacheIDs(cpuInfos []CPUInfo) error {
 				sharedCPUSet, err := cpuset.Parse(strings.TrimSpace(sharedCPUListStr))
 				if err != nil {
 					return fmt.Errorf("could not parse shared_cpu_list '%s': %w", sharedCPUListStr, err)
+				}
+
+				cacheIdPath := filepath.Join(l3CacheDir, "id")
+				idStr, err := ReadFile(cacheIdPath)
+				var id int64
+				if err != nil {
+					// Fallback for ARM systems missing the 'id' file: use the lowest shared CPU ID as the cache ID.
+					if sharedCPUSet.Size() > 0 {
+						id = int64(sharedCPUSet.List()[0])
+					} else {
+						id = int64(cpuInfos[i].CpuID)
+					}
+				} else {
+					id, err = strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+					if err != nil {
+						return fmt.Errorf("could not parse L3 cache id '%s': %w", idStr, err)
+					}
 				}
 
 				// Update the L3Cache ID for all the cpus with the same cache.
@@ -417,6 +425,7 @@ func populateTopologyInfo(cpuInfo *CPUInfo) error {
 	return nil
 }
 
+// TODO: Handle more complex sibling relationships (e.g. 4-way SMT) if needed in the future. For now we only handle 2-way hyperthreading which is the most common case.
 func populateCpuSiblings(cpuInfos []CPUInfo) {
 	// Define a key struct to identify a unique physical core.
 	type coreLocation struct {
@@ -492,10 +501,6 @@ func ReadLines(filename string) ([]string, error) {
 
 func hostRoot(combineWith ...string) string {
 	return GetEnv("HOST_ROOT", "/", combineWith...)
-}
-
-func hostProc(combineWith ...string) string {
-	return hostRoot(combinePath("proc", combineWith...))
 }
 
 func hostSys(combineWith ...string) string {

@@ -447,6 +447,18 @@ func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
 			expectedErrorSubstring: "shared_cpu_list",
 		},
 		{
+			name: "missing cache id - ARM fallback behavior",
+			setup: func(t *testing.T, dir string) {
+				if err := os.Remove(filepath.Join(dir, "sys/devices/system/cpu/cpu0/cache/index3/id")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			expectedErrorSubstring: "", // Should succeed with synthetic ID
+			expectedInfos: []CPUInfo{
+				{CpuID: 0, CoreID: 0, SocketID: 0, ClusterID: -1, NUMANodeID: 0, NumaNodeAffinityMask: "0x1", SiblingCpuID: -1, CoreType: CoreTypeStandard, UncoreCacheID: 0},
+			},
+		},
+		{
 			name: "x86 cluster_id 65535 fallback",
 			setup: func(t *testing.T, dir string) {
 				if err := os.WriteFile(filepath.Join(dir, "sys/devices/system/cpu/cpu0/topology/cluster_id"), []byte("65535\n"), 0600); err != nil {
