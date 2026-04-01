@@ -21,7 +21,7 @@ The driver is deployed as a DaemonSet which contains two core components:
 
 - **DRA driver**: This component is the main control loop and handles the interaction with the Kubernetes API server for Dynamic Resource Allocation.
 
-  - **Topology Discovery**: It discovers the node's CPU topology, including details like sockets, NUMA nodes, cores, SMT siblings, Last-Level Cache (LLC), and core types (e.g., Performance-cores, Efficiency-cores). This is done by parsing `/proc/cpuinfo` and reading sysfs files.
+  - **Topology Discovery**: It discovers the node's CPU topology, including details like sockets, NUMA nodes, cores, SMT siblings, Last-Level Cache (LLC), and core types (e.g., Performance-cores, Efficiency-cores). This is done by reading sysfs files.
   - **ResourceSlice Publication**: Based on the `--cpu-device-mode` flag, it publishes `ResourceSlice` objects to the API server:
     - In `individual` mode, each allocatable CPU becomes a device in the `ResourceSlice`, with attributes detailing its topology.
     - In `grouped` mode, devices represent larger CPU aggregates (like NUMA nodes or sockets). These devices support consumable capacity, indicating the number of available CPUs within that group.
@@ -378,11 +378,24 @@ These notes collect contributor-oriented commands and repository quirks.
 
 ### Testing Local Changes in a Kind Cluster
 
-To deploy a kind cluster using a locally built image (instead of pulling from a registry), first generate manifests that reference the local image and then install the driver. `OVERRIDE_IMAGE=true` patches the generated manifests to use the image built from local sources. `kind-install-cpu-dra` calls `build-image` internally to build the image first, then loads it into the kind cluster and deploys the manifests.
+The simplest way to build the driver from source and deploy it into a new Kind cluster is using:
 
 ```bash
-make manifests OVERRIDE_IMAGE=true
-make kind-install-cpu-dra
+make ci-kind-setup
+```
+
+This command builds the driver image, creates a Kind cluster, loads the image, and installs the driver manifests in `grouped` mode (the default).
+
+To install the driver in `individual` mode instead, use:
+
+```bash
+DRACPU_E2E_CPU_DEVICE_MODE=individual make ci-kind-setup
+```
+
+To clean up the environment when finished, run:
+
+```bash
+make delete-kind-cluster
 ```
 
 ### Linting

@@ -88,7 +88,8 @@ IMAGE := ${STAGING_IMAGE_NAME}:${TAG}
 IMAGE_CI := ${REGISTRY_CI}/${IMAGE_NAME}:${TAG}
 IMAGE_TEST := ${REGISTRY_CI}/${IMAGE_NAME}-test:${TAG}
 # target platform(s)
-PLATFORMS?=linux/amd64
+PLATFORMS?=linux/amd64,linux/arm64
+LOCAL_PLATFORM?=linux/$(ARCH)
 
 # set convenient defaults for user variables
 DRACPU_E2E_CPU_DEVICE_MODE ?= grouped
@@ -108,7 +109,7 @@ image: ## docker build load
 
 build-image: ## build image
 	docker buildx build . \
-		--platform="${PLATFORMS}" \
+		--platform="${LOCAL_PLATFORM}" \
 		--tag="${IMAGE}" \
 		--tag="${IMAGE_LATEST}" \
 		--tag="${IMAGE_CI}" \
@@ -200,7 +201,7 @@ endif
 build-test-image: ## build tests image
 	docker buildx build . \
 		--file test/image/Dockerfile \
-		--platform="${PLATFORMS}" \
+		--platform="${LOCAL_PLATFORM}" \
 		--tag="${IMAGE_TEST}" \
 		--load
 
