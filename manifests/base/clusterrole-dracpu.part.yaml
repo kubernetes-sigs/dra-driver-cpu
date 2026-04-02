@@ -34,6 +34,15 @@ rules:
       - patch
       - update
   - apiGroups:
+      - "resource.k8s.io"
+    resources:
+      - resourceclaims/driver
+    resourceNames:
+      - dra.cpu
+    verbs:
+      - associated-node:patch
+      - associated-node:update
+  - apiGroups:
       - ""
     resources:
       - pods
