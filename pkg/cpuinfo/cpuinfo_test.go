@@ -444,7 +444,8 @@ func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			expectedErrorSubstring: "shared_cpu_list",
+			expectedErrorSubstring: "",          // Should warn and skip CPU
+			expectedInfos:          []CPUInfo{}, // CPU gets skipped
 		},
 		{
 			name: "missing cache id - ARM fallback behavior",

@@ -266,85 +266,12 @@ func (s *SystemCPUInfo) GetCPUInfos() ([]CPUInfo, error) {
 		cpuInfos = append(cpuInfos, cpuInfo)
 	}
 
-	if err := populateL3CacheIDs(cpuInfos); err != nil {
-		return nil, fmt.Errorf("failed to populate L3 cache IDs: %w", err)
-	}
 	populateCpuSiblings(cpuInfos)
 
 	return cpuInfos, nil
 }
 
-func populateL3CacheIDs(cpuInfos []CPUInfo) error {
-	for i := range cpuInfos {
-		if cpuInfos[i].UncoreCacheID != -1 {
-			continue
-		}
-
-		cachePath := hostSys(fmt.Sprintf("devices/system/cpu/cpu%d/cache", cpuInfos[i].CpuID))
-		entries, err := os.ReadDir(cachePath)
-		if err != nil {
-			return fmt.Errorf("could not read cache dir %s: %w", cachePath, err)
-		}
-
-		for _, entry := range entries {
-			if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "index") {
-				continue
-			}
-
-			levelPath := filepath.Join(cachePath, entry.Name(), "level")
-			levelStr, err := ReadFile(levelPath)
-			if err != nil {
-				continue
-			}
-
-			if strings.TrimSpace(levelStr) == "3" {
-				l3CacheDir := filepath.Join(cachePath, entry.Name())
-
-				sharedCPUListPath := filepath.Join(l3CacheDir, "shared_cpu_list")
-				sharedCPUListStr, err := ReadFile(sharedCPUListPath)
-				if err != nil {
-					return fmt.Errorf("could not read shared_cpu_list from %s: %w", sharedCPUListPath, err)
-				}
-
-				sharedCPUSet, err := cpuset.Parse(strings.TrimSpace(sharedCPUListStr))
-				if err != nil {
-					return fmt.Errorf("could not parse shared_cpu_list '%s': %w", sharedCPUListStr, err)
-				}
-
-				cacheIdPath := filepath.Join(l3CacheDir, "id")
-				idStr, err := ReadFile(cacheIdPath)
-				var id int64
-				if err != nil {
-					// Fallback for ARM systems missing the 'id' file: use the lowest shared CPU ID as the cache ID.
-					if sharedCPUSet.Size() > 0 {
-						id = int64(sharedCPUSet.List()[0])
-					} else {
-						id = int64(cpuInfos[i].CpuID)
-					}
-				} else {
-					id, err = strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
-					if err != nil {
-						return fmt.Errorf("could not parse L3 cache id '%s': %w", idStr, err)
-					}
-				}
-
-				// Update the L3Cache ID for all the cpus with the same cache.
-				for j := range cpuInfos {
-					if sharedCPUSet.Contains(cpuInfos[j].CpuID) {
-						cpuInfos[j].UncoreCacheID = int(id)
-					}
-				}
-				break
-			}
-		}
-	}
-	return nil
-}
-
 func populateTopologyInfo(cpuInfo *CPUInfo) error {
-	// Cache the affinity masks so we don't read the same file multiple times.
-	numaMaskCache := make(map[int]string)
-
 	cpuID := cpuInfo.CpuID
 
 	// Get Socket ID from sysfs
@@ -398,19 +325,14 @@ func populateTopologyInfo(cpuInfo *CPUInfo) error {
 			cpuInfo.NUMANodeID = int(nodeID)
 			foundNode = true
 
-			//  Get NUMA Affinity Mask (from cache if possible)
-			mask, ok := numaMaskCache[int(nodeID)]
-			if !ok {
-				maskPath := hostSys(fmt.Sprintf("devices/system/node/node%d/cpumap", nodeID))
-				maskLines, err := ReadLines(maskPath)
-				if err != nil {
-					log.Printf("Warning: could not read NUMA affinity mask for node %d: %v", nodeID, err)
-					continue
-				}
-				mask = formatAffinityMask(maskLines[0])
-				numaMaskCache[int(nodeID)] = mask
+			// Get NUMA Affinity Mask
+			maskPath := hostSys(fmt.Sprintf("devices/system/node/node%d/cpumap", nodeID))
+			maskLines, err := ReadLines(maskPath)
+			if err != nil {
+				log.Printf("Warning: could not read NUMA affinity mask for node %d: %v", nodeID, err)
+				continue
 			}
-			cpuInfo.NumaNodeAffinityMask = mask
+			cpuInfo.NumaNodeAffinityMask = formatAffinityMask(maskLines[0])
 			break
 		}
 	}
@@ -420,6 +342,63 @@ func populateTopologyInfo(cpuInfo *CPUInfo) error {
 
 	if cpuInfo.SocketID < 0 || cpuInfo.CoreID < 0 || cpuInfo.NUMANodeID < 0 {
 		return fmt.Errorf("incomplete topology information for CPU %d (socket: %d, core: %d, NUMA node: %d)", cpuID, cpuInfo.SocketID, cpuInfo.CoreID, cpuInfo.NUMANodeID)
+	}
+
+	// Get L3 Cache ID
+	cachePath := hostSys(fmt.Sprintf("devices/system/cpu/cpu%d/cache", cpuID))
+	cacheEntries, err := os.ReadDir(cachePath)
+	if err != nil {
+		return fmt.Errorf("could not read cache dir %s: %w", cachePath, err)
+	}
+
+	for _, entry := range cacheEntries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "index") {
+			continue
+		}
+
+		levelPath := filepath.Join(cachePath, entry.Name(), "level")
+		levelStr, err := ReadFile(levelPath)
+		if err != nil {
+			continue
+		}
+
+		// We are only interested in L3 caches
+		if strings.TrimSpace(levelStr) != "3" {
+			continue
+		}
+
+		l3CacheDir := filepath.Join(cachePath, entry.Name())
+
+		sharedCPUListPath := filepath.Join(l3CacheDir, "shared_cpu_list")
+		sharedCPUListStr, err := ReadFile(sharedCPUListPath)
+		if err != nil {
+			return fmt.Errorf("could not read shared_cpu_list from %s: %w", sharedCPUListPath, err)
+		}
+
+		sharedCPUSet, err := cpuset.Parse(strings.TrimSpace(sharedCPUListStr))
+		if err != nil {
+			return fmt.Errorf("could not parse shared_cpu_list '%s': %w", sharedCPUListStr, err)
+		}
+
+		cacheIdPath := filepath.Join(l3CacheDir, "id")
+		idStr, err := ReadFile(cacheIdPath)
+		var id int64
+		if err != nil {
+			// Fallback for ARM systems missing the 'id' file: use the lowest shared CPU ID as the cache ID.
+			if sharedCPUSet.Size() > 0 {
+				id = int64(sharedCPUSet.List()[0])
+			} else {
+				id = int64(cpuID)
+			}
+		} else {
+			id, err = strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+			if err != nil {
+				return fmt.Errorf("could not parse L3 cache id '%s': %w", idStr, err)
+			}
+		}
+
+		cpuInfo.UncoreCacheID = int(id)
+		break
 	}
 
 	return nil
