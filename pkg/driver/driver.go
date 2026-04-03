@@ -176,19 +176,9 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 	plugin.nriPlugin = stub
 
 	go func() {
-		for i := 0; i < maxAttempts; i++ {
-			err = plugin.nriPlugin.Run(ctx)
-			if err != nil {
-				klog.Infof("NRI plugin failed with error %v", err)
-			}
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				klog.Infof("Restarting NRI plugin %d out of %d", i, maxAttempts)
-			}
+		if err := runNRIPluginWithRetry(ctx, plugin.nriPlugin, maxAttempts); err != nil && ctx.Err() == nil {
+			klog.Fatalf("NRI plugin failed for %d times to be restarted", maxAttempts)
 		}
-		klog.Fatalf("NRI plugin failed for %d times to be restarted", maxAttempts)
 	}()
 
 	// publish available resources
@@ -206,4 +196,22 @@ func (cp *CPUDriver) Stop() {
 // Shutdown is called when the runtime is shutting down.
 func (cp *CPUDriver) Shutdown(_ context.Context) {
 	klog.Info("Runtime shutting down...")
+}
+
+type nriRunner interface {
+	Run(context.Context) error
+}
+
+func runNRIPluginWithRetry(ctx context.Context, plugin nriRunner, maxAttempts int) error {
+	for i := 0; i < maxAttempts; i++ {
+		err := plugin.Run(ctx)
+		if ctx.Err() != nil {
+			klog.Infof("NRI plugin stopped: context cancelled")
+			return ctx.Err()
+		}
+		if err != nil {
+			klog.Infof("NRI plugin failed with error %v, restarting %d out of %d", err, i+1, maxAttempts)
+		}
+	}
+	return fmt.Errorf("NRI plugin failed for %d times to be restarted", maxAttempts)
 }
