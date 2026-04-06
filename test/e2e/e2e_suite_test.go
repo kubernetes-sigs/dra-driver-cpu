@@ -66,7 +66,7 @@ func BeFailedToCreate(fxt *fixture.Fixture) types.GomegaMatcher {
 			return false, nil
 		}
 		if cntSt.State.Waiting.Reason != reasonCreateContainerError {
-			lh.Info("container terminated for different reason", "containerName", cntSt.Name, "reason", cntSt.State.Terminated.Reason)
+			lh.Info("container waiting for different reason", "containerName", cntSt.Name, "reason", cntSt.State.Waiting.Reason)
 			return false, nil
 		}
 		lh.Info("container creation error", "containerName", cntSt.Name)

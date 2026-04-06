@@ -77,8 +77,8 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	return nil, nil
 }
 
-func parseDRAEnvToClaimAllocations(envs []string) (map[types.UID]cpuset.CPUSet, error) {
-	allocations := make(map[types.UID]cpuset.CPUSet)
+func parseDRAEnvToClaimAllocations(envs []string) (ClaimAllocations, error) {
+	allocations := make(ClaimAllocations)
 	for _, env := range envs {
 		if !strings.HasPrefix(env, cdiEnvVarPrefix) {
 			continue
@@ -150,6 +150,12 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		klog.Infof("No guaranteed CPUs found in DRA env for pod %s/%s container %s. Using shared CPUs %s", pod.Namespace, pod.Name, ctr.Name, sharedCPUs.String())
 		adjust.SetLinuxCPUSetCPUs(sharedCPUs.String())
 	} else {
+		if err := claimAllocations.Validate(pod, ctr); err != nil {
+			klog.Errorf("CPU request validation failed for pod %s/%s container %s: %v",
+				pod.Namespace, pod.Name, ctr.Name, err)
+			return nil, nil, fmt.Errorf("CPU request validation failed: %w", err)
+		}
+
 		guaranteedCPUs := cpuset.New()
 		claimUIDs := []types.UID{}
 		for uid, cpus := range claimAllocations {

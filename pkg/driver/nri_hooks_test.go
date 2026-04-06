@@ -34,13 +34,13 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 	testCases := []struct {
 		name                  string
 		envs                  []string
-		expectedAllocations   map[types.UID]cpuset.CPUSet
+		expectedAllocations   ClaimAllocations
 		expectedErrorContains string
 	}{
 		{
 			name: "single valid env",
 			envs: []string{fmt.Sprintf("%s_claim-uid-1=%s", cdiEnvVarPrefix, "0-1")},
-			expectedAllocations: map[types.UID]cpuset.CPUSet{
+			expectedAllocations: ClaimAllocations{
 				"claim-uid-1": cpuset.New(0, 1),
 			},
 		},
@@ -50,7 +50,7 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 				fmt.Sprintf("%s_claim-uid-1=%s", cdiEnvVarPrefix, "0,1"),
 				fmt.Sprintf("%s_claim-uid-2=%s", cdiEnvVarPrefix, "2,3"),
 			},
-			expectedAllocations: map[types.UID]cpuset.CPUSet{
+			expectedAllocations: ClaimAllocations{
 				"claim-uid-1": cpuset.New(0, 1),
 				"claim-uid-2": cpuset.New(2, 3),
 			},
@@ -58,7 +58,7 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 		{
 			name:                "no relevant envs",
 			envs:                []string{"OTHER_ENV=value"},
-			expectedAllocations: map[types.UID]cpuset.CPUSet{},
+			expectedAllocations: ClaimAllocations{},
 		},
 		{
 			name:                  "malformed env - no equals",
@@ -73,7 +73,7 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 		{
 			name:                "empty env",
 			envs:                []string{},
-			expectedAllocations: map[types.UID]cpuset.CPUSet{},
+			expectedAllocations: ClaimAllocations{},
 		},
 	}
 
