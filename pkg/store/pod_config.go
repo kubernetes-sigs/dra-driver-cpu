@@ -64,20 +64,18 @@ func (s *PodConfig) SetContainerState(podUID types.UID, state *ContainerState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Check if there's an existing state for this container that we need to clean up from cache.
-	if podAssignments, ok := s.configs[podUID]; ok {
-		if oldState, exists := podAssignments[state.containerName]; exists {
-			// Remove old container from sharedCPUContainers cache if it was there.
-			s.sharedCPUContainers.Delete(oldState.containerUID)
-		}
+	podAssignments, ok := s.configs[podUID]
+	if !ok {
+		podAssignments = make(PodCPUAssignments)
+		s.configs[podUID] = podAssignments
 	}
 
-	if _, ok := s.configs[podUID]; !ok {
-		s.configs[podUID] = make(PodCPUAssignments)
+	if oldState, exists := podAssignments[state.containerName]; exists {
+		s.sharedCPUContainers.Delete(oldState.containerUID)
 	}
-	s.configs[podUID][state.containerName] = state
 
-	// Update sharedCPUContainers cache based on new state.
+	podAssignments[state.containerName] = state
+
 	if !state.HasExclusiveCPUAllocation() {
 		s.sharedCPUContainers.Insert(state.containerUID)
 	}
