@@ -103,11 +103,11 @@ type CPUInfo struct {
 	// NUMANodeID is the NUMA node ID, unique within each SocketID
 	NUMANodeID int `json:"numaNodeID"`
 
-	// NUMA Node Affinity Mask
-	NumaNodeAffinityMask string `json:"numaNodeAffinityMask"`
+	// NUMANodeCPUSet represents the set of CPUs that are in the same NUMA node.
+	NumaNodeCPUSet cpuset.CPUSet `json:"numaNodeCPUSet"`
 
 	// CPU Sibling of the CpuID
-	SiblingCpuID int `json:"sibling"`
+	SiblingCPUID int `json:"sibling"`
 
 	// Core Type (e-core or p-core)
 	CoreType CoreType `json:"coreType,omitempty"`
@@ -237,15 +237,15 @@ func (s *SystemCPUInfo) GetCPUInfos() ([]CPUInfo, error) {
 	cpuInfos := make([]CPUInfo, 0, onlineCPUs.Size())
 	for _, cpuID := range onlineCPUs.List() {
 		cpuInfo := CPUInfo{
-			CpuID:                cpuID,
-			SocketID:             -1,
-			CoreID:               -1,
-			ClusterID:            -1,
-			NUMANodeID:           -1,
-			NumaNodeAffinityMask: "",
-			UncoreCacheID:        -1,
-			SiblingCpuID:         -1,
-			CoreType:             CoreTypeUndefined,
+			CpuID:          cpuID,
+			SocketID:       -1,
+			CoreID:         -1,
+			ClusterID:      -1,
+			NUMANodeID:     -1,
+			NumaNodeCPUSet: cpuset.New(),
+			UncoreCacheID:  -1,
+			SiblingCPUID:   -1,
+			CoreType:       CoreTypeUndefined,
 		}
 
 		if isHybrid {
@@ -280,20 +280,30 @@ func populateTopologyInfo(cpuInfo *CPUInfo) error {
 	if err != nil {
 		return fmt.Errorf("could not read socket_id for cpu %d from sysfs: %w", cpuID, err)
 	}
-	socketID, _ := strconv.Atoi(strings.TrimSpace(socketStr))
+	socketID, err := strconv.Atoi(strings.TrimSpace(socketStr))
+	if err != nil {
+		return fmt.Errorf("could not parse socket_id %q for cpu %d: %w", socketStr, cpuID, err)
+	}
 	cpuInfo.SocketID = socketID
 
-	// Get Cluster ID from sysfs (for ARM)
+	// Get Cluster ID from sysfs. While this sysfs file is present on most
+	// architectures, on ARM this defines the physical boundary for shared resources (like L2 cache).
 	clusterPath := hostSys(fmt.Sprintf("devices/system/cpu/cpu%d/topology/cluster_id", cpuID))
 	clusterStr, err := ReadFile(clusterPath)
 	if err == nil {
-		clusterID, _ := strconv.Atoi(strings.TrimSpace(clusterStr))
-		// On many x86 systems, the kernel reports 65535 to indicate "No Cluster".
-		// We treat this as -1 to mean unknown/not applicable.
-		if clusterID == 65535 {
+		clusterID, err := strconv.Atoi(strings.TrimSpace(clusterStr))
+		if err != nil {
+			log.Printf("Warning: could not parse cluster_id %q for cpu %d: %v", clusterStr, cpuID, err)
 			cpuInfo.ClusterID = -1
 		} else {
-			cpuInfo.ClusterID = clusterID
+			// The kernel default for an undefined cluster id is -1.
+			// However, due to 16-bit unsigned type casting, sysfs exposes this as 65535.
+			// https://www.kernel.org/doc/Documentation/admin-guide/cputopology.rst
+			if clusterID == 65535 {
+				cpuInfo.ClusterID = -1
+			} else {
+				cpuInfo.ClusterID = clusterID
+			}
 		}
 	} else {
 		cpuInfo.ClusterID = -1 // Default to -1 if not present
@@ -305,7 +315,10 @@ func populateTopologyInfo(cpuInfo *CPUInfo) error {
 	if err != nil {
 		return fmt.Errorf("could not read core_id for cpu %d from sysfs: %w", cpuID, err)
 	}
-	coreID, _ := strconv.Atoi(strings.TrimSpace(coreStr))
+	coreID, err := strconv.Atoi(strings.TrimSpace(coreStr))
+	if err != nil {
+		return fmt.Errorf("could not parse core_id %q for cpu %d: %w", coreStr, cpuID, err)
+	}
 	cpuInfo.CoreID = coreID
 
 	// Get NUMA Node ID from sysfs
@@ -318,21 +331,26 @@ func populateTopologyInfo(cpuInfo *CPUInfo) error {
 	foundNode := false
 	for _, file := range files {
 		if strings.HasPrefix(file.Name(), "node") {
-			nodeID, err := strconv.ParseInt(strings.TrimPrefix(file.Name(), "node"), 10, 64)
+			nodeID, err := strconv.Atoi(strings.TrimPrefix(file.Name(), "node"))
 			if err != nil {
-				continue // Should not happen with a well-formed sysfs
+				log.Printf("Warning: could not parse NUMA node ID from %s: %v", file.Name(), err)
+				continue
 			}
-			cpuInfo.NUMANodeID = int(nodeID)
+			cpuInfo.NUMANodeID = nodeID
 			foundNode = true
 
 			// Get NUMA Affinity Mask
-			maskPath := hostSys(fmt.Sprintf("devices/system/node/node%d/cpumap", nodeID))
-			maskLines, err := ReadLines(maskPath)
-			if err != nil {
+			cpuListPath := hostSys(fmt.Sprintf("devices/system/node/node%d/cpulist", nodeID))
+			cpuListLines, err := ReadLines(cpuListPath)
+			if err != nil || len(cpuListLines) == 0 {
 				log.Printf("Warning: could not read NUMA affinity mask for node %d: %v", nodeID, err)
 				continue
 			}
-			cpuInfo.NumaNodeAffinityMask = formatAffinityMask(maskLines[0])
+			cpuInfo.NumaNodeCPUSet, err = cpuset.Parse(cpuListLines[0])
+			if err != nil {
+				log.Printf("Warning: could not parse NUMA affinity mask for node %d: %v", nodeID, err)
+				continue
+			}
 			break
 		}
 	}
@@ -382,22 +400,22 @@ func populateTopologyInfo(cpuInfo *CPUInfo) error {
 
 		cacheIdPath := filepath.Join(l3CacheDir, "id")
 		idStr, err := ReadFile(cacheIdPath)
-		var id int64
+		var id int
 		if err != nil {
 			// Fallback for ARM systems missing the 'id' file: use the lowest shared CPU ID as the cache ID.
 			if sharedCPUSet.Size() > 0 {
-				id = int64(sharedCPUSet.List()[0])
+				id = sharedCPUSet.List()[0]
 			} else {
-				id = int64(cpuID)
+				id = cpuID
 			}
 		} else {
-			id, err = strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+			id, err = strconv.Atoi(strings.TrimSpace(idStr))
 			if err != nil {
 				return fmt.Errorf("could not parse L3 cache id '%s': %w", idStr, err)
 			}
 		}
 
-		cpuInfo.UncoreCacheID = int(id)
+		cpuInfo.UncoreCacheID = id
 		break
 	}
 
@@ -433,27 +451,10 @@ func populateCpuSiblings(cpuInfos []CPUInfo) {
 			cpu1Id, cpu2Id := siblingIds[0], siblingIds[1]
 			cpu1Index, cpu2Index := cpuIndexMap[cpu1Id], cpuIndexMap[cpu2Id]
 
-			cpuInfos[cpu1Index].SiblingCpuID = cpu2Id
-			cpuInfos[cpu2Index].SiblingCpuID = cpu1Id
+			cpuInfos[cpu1Index].SiblingCPUID = cpu2Id
+			cpuInfos[cpu2Index].SiblingCPUID = cpu1Id
 		}
 	}
-}
-
-func formatAffinityMask(mask string) string {
-	if strings.TrimSpace(mask) == "" {
-		return "0x0"
-	}
-	parts := strings.Split(mask, ",")
-	// Reverse the parts to handle the kernel's little-endian word order.
-	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
-		parts[i], parts[j] = parts[j], parts[i]
-	}
-	newMask := strings.Join(parts, "")
-	newMask = strings.TrimLeft(newMask, "0")
-	if newMask == "" {
-		return "0x0"
-	}
-	return "0x" + newMask
 }
 
 // ReadFile reads contents from a file.

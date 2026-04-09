@@ -169,13 +169,13 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 		if processedCpus[cpu.CpuID] {
 			continue
 		}
-		if cpu.SiblingCpuID == -1 || reservedCPUs[cpu.SiblingCpuID] {
+		if cpu.SiblingCPUID == -1 || reservedCPUs[cpu.SiblingCPUID] {
 			coreGroups = append(coreGroups, []cpuinfo.CPUInfo{cpu})
 			processedCpus[cpu.CpuID] = true
 		} else {
-			coreGroups = append(coreGroups, []cpuinfo.CPUInfo{cpu, cpuInfoMap[cpu.SiblingCpuID]})
+			coreGroups = append(coreGroups, []cpuinfo.CPUInfo{cpu, cpuInfoMap[cpu.SiblingCPUID]})
 			processedCpus[cpu.CpuID] = true
-			processedCpus[cpu.SiblingCpuID] = true
+			processedCpus[cpu.SiblingCPUID] = true
 		}
 	}
 
