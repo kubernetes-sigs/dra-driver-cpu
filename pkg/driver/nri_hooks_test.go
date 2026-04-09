@@ -290,11 +290,12 @@ func TestNRISynchronize(t *testing.T) {
 	pod2 := &api.PodSandbox{Id: "pod-id-2", Name: "my-pod-2", Namespace: "my-ns", Uid: "pod-uid-2"}
 
 	testCases := []struct {
-		name          string
-		driver        *CPUDriver
-		runtimePods   []*api.PodSandbox
-		runtimeCtrs   []*api.Container
-		expectedError bool
+		name            string
+		driver          *CPUDriver
+		runtimePods     []*api.PodSandbox
+		runtimeCtrs     []*api.Container
+		expectedUpdates []*api.ContainerUpdate
+		expectedError   bool
 	}{
 		{
 			name: "empty runtime state clears the store",
@@ -308,8 +309,9 @@ func TestNRISynchronize(t *testing.T) {
 				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState("stale-ctr", "stale-id", types.UID("stale-claim")))
 				return driver
 			}(),
-			runtimePods: []*api.PodSandbox{},
-			runtimeCtrs: []*api.Container{},
+			runtimePods:     []*api.PodSandbox{},
+			runtimeCtrs:     []*api.Container{},
+			expectedUpdates: []*api.ContainerUpdate{},
 		},
 		{
 			name: "mixed containers across multiple pods",
@@ -325,12 +327,93 @@ func TestNRISynchronize(t *testing.T) {
 				{Id: "p1-shared", PodSandboxId: pod1.Id, Name: "shared-ctr"},
 				{Id: "p2-shared", PodSandboxId: pod2.Id, Name: "shared-ctr"},
 			},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-guaranteed",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1"}}},
+				},
+				{
+					ContainerId: "p1-shared",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-7"}}},
+				},
+				{
+					ContainerId: "p2-shared",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-7"}}},
+				},
+			},
+		},
+		{
+			name: "only shared containers",
+			driver: &CPUDriver{
+				podConfigStore:     store.NewPodConfig(),
+				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+				claimTracker:       store.NewClaimTracker(),
+				cpuTopology:        topo,
+			},
+			runtimePods: []*api.PodSandbox{pod1, pod2},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-shared", PodSandboxId: pod1.Id, Name: "shared-ctr"},
+				{Id: "p2-shared", PodSandboxId: pod2.Id, Name: "shared-ctr"},
+			},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-shared",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
+				},
+				{
+					ContainerId: "p2-shared",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
+				},
+			},
+		},
+		{
+			name: "only guaranteed containers",
+			driver: &CPUDriver{
+				podConfigStore:     store.NewPodConfig(),
+				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+				claimTracker:       store.NewClaimTracker(),
+				cpuTopology:        topo,
+			},
+			runtimePods: []*api.PodSandbox{pod1, pod2},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
+				{Id: "p2-guaranteed", PodSandboxId: pod2.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-B=%s", cdiEnvVarPrefix, "2,3")}},
+			},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-guaranteed",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1"}}},
+				},
+				{
+					ContainerId: "p2-guaranteed",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-3"}}},
+				},
+			},
+		},
+		{
+			name: "container with multiple claims",
+			driver: &CPUDriver{
+				podConfigStore:     store.NewPodConfig(),
+				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+				claimTracker:       store.NewClaimTracker(),
+				cpuTopology:        topo,
+			},
+			runtimePods: []*api.PodSandbox{pod1},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-multi-claim", PodSandboxId: pod1.Id, Name: "multi-claim-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1"), fmt.Sprintf("%s_claim-B=%s", cdiEnvVarPrefix, "2,3")}},
+			},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-multi-claim",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-3"}}},
+				},
+			},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := tc.driver.Synchronize(context.Background(), tc.runtimePods, tc.runtimeCtrs)
+			updates, err := tc.driver.Synchronize(context.Background(), tc.runtimePods, tc.runtimeCtrs)
 
 			if tc.expectedError {
 				require.Error(t, err)
@@ -349,6 +432,9 @@ func TestNRISynchronize(t *testing.T) {
 					require.NotNil(t, state)
 				}
 			}
+
+			// Verify that the returned updates match expectations
+			require.ElementsMatch(t, tc.expectedUpdates, updates)
 		})
 	}
 }

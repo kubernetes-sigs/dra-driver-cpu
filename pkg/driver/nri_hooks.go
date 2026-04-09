@@ -35,6 +35,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 
 	cpuAllocationStore := store.NewCPUAllocation(cp.cpuTopology, cp.reservedCPUs)
 	podConfigStore := store.NewPodConfig()
+	var contianerUpdates []*api.ContainerUpdate
 
 	logger := klog.FromContext(ctx)
 	for _, pod := range pods {
@@ -67,6 +68,13 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				}
 				klog.Infof("Synchronize: Found guaranteed CPUs for pod %s/%s container %s with cpus: %v", pod.Namespace, pod.Name, container.Name, allGuaranteedCPUs.String())
 				state = store.NewContainerState(container.GetName(), containerUID, claimUIDs...)
+
+				// Reconcile guaranteed container CPU mask.
+				guaranteedUpdate := &api.ContainerUpdate{
+					ContainerId: container.GetId(),
+				}
+				guaranteedUpdate.SetLinuxCPUSetCPUs(allGuaranteedCPUs.String())
+				contianerUpdates = append(contianerUpdates, guaranteedUpdate)
 			}
 			podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
 		}
@@ -74,7 +82,13 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 
 	cp.podConfigStore = podConfigStore
 	cp.cpuAllocationStore = cpuAllocationStore
-	return nil, nil
+
+	// Reconcile container CPU masks to handle cases where the NRI plugin might have crashed
+	// or restarted and missed updating the cgroup settings.
+	// See: https://github.com/containerd/nri/issues/282
+	sharedContainerUpdates := cp.getSharedContainerUpdates(types.UID(""))
+	contianerUpdates = append(contianerUpdates, sharedContainerUpdates...)
+	return contianerUpdates, nil
 }
 
 func parseDRAEnvToClaimAllocations(envs []string) (map[types.UID]cpuset.CPUSet, error) {
