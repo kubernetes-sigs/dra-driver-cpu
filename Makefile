@@ -173,6 +173,7 @@ manifests: dist install-yq ## create the install manifest
 	@cd dist && cp -a ../manifests/base/*.part.yaml .
 ifeq ($(OVERRIDE_IMAGE),true)
 	@$(YQ) -i '.spec.template.spec.containers[0].image = "${IMAGE}"' dist/daemonset-dracpu.part.yaml
+	@$(YQ) -i '.spec.template.spec.containers[0].imagePullPolicy = "IfNotPresent"' dist/daemonset-dracpu.part.yaml
 	@$(YQ) -i '.spec.template.metadata.labels["build"] = "${GIT_VERSION}"' dist/daemonset-dracpu.part.yaml
 endif
 	@$(YQ) '.' \
