@@ -72,14 +72,13 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get dracpu daemonset")
 		gomega.Expect(daemonSet.Spec.Template.Spec.Containers).ToNot(gomega.BeEmpty(), "no containers in dracpu daemonset")
 		var dsReservedCPUs cpuset.CPUSet
-		for _, arg := range daemonSet.Spec.Template.Spec.Containers[0].Args {
-			if val, ok := parseReservedCPUsArg(arg); ok {
-				dsReservedCPUs, err = cpuset.Parse(val)
-				gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse daemonset reserved cpus: %v", err)
-			}
-			if val, ok := parseCPUDeviceModeArg(arg); ok {
-				cpuDeviceMode = val
-			}
+		cnt := &daemonSet.Spec.Template.Spec.Containers[0]
+		if val, ok := findArgInContainer(cnt, argReservedCPUs); ok {
+			dsReservedCPUs, err = cpuset.Parse(val)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse daemonset reserved cpus: %v", err)
+		}
+		if val, ok := findArgInContainer(cnt, argCPUDeviceMode); ok {
+			cpuDeviceMode = val
 		}
 		gomega.Expect(dsReservedCPUs.Equals(reservedCPUs)).To(gomega.BeTrue(), "daemonset reserved cpus %v do not match test reserved cpus %v", dsReservedCPUs.String(), reservedCPUs.String())
 

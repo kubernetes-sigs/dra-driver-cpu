@@ -35,7 +35,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 
 	cpuAllocationStore := store.NewCPUAllocation(cp.cpuTopology, cp.reservedCPUs)
 	podConfigStore := store.NewPodConfig()
-	var contianerUpdates []*api.ContainerUpdate
+	var containerUpdates []*api.ContainerUpdate
 
 	logger := klog.FromContext(ctx)
 	for _, pod := range pods {
@@ -74,7 +74,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 					ContainerId: container.GetId(),
 				}
 				guaranteedUpdate.SetLinuxCPUSetCPUs(allGuaranteedCPUs.String())
-				contianerUpdates = append(contianerUpdates, guaranteedUpdate)
+				containerUpdates = append(containerUpdates, guaranteedUpdate)
 			}
 			podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
 		}
@@ -87,8 +87,8 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	// or restarted and missed updating the cgroup settings.
 	// See: https://github.com/containerd/nri/issues/282
 	sharedContainerUpdates := cp.getSharedContainerUpdates(types.UID(""))
-	contianerUpdates = append(contianerUpdates, sharedContainerUpdates...)
-	return contianerUpdates, nil
+	containerUpdates = append(containerUpdates, sharedContainerUpdates...)
+	return containerUpdates, nil
 }
 
 func parseDRAEnvToClaimAllocations(envs []string) (map[types.UID]cpuset.CPUSet, error) {
