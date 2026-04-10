@@ -120,7 +120,7 @@ func createFakeCPUTopology(t *testing.T, dir string, topo fakeCPUTopology) {
 	}
 
 	nodeToCpus := make(map[int][]int)
-	for i := 0; i < numCPUs; i++ {
+	for i := range numCPUs {
 		cpuDir := filepath.Join(cpuSysDir, fmt.Sprintf("cpu%d", i))
 		if err := os.Mkdir(cpuDir, 0755); err != nil {
 			t.Fatal(err)
@@ -168,7 +168,7 @@ func createFakeCPUTopology(t *testing.T, dir string, topo fakeCPUTopology) {
 		if err := os.WriteFile(filepath.Join(index3Dir, "level"), []byte("3\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(index3Dir, "id"), []byte(fmt.Sprintf("%d\n", l3CacheID)), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(index3Dir, "id"), fmt.Appendf(nil, "%d\n", l3CacheID), 0600); err != nil {
 			t.Fatal(err)
 		}
 		sharedCPUListStart := l3CacheID * (topo.coresPerL3 * topo.cpusPerCore)

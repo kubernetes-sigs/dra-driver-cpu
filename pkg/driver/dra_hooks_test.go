@@ -118,7 +118,7 @@ var (
 	mockCPUInfos_DualSocket_EqualsResourceSliceLimit = func() []cpuinfo.CPUInfo {
 		var infos []cpuinfo.CPUInfo
 		cpusPerNumaNode := maxDevicesPerResourceSlice / 2
-		for i := 0; i < maxDevicesPerResourceSlice; i++ {
+		for i := range maxDevicesPerResourceSlice {
 			numaNodeID := i / cpusPerNumaNode
 			infos = append(infos, cpuinfo.CPUInfo{CpuID: i, CoreID: i, SocketID: numaNodeID, NUMANodeID: numaNodeID, CoreType: cpuinfo.CoreTypePerformance, SiblingCPUID: -1})
 		}
@@ -128,7 +128,7 @@ var (
 		var infos []cpuinfo.CPUInfo
 		numCPUS := maxDevicesPerResourceSlice + 10
 		cpusPerNumaNode := numCPUS / 2
-		for i := 0; i < numCPUS; i++ {
+		for i := range numCPUS {
 			numaNodeID := i / cpusPerNumaNode
 			infos = append(infos, cpuinfo.CPUInfo{CpuID: i, CoreID: i, SocketID: numaNodeID, NUMANodeID: numaNodeID, CoreType: cpuinfo.CoreTypePerformance, SiblingCPUID: -1})
 		}
@@ -137,7 +137,7 @@ var (
 	mockCPUInfos_DualSocket_120CPUsPerSocket_HT = func() []cpuinfo.CPUInfo {
 		var infos []cpuinfo.CPUInfo
 		numCores := 120
-		for socketID := 0; socketID < 2; socketID++ {
+		for socketID := range 2 {
 			for coreID := 0; coreID < numCores/2; coreID++ {
 				baseCpuID := socketID * numCores
 				infos = append(infos, cpuinfo.CPUInfo{
