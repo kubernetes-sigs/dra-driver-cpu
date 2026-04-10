@@ -178,6 +178,17 @@ func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr
 	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
 	entries := "none"
 	if len(claimUIDs) > 0 {
+		// This early release in StopContainer is a workaround for a lifecycle mismatch between DRA and NRI.
+		// The proper place to release claim allocations is in the DRA UnprepareResourceClaims hook.
+		// However, NRI only allows pushing CPU mask updates to other containers during container lifecycle events
+		// (like StopContainer). If we wait until UnprepareResourceClaims to release the CPUs, we miss the opportunity
+		// to update the shared pool of existing containers, leaving them on a restricted pool until a new
+		// container event occurs.
+		// TODO: This workaround assumes that ResourceClaims are NOT shared across pods/containers. If claim sharing
+		// is supported in the future, this early release of CPUS will need an update.
+		for _, claimUID := range claimUIDs {
+			cp.cpuAllocationStore.RemoveResourceClaimAllocation(claimUID)
+		}
 		// Remove the guaranteed CPUs from the containers with shared CPUs.
 		updates = cp.getSharedContainerUpdates(types.UID(ctr.GetId()))
 		cp.claimTracker.Cleanup(klog.FromContext(ctx), claimUIDs...)
