@@ -103,8 +103,13 @@ func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod
 	data, err := e2epod.GetLogs(cs, ctx, pod.Namespace, pod.Name, pod.Spec.Containers[0].Name)
 	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs for %s/%s/%s", pod.Namespace, pod.Name, pod.Spec.Containers[0].Name)
 
+	// Split logs by newline and find the last non-empty line
+	lines := strings.Split(strings.TrimSpace(data), "\n")
+	gomega.Expect(len(lines)).To(gomega.BeNumerically(">", 0), "logs should not be empty")
+	lastLine := lines[len(lines)-1]
+
 	testerInfo := discovery.DRACPUTester{}
-	gomega.Expect(json.Unmarshal([]byte(data), &testerInfo)).To(gomega.Succeed())
+	gomega.Expect(json.Unmarshal([]byte(lastLine), &testerInfo)).To(gomega.Succeed(), "cannot unmarshal last log line: %q", lastLine)
 
 	ret := CPUAllocation{}
 	ret.CPUAssigned, err = cpuset.Parse(testerInfo.Allocation.CPUs)
@@ -174,12 +179,8 @@ func makeTesterPodBestEffort(ns, image string) *v1.Pod {
 					Command: []string{"/dracputester"},
 					// at the moment we depend on pod logs to learn the cpu allocation.
 					// Therefore, the pod without resource claims, best-effort,
-					// will restart periodically to provide the up to date information.
-					// NOTE: restarting always ensuring there's the minimal and easiest
-					// amount of logs to process. The other option would be to periodically
-					// log the data, but then the client side will need to read and discard
-					// all but the latest update, which is wasteful. This approach is the simplest.
-					Args: []string{"-run-for", "10s"},
+					// will loop periodically to provide the up to date information.
+					// NOTE: We parse the last line of the logs to get the latest update.
 				},
 			},
 			RestartPolicy: v1.RestartPolicyAlways,

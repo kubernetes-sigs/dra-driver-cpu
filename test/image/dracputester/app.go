@@ -18,10 +18,8 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"time"
@@ -98,44 +96,32 @@ func getAffinity() (cpuset.CPUSet, error) {
 }
 
 func main() {
-	runTimeout := 0 * time.Second
-	flag.DurationVar(&runTimeout, "run-for", runTimeout, "run for the given duration before exit after logging. Use 0 to run forever")
-	flag.Parse()
+	for {
+		cpus, err := cpuSet("/sys")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error determining allocated cpus: %v\n", err)
+			os.Exit(1)
+		}
+		cpuAff, err := getAffinity()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error determining CPU affinity: %v\n", err)
+			os.Exit(2)
+		}
+		info := discovery.DRACPUTester{
+			Buildinfo: discovery.NewBuildinfo(),
+			Allocation: discovery.DRACPUAllocation{
+				CPUs: cpus.String(),
+			},
+			Runtimeinfo: discovery.DRACPURuntimeinfo{
+				CPUAffinity: cpuAff.String(),
+			},
+		}
+		err = json.NewEncoder(os.Stdout).Encode(info)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error encoding info: %v\n", err)
+			os.Exit(2)
+		}
 
-	cpus, err := cpuSet("/sys")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error determining allocated cpus: %v\n", err)
-		os.Exit(1)
-	}
-	cpuAff, err := getAffinity()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error determining CPU affinity: %v\n", err)
-		os.Exit(2)
-	}
-	info := discovery.DRACPUTester{
-		Buildinfo: discovery.NewBuildinfo(),
-		Allocation: discovery.DRACPUAllocation{
-			CPUs: cpus.String(),
-		},
-		Runtimeinfo: discovery.DRACPURuntimeinfo{
-			CPUAffinity: cpuAff.String(),
-		},
-	}
-	err = json.NewEncoder(os.Stdout).Encode(info)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error encoding info: %v\n", err)
-		os.Exit(2)
-	}
-
-	if runTimeout > 0 {
-		time.Sleep(runTimeout)
-	} else {
-		signalCh := make(chan os.Signal, 2)
-		defer func() {
-			close(signalCh)
-		}()
-		signal.Notify(signalCh, os.Interrupt, unix.SIGINT)
-		<-signalCh
-		fmt.Fprintf(os.Stderr, "exiting: received signal\n")
+		time.Sleep(5 * time.Second)
 	}
 }
