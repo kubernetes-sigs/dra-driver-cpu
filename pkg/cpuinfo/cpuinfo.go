@@ -97,14 +97,17 @@ type CPUInfo struct {
 	// SocketID is the physical socket ID
 	SocketID int `json:"socketID"`
 
+	// ClusterID is the cluster ID, which sits between Socket and Core on some architectures (e.g. ARM)
+	ClusterID int `json:"clusterID"`
+
 	// NUMANodeID is the NUMA node ID, unique within each SocketID
 	NUMANodeID int `json:"numaNodeID"`
 
-	// NUMA Node Affinity Mask
-	NumaNodeAffinityMask string `json:"numaNodeAffinityMask"`
+	// NUMANodeCPUSet represents the set of CPUs that are in the same NUMA node.
+	NumaNodeCPUSet cpuset.CPUSet `json:"numaNodeCPUSet"`
 
 	// CPU Sibling of the CpuID
-	SiblingCpuID int `json:"sibling"`
+	SiblingCPUID int `json:"sibling"`
 
 	// Core Type (e-core or p-core)
 	CoreType CoreType `json:"coreType,omitempty"`
@@ -148,8 +151,9 @@ func (s *SystemCPUInfo) GetCPUTopology() (*CPUTopology, error) {
 	sockets := sets.NewInt()
 	numaNodes := sets.NewInt()
 	type coreIdent struct {
-		SocketID int
-		coreID   int
+		SocketID  int
+		ClusterID int
+		CoreID    int
 	}
 	cores := sets.New[coreIdent]()
 	uncoreCaches := sets.NewInt()
@@ -159,9 +163,9 @@ func (s *SystemCPUInfo) GetCPUTopology() (*CPUTopology, error) {
 		cpuDetails[info.CpuID] = info
 		sockets.Insert(info.SocketID)
 		numaNodes.Insert(info.NUMANodeID)
-		// A core is unique by socket and core id
-		coreKey := coreIdent{SocketID: info.SocketID, coreID: info.CoreID}
-		cores[coreKey] = struct{}{}
+		// A core is unique by socket, cluster, and core id
+		coreKey := coreIdent{SocketID: info.SocketID, ClusterID: info.ClusterID, CoreID: info.CoreID}
+		cores.Insert(coreKey)
 		if info.UncoreCacheID != -1 {
 			uncoreCaches.Insert(info.UncoreCacheID)
 		}
@@ -170,12 +174,12 @@ func (s *SystemCPUInfo) GetCPUTopology() (*CPUTopology, error) {
 	smtEnabled, err := s.IsSMTEnabled()
 	if err != nil {
 		log.Printf("Warning: could not determine SMT status from sysfs: %v. Falling back to CPU/Core count.", err)
-		smtEnabled = len(cpuInfos) > len(cores)
+		smtEnabled = len(cpuInfos) > cores.Len()
 	}
 
 	return &CPUTopology{
 		NumCPUs:        len(cpuInfos),
-		NumCores:       len(cores),
+		NumCores:       cores.Len(),
 		NumSockets:     sockets.Len(),
 		NumNUMANodes:   numaNodes.Len(),
 		NumUncoreCache: uncoreCaches.Len(),
@@ -195,7 +199,7 @@ func (s *SystemCPUInfo) IsSMTEnabled() (bool, error) {
 	if status == "on" {
 		return true, nil
 	}
-	if status == "off" || status == "forceoff" || status == "notsupported" {
+	if status == "off" || status == "forceoff" || status == "notsupported" || status == "notimplemented" {
 		return false, nil
 	}
 	return false, fmt.Errorf("unknown SMT status: %s", status)
@@ -203,12 +207,19 @@ func (s *SystemCPUInfo) IsSMTEnabled() (bool, error) {
 
 // GetCPUInfos returns a slice of CPUInfo structs, one for each logical CPU.
 func (s *SystemCPUInfo) GetCPUInfos() ([]CPUInfo, error) {
-	filename := hostProc("cpuinfo")
-	lines, err := ReadLines(filename)
+	// Discover online CPUs from sysfs
+	onlineFilename := hostSys("devices/system/cpu/online")
+	onlineContent, err := ReadFile(onlineFilename)
 	if err != nil {
-		return []CPUInfo{}, err
+		return []CPUInfo{}, fmt.Errorf("could not read online CPUs from %s: %w", onlineFilename, err)
 	}
 
+	onlineCPUs, err := cpuset.Parse(strings.TrimSpace(onlineContent))
+	if err != nil {
+		return []CPUInfo{}, fmt.Errorf("could not parse online CPUs '%s': %w", onlineContent, err)
+	}
+
+	// Intel-specific hybrid detection (P-cores vs E-cores)
 	isHybrid := false
 	var eCoreCpus cpuset.CPUSet
 	eCoreFilename := hostSys("devices/cpu_atom/cpus")
@@ -223,235 +234,207 @@ func (s *SystemCPUInfo) GetCPUInfos() ([]CPUInfo, error) {
 		}
 	}
 
-	cpuInfos := []CPUInfo{}
-	var cpuInfoLines []string
-	for _, line := range lines {
-		// `/proc/cpuinfo` uses empty lines to denote a new CPU block of data.
-		if strings.TrimSpace(line) == "" {
-			// Parse and reset CPU lines.
-			cpuInfo := parseCPUInfo(isHybrid, eCoreCpus, cpuInfoLines...)
-			if cpuInfo != nil {
-				cpuInfos = append(cpuInfos, *cpuInfo)
+	cpuInfos := make([]CPUInfo, 0, onlineCPUs.Size())
+	for _, cpuID := range onlineCPUs.List() {
+		cpuInfo := CPUInfo{
+			CpuID:          cpuID,
+			SocketID:       -1,
+			CoreID:         -1,
+			ClusterID:      -1,
+			NUMANodeID:     -1,
+			NumaNodeCPUSet: cpuset.New(),
+			UncoreCacheID:  -1,
+			SiblingCPUID:   -1,
+			CoreType:       CoreTypeUndefined,
+		}
+
+		if isHybrid {
+			if eCoreCpus.Contains(cpuID) {
+				cpuInfo.CoreType = CoreTypeEfficiency
+			} else {
+				cpuInfo.CoreType = CoreTypePerformance
 			}
-			cpuInfoLines = []string{}
 		} else {
-			// Gather CPU info lines for later processing.
-			cpuInfoLines = append(cpuInfoLines, line)
+			cpuInfo.CoreType = CoreTypeStandard
 		}
-	}
-	// Process the last block of cpu info.
-	if len(cpuInfoLines) > 0 {
-		cpuInfo := parseCPUInfo(isHybrid, eCoreCpus, cpuInfoLines...)
-		if cpuInfo != nil {
-			cpuInfos = append(cpuInfos, *cpuInfo)
+
+		if err := populateTopologyInfo(&cpuInfo); err != nil {
+			log.Printf("Warning: skipping CPU %d due to incomplete topology: %v", cpuID, err)
+			continue
 		}
+
+		cpuInfos = append(cpuInfos, cpuInfo)
 	}
 
-	if err := populateTopologyInfo(cpuInfos); err != nil {
-		return nil, fmt.Errorf("failed to populate topology info: %w", err)
-	}
-	if err := populateL3CacheIDs(cpuInfos); err != nil {
-		return nil, fmt.Errorf("failed to populate L3 cache IDs: %w", err)
-	}
 	populateCpuSiblings(cpuInfos)
+
 	return cpuInfos, nil
 }
 
-func parseCPUInfo(isHybrid bool, eCoreCpus cpuset.CPUSet, lines ...string) *CPUInfo {
-	cpuInfo := &CPUInfo{
-		CpuID:                -1,
-		SocketID:             -1,
-		CoreID:               -1,
-		NUMANodeID:           -1,
-		NumaNodeAffinityMask: "",
-		UncoreCacheID:        -1,
-		SiblingCpuID:         -1,
-		CoreType:             CoreTypeUndefined,
+func populateTopologyInfo(cpuInfo *CPUInfo) error {
+	cpuID := cpuInfo.CpuID
+
+	// Get Socket ID from sysfs
+	socketPath := hostSys(fmt.Sprintf("devices/system/cpu/cpu%d/topology/physical_package_id", cpuID))
+	socketStr, err := ReadFile(socketPath)
+	if err != nil {
+		return fmt.Errorf("could not read socket_id for cpu %d from sysfs: %w", cpuID, err)
 	}
-
-	if len(lines) == 0 {
-		return nil
+	socketID, err := strconv.Atoi(strings.TrimSpace(socketStr))
+	if err != nil {
+		return fmt.Errorf("could not parse socket_id %q for cpu %d: %w", socketStr, cpuID, err)
 	}
+	cpuInfo.SocketID = socketID
 
-	for _, line := range lines {
-		// Within each CPU block of data, each line uses ':' to separate the
-		// key-value pair (with whitespace padding).
-		fields := strings.Split(line, ":")
-		if len(fields) < 2 {
-			continue
-		}
-		key := strings.TrimSpace(fields[0])
-		value := strings.TrimSpace(fields[1])
-
-		var val int
-		var err error
-		switch key {
-		case "processor":
-			if val, err = strconv.Atoi(value); err != nil {
-				log.Printf("Warning: failed to parse processor ID %q: %v", value, err)
-			} else {
-				cpuInfo.CpuID = val
-			}
-		case "physical id":
-			if val, err = strconv.Atoi(value); err != nil {
-				log.Printf("Warning: failed to parse physical ID %q: %v", value, err)
-			} else {
-				cpuInfo.SocketID = val
-			}
-		case "core id":
-			if val, err = strconv.Atoi(value); err != nil {
-				log.Printf("Warning: failed to parse core ID %q: %v", value, err)
-			} else {
-				cpuInfo.CoreID = val
-			}
-		}
-	}
-
-	if isHybrid {
-		if eCoreCpus.Contains(cpuInfo.CpuID) {
-			cpuInfo.CoreType = CoreTypeEfficiency
+	// Get Cluster ID from sysfs. While this sysfs file is present on most
+	// architectures, on ARM this defines the physical boundary for shared resources (like L2 cache).
+	clusterPath := hostSys(fmt.Sprintf("devices/system/cpu/cpu%d/topology/cluster_id", cpuID))
+	clusterStr, err := ReadFile(clusterPath)
+	if err == nil {
+		clusterID, err := strconv.Atoi(strings.TrimSpace(clusterStr))
+		if err != nil {
+			log.Printf("Warning: could not parse cluster_id %q for cpu %d: %v", clusterStr, cpuID, err)
+			cpuInfo.ClusterID = -1
 		} else {
-			cpuInfo.CoreType = CoreTypePerformance
+			// The kernel default for an undefined cluster id is -1.
+			// However, due to 16-bit unsigned type casting, sysfs exposes this as 65535.
+			// https://www.kernel.org/doc/Documentation/admin-guide/cputopology.rst
+			if clusterID == 65535 {
+				cpuInfo.ClusterID = -1
+			} else {
+				cpuInfo.ClusterID = clusterID
+			}
 		}
 	} else {
-		cpuInfo.CoreType = CoreTypeStandard
+		cpuInfo.ClusterID = -1 // Default to -1 if not present
 	}
 
-	if cpuInfo.CpuID < 0 || cpuInfo.SocketID < 0 || cpuInfo.CoreID < 0 {
-		return nil
+	// Get Core ID from sysfs
+	corePath := hostSys(fmt.Sprintf("devices/system/cpu/cpu%d/topology/core_id", cpuID))
+	coreStr, err := ReadFile(corePath)
+	if err != nil {
+		return fmt.Errorf("could not read core_id for cpu %d from sysfs: %w", cpuID, err)
+	}
+	coreID, err := strconv.Atoi(strings.TrimSpace(coreStr))
+	if err != nil {
+		return fmt.Errorf("could not parse core_id %q for cpu %d: %w", coreStr, cpuID, err)
+	}
+	cpuInfo.CoreID = coreID
+
+	// Get NUMA Node ID from sysfs
+	nodePath := hostSys(fmt.Sprintf("devices/system/cpu/cpu%d", cpuID))
+	files, err := os.ReadDir(nodePath)
+	if err != nil {
+		return fmt.Errorf("could not read NUMA node for cpu %d from sysfs: %w", cpuID, err)
 	}
 
-	return cpuInfo
-}
+	foundNode := false
+	for _, file := range files {
+		if strings.HasPrefix(file.Name(), "node") {
+			nodeID, err := strconv.Atoi(strings.TrimPrefix(file.Name(), "node"))
+			if err != nil {
+				log.Printf("Warning: could not parse NUMA node ID from %s: %v", file.Name(), err)
+				continue
+			}
+			cpuInfo.NUMANodeID = nodeID
+			foundNode = true
 
-func populateL3CacheIDs(cpuInfos []CPUInfo) error {
-	for i := range cpuInfos {
-		if cpuInfos[i].UncoreCacheID != -1 {
+			// Get NUMA Affinity Mask
+			cpuListPath := hostSys(fmt.Sprintf("devices/system/node/node%d/cpulist", nodeID))
+			cpuListLines, err := ReadLines(cpuListPath)
+			if err != nil || len(cpuListLines) == 0 {
+				log.Printf("Warning: could not read NUMA affinity mask for node %d: %v", nodeID, err)
+				continue
+			}
+			cpuInfo.NumaNodeCPUSet, err = cpuset.Parse(cpuListLines[0])
+			if err != nil {
+				log.Printf("Warning: could not parse NUMA affinity mask for node %d: %v", nodeID, err)
+				continue
+			}
+			break
+		}
+	}
+	if !foundNode {
+		return fmt.Errorf("could not determine NUMA node for CPU %d", cpuID)
+	}
+
+	if cpuInfo.SocketID < 0 || cpuInfo.CoreID < 0 || cpuInfo.NUMANodeID < 0 {
+		return fmt.Errorf("incomplete topology information for CPU %d (socket: %d, core: %d, NUMA node: %d)", cpuID, cpuInfo.SocketID, cpuInfo.CoreID, cpuInfo.NUMANodeID)
+	}
+
+	// Get L3 Cache ID
+	cachePath := hostSys(fmt.Sprintf("devices/system/cpu/cpu%d/cache", cpuID))
+	cacheEntries, err := os.ReadDir(cachePath)
+	if err != nil {
+		return fmt.Errorf("could not read cache dir %s: %w", cachePath, err)
+	}
+
+	for _, entry := range cacheEntries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "index") {
 			continue
 		}
 
-		cachePath := hostSys(fmt.Sprintf("devices/system/cpu/cpu%d/cache", cpuInfos[i].CpuID))
-		entries, err := os.ReadDir(cachePath)
+		levelPath := filepath.Join(cachePath, entry.Name(), "level")
+		levelStr, err := ReadFile(levelPath)
 		if err != nil {
-			return fmt.Errorf("could not read cache dir %s: %w", cachePath, err)
+			continue
 		}
 
-		for _, entry := range entries {
-			if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "index") {
-				continue
-			}
-
-			levelPath := filepath.Join(cachePath, entry.Name(), "level")
-			levelStr, err := ReadFile(levelPath)
-			if err != nil {
-				continue
-			}
-
-			if strings.TrimSpace(levelStr) == "3" {
-				l3CacheDir := filepath.Join(cachePath, entry.Name())
-				cacheIdPath := filepath.Join(l3CacheDir, "id")
-				idStr, err := ReadFile(cacheIdPath)
-				if err != nil {
-					return fmt.Errorf("could not read L3 cache id from %s: %w", cacheIdPath, err)
-				}
-				id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
-				if err != nil {
-					return fmt.Errorf("could not parse L3 cache id '%s': %w", idStr, err)
-				}
-
-				sharedCPUListPath := filepath.Join(l3CacheDir, "shared_cpu_list")
-				sharedCPUListStr, err := ReadFile(sharedCPUListPath)
-				if err != nil {
-					return fmt.Errorf("could not read shared_cpu_list from %s: %w", sharedCPUListPath, err)
-				}
-
-				sharedCPUSet, err := cpuset.Parse(strings.TrimSpace(sharedCPUListStr))
-				if err != nil {
-					return fmt.Errorf("could not parse shared_cpu_list '%s': %w", sharedCPUListStr, err)
-				}
-
-				// Update the L3Cache ID for all the cpus with the same cache.
-				for j := range cpuInfos {
-					if sharedCPUSet.Contains(cpuInfos[j].CpuID) {
-						cpuInfos[j].UncoreCacheID = int(id)
-					}
-				}
-				break
-			}
+		// We are only interested in L3 caches
+		if strings.TrimSpace(levelStr) != "3" {
+			continue
 		}
-	}
-	return nil
-}
 
-func populateTopologyInfo(cpuInfos []CPUInfo) error {
-	// Cache the affinity masks so we don't read the same file multiple times.
-	numaMaskCache := make(map[int]string)
+		l3CacheDir := filepath.Join(cachePath, entry.Name())
 
-	for i := range cpuInfos {
-		cpuID := cpuInfos[i].CpuID
-
-		// Get Socket ID from sysfs (most reliable source)
-		socketPath := hostSys(fmt.Sprintf("devices/system/cpu/cpu%d/topology/physical_package_id", cpuID))
-		socketStr, err := ReadFile(socketPath)
+		sharedCPUListPath := filepath.Join(l3CacheDir, "shared_cpu_list")
+		sharedCPUListStr, err := ReadFile(sharedCPUListPath)
 		if err != nil {
-			// If sysfs fails for some reason, we keep the value from /proc/cpuinfo
-			log.Printf("Warning: could not read socket_id for cpu %d from sysfs: %v", cpuID, err)
+			return fmt.Errorf("could not read shared_cpu_list from %s: %w", sharedCPUListPath, err)
+		}
+
+		sharedCPUSet, err := cpuset.Parse(strings.TrimSpace(sharedCPUListStr))
+		if err != nil {
+			return fmt.Errorf("could not parse shared_cpu_list '%s': %w", sharedCPUListStr, err)
+		}
+
+		cacheIdPath := filepath.Join(l3CacheDir, "id")
+		idStr, err := ReadFile(cacheIdPath)
+		var id int
+		if err != nil {
+			// Fallback for ARM systems missing the 'id' file: use the lowest shared CPU ID as the cache ID.
+			if sharedCPUSet.Size() > 0 {
+				id = sharedCPUSet.List()[0]
+			} else {
+				id = cpuID
+			}
 		} else {
-			// Overwrite with the definitive value from sysfs
-			socketID, _ := strconv.Atoi(strings.TrimSpace(socketStr))
-			cpuInfos[i].SocketID = socketID
-		}
-
-		// Get NUMA Node ID from sysfs
-		nodePath := hostSys(fmt.Sprintf("devices/system/cpu/cpu%d", cpuID))
-		files, err := os.ReadDir(nodePath)
-		if err != nil {
-			return fmt.Errorf("could not read cpu dir %s: %w", nodePath, err)
-		}
-
-		foundNode := false
-		for _, file := range files {
-			if strings.HasPrefix(file.Name(), "node") {
-				nodeID, err := strconv.ParseInt(strings.TrimPrefix(file.Name(), "node"), 10, 64)
-				if err != nil {
-					continue // Should not happen with a well-formed sysfs
-				}
-				cpuInfos[i].NUMANodeID = int(nodeID)
-				foundNode = true
-
-				//  Get NUMA Affinity Mask (from cache if possible)
-				mask, ok := numaMaskCache[int(nodeID)]
-				if !ok {
-					maskPath := hostSys(fmt.Sprintf("devices/system/node/node%d/cpumap", nodeID))
-					maskLines, err := ReadLines(maskPath)
-					if err != nil {
-						return err
-					}
-					mask = formatAffinityMask(maskLines[0])
-					numaMaskCache[int(nodeID)] = mask
-				}
-				cpuInfos[i].NumaNodeAffinityMask = mask
-				break
+			id, err = strconv.Atoi(strings.TrimSpace(idStr))
+			if err != nil {
+				return fmt.Errorf("could not parse L3 cache id '%s': %w", idStr, err)
 			}
 		}
-		if !foundNode {
-			log.Printf("Warning: could not determine NUMA node for CPU %d", cpuID)
-		}
+
+		cpuInfo.UncoreCacheID = id
+		break
 	}
+
 	return nil
 }
 
+// TODO: Handle more complex sibling relationships (e.g. 4-way SMT) if needed in the future. For now we only handle 2-way hyperthreading which is the most common case.
 func populateCpuSiblings(cpuInfos []CPUInfo) {
 	// Define a key struct to identify a unique physical core.
 	type coreLocation struct {
-		socket int
-		core   int
+		socket  int
+		cluster int
+		core    int
 	}
 
 	// Map each physical core to the list of logical CPUs (siblings) on it.
 	coreToCPU := make(map[coreLocation][]int)
 	for _, info := range cpuInfos {
-		key := coreLocation{socket: info.SocketID, core: info.CoreID}
+		key := coreLocation{socket: info.SocketID, cluster: info.ClusterID, core: info.CoreID}
 		coreToCPU[key] = append(coreToCPU[key], info.CpuID)
 	}
 
@@ -468,27 +451,10 @@ func populateCpuSiblings(cpuInfos []CPUInfo) {
 			cpu1Id, cpu2Id := siblingIds[0], siblingIds[1]
 			cpu1Index, cpu2Index := cpuIndexMap[cpu1Id], cpuIndexMap[cpu2Id]
 
-			cpuInfos[cpu1Index].SiblingCpuID = cpu2Id
-			cpuInfos[cpu2Index].SiblingCpuID = cpu1Id
+			cpuInfos[cpu1Index].SiblingCPUID = cpu2Id
+			cpuInfos[cpu2Index].SiblingCPUID = cpu1Id
 		}
 	}
-}
-
-func formatAffinityMask(mask string) string {
-	if strings.TrimSpace(mask) == "" {
-		return "0x0"
-	}
-	parts := strings.Split(mask, ",")
-	// Reverse the parts to handle the kernel's little-endian word order.
-	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
-		parts[i], parts[j] = parts[j], parts[i]
-	}
-	newMask := strings.Join(parts, "")
-	newMask = strings.TrimLeft(newMask, "0")
-	if newMask == "" {
-		return "0x0"
-	}
-	return "0x" + newMask
 }
 
 // ReadFile reads contents from a file.
@@ -515,10 +481,6 @@ func ReadLines(filename string) ([]string, error) {
 
 func hostRoot(combineWith ...string) string {
 	return GetEnv("HOST_ROOT", "/", combineWith...)
-}
-
-func hostProc(combineWith ...string) string {
-	return hostRoot(combinePath("proc", combineWith...))
 }
 
 func hostSys(combineWith ...string) string {
