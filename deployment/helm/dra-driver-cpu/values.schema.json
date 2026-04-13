@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "nameOverride": {
+      "type": "string",
+      "description": "Override the chart name."
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "description": "Override the full release name."
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "pullPolicy"],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "description": "Container image repository."
+        },
+        "tag": {
+          "type": "string",
+          "description": "Image tag. Falls back to Chart.AppVersion if empty."
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"],
+          "description": "Image pull policy."
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" }
+        }
+      },
+      "description": "List of image pull secrets."
+    },
+    "rbac": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create"],
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Create RBAC resources (ClusterRole and ClusterRoleBinding)."
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "annotations": {
+          "type": "object",
+          "description": "Annotations to add to the ServiceAccount."
+        }
+      }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "description": "Annotations to add to pods."
+    },
+    "podLabels": {
+      "type": "object",
+      "description": "Extra labels to add to pods."
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requests": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpu": { "type": "string" },
+            "memory": { "type": "string" }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpu": { "type": "string" },
+            "memory": { "type": "string" }
+          }
+        }
+      }
+    },
+    "tolerations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string" },
+          "operator": { "type": "string", "enum": ["Exists", "Equal"] },
+          "value": { "type": "string" },
+          "effect": { "type": "string", "enum": ["NoSchedule", "PreferNoSchedule", "NoExecute"] },
+          "tolerationSeconds": { "type": "integer" }
+        }
+      },
+      "description": "Node tolerations for the DaemonSet pods."
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logLevel", "cpuDeviceMode", "groupBy"],
+      "properties": {
+        "logLevel": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Log verbosity (--v)."
+        },
+        "cpuDeviceMode": {
+          "type": "string",
+          "enum": ["grouped", "individual"],
+          "description": "CPU exposure mode."
+        },
+        "groupBy": {
+          "type": "string",
+          "enum": ["numanode", "socket"],
+          "description": "Grouping criteria when cpuDeviceMode=grouped."
+        },
+        "reservedCPUs": {
+          "type": "string",
+          "description": "CPUs to exclude from DRA allocation (e.g. '0-1'). Omitted if empty."
+        },
+        "hostnameOverride": {
+          "type": "string",
+          "description": "Override the node name used by the driver. Omitted if empty."
+        }
+      }
+    },
+    "healthzPath": {
+      "type": "string",
+      "description": "Path for the HTTP healthz endpoint."
+    },
+    "healthzPort": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "Port the HTTP server binds to; used for the container port and probes."
+    }
+  }
+}
