@@ -18,7 +18,9 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"sort"
 
@@ -452,7 +454,19 @@ func (cp *CPUDriver) unprepareResourceClaim(_ context.Context, claim kubeletplug
 // HandleError is called by the kubelet plugin framework when an error occurs in the background,
 // for example while publishing ResourceSlices.
 func (cp *CPUDriver) HandleError(ctx context.Context, err error, msg string) {
-	// For now we just follow the advice documented in the DRAPlugin API docs.
-	// See: https://pkg.go.dev/k8s.io/apimachinery/pkg/util/runtime#HandleErrorWithContext
+	// Log the error using the standard Kubernetes error handler
 	runtime.HandleErrorWithContext(ctx, err, msg)
+
+	// For unrecoverable errors, exit immediately with a clear error message.
+	// This fail-fast behavior is intentional for early project maturity to surface
+	// issues quickly rather than silently continuing in a broken state.
+	if !errors.Is(err, kubeletplugin.ErrRecoverable) {
+		klog.ErrorS(err, "Fatal unrecoverable error in DRA driver, exiting",
+			"driver", cp.driverName,
+			"node", cp.nodeName,
+			"message", msg,
+		)
+		klog.Flush()
+		os.Exit(1)
+	}
 }
