@@ -28,6 +28,7 @@ import (
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/klog/v2"
@@ -448,7 +449,10 @@ func (cp *CPUDriver) unprepareResourceClaim(_ context.Context, claim kubeletplug
 	return cp.cdiMgr.RemoveDevice(getCDIDeviceName(claim.UID))
 }
 
-func (cp *CPUDriver) HandleError(_ context.Context, err error, msg string) {
-	// TODO: Implement this function
-	klog.Error("HandleError error:", err, "msg:", msg)
+// HandleError is called by the kubelet plugin framework when an error occurs in the background,
+// for example while publishing ResourceSlices.
+func (cp *CPUDriver) HandleError(ctx context.Context, err error, msg string) {
+	// For now we just follow the advice documented in the DRAPlugin API docs.
+	// See: https://pkg.go.dev/k8s.io/apimachinery/pkg/util/runtime#HandleErrorWithContext
+	runtime.HandleErrorWithContext(ctx, err, msg)
 }
