@@ -18,7 +18,9 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"sort"
 
@@ -28,6 +30,7 @@ import (
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/klog/v2"
@@ -448,7 +451,22 @@ func (cp *CPUDriver) unprepareResourceClaim(_ context.Context, claim kubeletplug
 	return cp.cdiMgr.RemoveDevice(getCDIDeviceName(claim.UID))
 }
 
-func (cp *CPUDriver) HandleError(_ context.Context, err error, msg string) {
-	// TODO: Implement this function
-	klog.Error("HandleError error:", err, "msg:", msg)
+// HandleError is called by the kubelet plugin framework when an error occurs in the background,
+// for example while publishing ResourceSlices.
+func (cp *CPUDriver) HandleError(ctx context.Context, err error, msg string) {
+	// Log the error using the standard Kubernetes error handler
+	runtime.HandleErrorWithContext(ctx, err, msg)
+
+	// For unrecoverable errors, exit immediately with a clear error message.
+	// This fail-fast behavior is intentional for early project maturity to surface
+	// issues quickly rather than silently continuing in a broken state.
+	if !errors.Is(err, kubeletplugin.ErrRecoverable) {
+		klog.ErrorS(err, "Fatal unrecoverable error in DRA driver, exiting",
+			"driver", cp.driverName,
+			"node", cp.nodeName,
+			"message", msg,
+		)
+		klog.Flush()
+		os.Exit(1)
+	}
 }
