@@ -134,34 +134,7 @@ var (
 		}
 		return infos
 	}()
-	mockCPUInfos_DualSocket_120CPUsPerSocket_HT = func() []cpuinfo.CPUInfo {
-		var infos []cpuinfo.CPUInfo
-		numCores := 120
-		for socketID := range 2 {
-			for coreID := 0; coreID < numCores/2; coreID++ {
-				baseCpuID := socketID * numCores
-				infos = append(infos, cpuinfo.CPUInfo{
-					CpuID:        baseCpuID + coreID*2,
-					CoreID:       coreID,
-					SocketID:     socketID,
-					NUMANodeID:   socketID,
-					CoreType:     cpuinfo.CoreTypePerformance,
-					SiblingCPUID: baseCpuID + coreID*2 + 1,
-				})
-
-				// Create the second logical CPU (thread 1) on the same core
-				infos = append(infos, cpuinfo.CPUInfo{
-					CpuID:        baseCpuID + coreID*2 + 1,
-					CoreID:       coreID,
-					SocketID:     socketID,
-					NUMANodeID:   socketID,
-					CoreType:     cpuinfo.CoreTypePerformance,
-					SiblingCPUID: baseCpuID + coreID*2,
-				})
-			}
-		}
-		return infos
-	}()
+	mockCPUInfos_DualSocket_120CPUsPerSocket_HT = getCPUInfo(120, 2)
 )
 
 func TestPublishResources(t *testing.T) {
@@ -1075,4 +1048,34 @@ func testClaim(claimUID types.UID, driverName, poolName string, consumedCapacity
 			},
 		},
 	}
+}
+
+func getCPUInfo(numCores int, numSockets int) []cpuinfo.CPUInfo {
+	var infos []cpuinfo.CPUInfo
+
+	for socketID := range numSockets {
+		for coreID := range numCores / 2 {
+			baseCpuID := socketID * numCores
+			infos = append(infos, cpuinfo.CPUInfo{
+				CpuID:        baseCpuID + coreID*2,
+				CoreID:       coreID,
+				SocketID:     socketID,
+				NUMANodeID:   socketID,
+				CoreType:     cpuinfo.CoreTypePerformance,
+				SiblingCPUID: baseCpuID + coreID*2 + 1,
+			})
+
+			// Create the second logical CPU (thread 1) on the same core
+			infos = append(infos, cpuinfo.CPUInfo{
+				CpuID:        baseCpuID + coreID*2 + 1,
+				CoreID:       coreID,
+				SocketID:     socketID,
+				NUMANodeID:   socketID,
+				CoreType:     cpuinfo.CoreTypePerformance,
+				SiblingCPUID: baseCpuID + coreID*2,
+			})
+		}
+	}
+
+	return infos
 }
