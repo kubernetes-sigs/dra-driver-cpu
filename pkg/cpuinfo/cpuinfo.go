@@ -422,7 +422,7 @@ func populateTopologyInfo(cpuInfo *CPUInfo) error {
 	return nil
 }
 
-// TODO: Handle more complex sibling relationships (e.g. 4-wqay SMT) if needed in the future. For now we only handle 2-way hyperthreading which is the most common case.
+// TODO: Handle more complex sibling relationships (e.g. 4-way SMT) if needed in the future. For now we only handle 2-way hyperthreading which is the most common case.
 func populateCpuSiblings(cpuInfos []CPUInfo) {
 	// Define a key struct to identify a unique physical core.
 	type coreLocation struct {

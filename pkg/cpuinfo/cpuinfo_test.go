@@ -168,7 +168,6 @@ func createFakeCPUTopology(t *testing.T, dir string, topo fakeCPUTopology) {
 		if err := os.WriteFile(filepath.Join(index3Dir, "level"), []byte("3\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
-
 		if err := os.WriteFile(filepath.Join(index3Dir, "id"), []byte(fmt.Sprintf("%d\n", l3CacheID)), 0600); err != nil {
 			t.Fatal(err)
 		}
