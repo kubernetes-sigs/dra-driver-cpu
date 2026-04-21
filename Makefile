@@ -24,6 +24,7 @@ ARCH=$(shell go env GOARCH)
 YQ_VERSION ?= 4.47.1
 # matches golang 1.25.z
 GOLANGCI_LINT_VERSION ?= 2.7.2
+HELM_DOCS_VERSION ?= 1.14.2
 # paths
 YQ = $(OUT_DIR)/yq
 GOLANGCI_LINT = $(OUT_DIR)/golangci-lint
@@ -234,3 +235,12 @@ install-golangci-lint: $(OUT_DIR) ## make sure the golangci-lint tool is availab
 
 helm-lint:
 	helm lint --strict deployment/helm/dra-driver-cpu
+
+.PHONY: helm-docs
+helm-docs: ## regenerate helm chart README from values.yaml annotations and README.md.gotmpl
+	go run github.com/norwoodj/helm-docs/cmd/helm-docs@v$(HELM_DOCS_VERSION) --chart-search-root=deployment/helm
+
+.PHONY: helm-docs-check
+helm-docs-check: helm-docs ## verify helm chart README is up to date; fails if regeneration produces a diff
+	@git diff --exit-code deployment/helm/ || \
+		(echo "ERROR: Helm chart README.md is out of date. Run 'make helm-docs' to update it." && exit 1)

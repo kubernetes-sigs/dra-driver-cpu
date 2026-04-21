@@ -1,6 +1,6 @@
 # dra-driver-cpu Helm Chart
 
-Deploys the [dra-driver-cpu](https://github.com/kubernetes-sigs/dra-driver-cpu) DaemonSet — a Kubernetes Dynamic Resource Allocation (DRA) driver for managing CPU resources.
+Kubernetes DRA driver for managing CPU resources with topology-aware allocation, exclusive CPU assignment, and shared CPU pool management via the Dynamic Resource Allocation framework.
 
 ## Installation
 
@@ -18,40 +18,38 @@ helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system \
   --set args.reservedCPUs="0-1"
 ```
 
-## Configuration
-
-The following table lists the configurable parameters and their default values:
-
-| Parameter | Description | Default |
-|---|---|---|
-| `nameOverride` | Override the chart name | `""` |
-| `fullnameOverride` | Override the full release name | `""` |
-| `image.repository` | Container image repository | `us-central1-docker.pkg.dev/k8s-staging-images/dra-driver-cpu/dra-driver-cpu` |
-| `image.tag` | Image tag (falls back to `Chart.AppVersion` if empty) | `latest` |
-| `image.pullPolicy` | Image pull policy | `IfNotPresent` |
-| `imagePullSecrets` | List of image pull secrets | `[]` |
-| `rbac.create` | Create RBAC resources (ClusterRole and ClusterRoleBinding) | `true` |
-| `serviceAccount.annotations` | Annotations to add to the ServiceAccount | `{}` |
-| `podAnnotations` | Annotations to add to pods | `{}` |
-| `podLabels` | Extra labels to add to pods | `{}` |
-| `resources.requests.cpu` | CPU resource request | `100m` |
-| `resources.requests.memory` | Memory resource request | `50Mi` |
-| `resources.limits` | Resource limits (unset by default) | `{}` |
-| `tolerations` | Node tolerations | all NoSchedule taints tolerated |
-| `args.logLevel` | Log verbosity (`--v`) | `4` |
-| `args.cpuDeviceMode` | CPU exposure mode: `grouped` or `individual` | `grouped` |
-| `args.groupBy` | Grouping criteria when `cpuDeviceMode=grouped`: `numanode` or `socket` | `numanode` |
-| `args.reservedCPUs` | CPUs reserved for system/kubelet (e.g. `0-1`). Omitted if empty. | `""` |
-| `args.hostnameOverride` | Override the node name used by the driver. Omitted if empty. | `""` |
-| `healthzPath` | Path for liveness and readiness probes | `/healthz` |
-| `healthzPort` | Port the HTTP server binds to; used for the container port and probes | `8080` |
-
 Parameters can be set at install time using `--set` or a custom values file:
 
 ```bash
 helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system --set args.logLevel=4
 helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system -f my-values.yaml
 ```
+
+## Values
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| args.cpuDeviceMode | string | `"grouped"` | CPU exposure mode: `grouped` (expose NUMA nodes or sockets as devices) or `individual` (expose each CPU as a device) |
+| args.groupBy | string | `"numanode"` | Grouping criteria when `cpuDeviceMode=grouped`: `numanode` or `socket` |
+| args.hostnameOverride | string | `""` | Override the node name the driver registers under; omitted when empty |
+| args.logLevel | int | `4` | Log verbosity level passed as `--v` |
+| args.reservedCPUs | string | `""` | CPUs reserved for the OS and kubelet, excluded from DRA management (e.g. `"0-1"`); omitted when empty |
+| fullnameOverride | string | `""` | Override the full release name |
+| healthzPath | string | `"/healthz"` | Path for liveness and readiness probes |
+| healthzPort | int | `8080` | Port the HTTP server binds to; used for the container port and probes |
+| image.pullPolicy | string | `"IfNotPresent"` | Image pull policy |
+| image.repository | string | `"us-central1-docker.pkg.dev/k8s-staging-images/dra-driver-cpu/dra-driver-cpu"` | Container image repository |
+| image.tag | string | `""` | Image tag; defaults to `.Chart.AppVersion` when empty, which is set to the release tag at package time |
+| imagePullSecrets | list | `[]` | List of image pull secrets |
+| nameOverride | string | `""` | Override the chart name |
+| podAnnotations | object | `{}` | Annotations to add to pods |
+| podLabels | object | `{}` | Extra labels to add to pods |
+| rbac.create | bool | `true` | Create RBAC resources (ClusterRole and ClusterRoleBinding) |
+| resources.limits | object | `{}` | Resource limits (unset by default) |
+| resources.requests.cpu | string | `"100m"` | CPU resource request |
+| resources.requests.memory | string | `"50Mi"` | Memory resource request |
+| serviceAccount.annotations | object | `{}` | Annotations to add to the ServiceAccount |
+| tolerations | list | `[{"effect":"NoSchedule","operator":"Exists"}]` | Node tolerations; defaults to tolerating all NoSchedule taints |
 
 ## Uninstallation
 
