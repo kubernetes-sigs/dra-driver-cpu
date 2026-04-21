@@ -54,6 +54,9 @@ build: build-dracpu build-test-dracpuinfo build-test-dracputester ## build all t
 build-dracpu: ## build dracpu
 	go build -v -o "$(OUT_DIR)/dracpu" ./cmd/dracpu
 
+build-setup-runtime-containerd: ## build the containerd configuration setup helper
+	go build -v -o "$(OUT_DIR)/setup-runtime-containerd" ./tools/setup/containerd
+
 clean: ## clean
 	rm -rf "$(OUT_DIR)/"
 
@@ -87,9 +90,16 @@ IMAGE_LATEST?=$(STAGING_IMAGE_NAME):latest
 IMAGE := ${STAGING_IMAGE_NAME}:${TAG}
 IMAGE_CI := ${REGISTRY_CI}/${IMAGE_NAME}:${TAG}
 IMAGE_TEST := ${REGISTRY_CI}/${IMAGE_NAME}-test:${TAG}
+# setup helper image
+IMAGE_SETUP_NAME=dra-driver-cpu-setup
+IMAGE_SETUP := ${STAGING_IMAGE_SETUP_NAME}:${TAG}
+STAGING_IMAGE_SETUP_NAME := ${REGISTRY}/${STAGING_REPO_NAME}/${IMAGE_SETUP_NAME}
 # target platform(s)
 PLATFORMS?=linux/amd64,linux/arm64
 LOCAL_PLATFORM?=linux/$(ARCH)
+
+# worker count for the containerd setup Job template
+WORKER_COUNT ?= 1
 
 # set convenient defaults for user variables
 DRACPU_E2E_CPU_DEVICE_MODE ?= grouped
@@ -126,6 +136,20 @@ push-image: ## build and push image directly to registry (supports multi-arch)
 		--tag="${IMAGE_LATEST}" \
 		--push
 	-docker buildx rm dracpu-builder
+
+build-setup-image: ## build setup helper image
+	docker buildx build . \
+		--file Dockerfile.setup \
+		--platform="${LOCAL_PLATFORM}" \
+		--tag="${IMAGE_SETUP}" \
+		--load
+
+setup-containerd-job: dist ## generate the containerd setup Job manifest from template
+	@sed -e 's|WORKER_COUNT|$(WORKER_COUNT)|g' \
+	     -e 's|IMAGE_NAME|$(IMAGE_SETUP)|g' \
+	     manifests/setup/containerd-setup-job.yaml.tmpl \
+	     > dist/containerd-setup-job.yaml
+	@echo "Generated dist/containerd-setup-job.yaml (workers=$(WORKER_COUNT))"
 
 kind-cluster:  ## create kind cluster
 	kind create cluster --name ${CLUSTER_NAME} --config hack/kind.yaml

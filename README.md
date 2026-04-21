@@ -261,6 +261,25 @@ After editing the config, restart containerd:
 systemctl restart containerd
 ```
 
+### Automated Configuration for Older Runtimes
+
+For clusters running containerd < 2.0, you can use the setup helper Job to automatically
+configure containerd on all worker nodes:
+
+```bash
+make build-setup-image setup-containerd-job WORKER_COUNT=3
+kubectl create -f dist/containerd-setup-job.yaml
+```
+
+Set `WORKER_COUNT` to the number of worker nodes in your cluster. You can find this with:
+
+```bash
+kubectl get nodes -l node-role.kubernetes.io/worker --no-headers | wc -l
+```
+
+The Job configures NRI and CDI in containerd's `config.toml` and restarts containerd on each
+worker node. It runs once and completes — no persistent resources are left behind.
+
 ## Getting Started
 
 ### Installation
