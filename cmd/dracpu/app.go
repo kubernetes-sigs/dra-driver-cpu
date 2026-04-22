@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sys/unix"
@@ -35,6 +36,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	nodeutil "k8s.io/component-helpers/node/util"
 	"k8s.io/klog/v2"
+	"k8s.io/klog/v2/textlogger"
 	"k8s.io/utils/cpuset"
 )
 
@@ -110,18 +112,33 @@ func init() {
 }
 
 func main() {
-	klog.InitFlags(nil)
+	config := textlogger.NewConfig()
+	config.AddFlags(flag.CommandLine)
 	flag.Parse()
 
-	if err := run(); err != nil {
-		klog.Fatalf("%v", err)
+	logger := textlogger.NewLogger(config)
+	// some key deps still call klog directly, so we need this integration.
+	// TODO: check every time we bump kube libs to a new major version,
+	// as the contextual logging transition to kube libs is still ongoing
+	// k8s.io/client-go
+	// k8s.io/apimachinery
+	// k8s.io/dynamic-resource-allocation
+	// k8s.io/kube-openapi
+	// k8s.io/utils
+	// k8s.io/component-helpers
+	// k8s.io/kubelet
+	klog.SetLoggerWithOptions(logger, klog.ContextualLogger(true))
+
+	if err := run(logger); err != nil {
+		logger.Error(err, "failed to run")
+		os.Exit(1)
 	}
 }
 
-func run() error {
-	printVersion()
+func run(logger logr.Logger) error {
+	printVersion(logger)
 	flag.VisitAll(func(f *flag.Flag) {
-		klog.Infof("FLAG: --%s=%q", f.Name, f.Value)
+		logger.Info("FLAG", "name", f.Name, "value", f.Value.String())
 	})
 
 	reservedCPUSet, err := cpuset.Parse(reservedCPUs)
@@ -151,16 +168,16 @@ func run() error {
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			klog.Errorf("HTTP server failed: %v", err)
+			logger.Error(err, "HTTP server failed")
 		}
 	}()
 
-	var config *rest.Config
+	var restConfig *rest.Config
 	if kubeconfig != "" {
-		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+		restConfig, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 	} else {
 		// creates the in-cluster config
-		config, err = rest.InClusterConfig()
+		restConfig, err = rest.InClusterConfig()
 	}
 	if err != nil {
 		return fmt.Errorf("can not create client-go configuration: %w", err)
@@ -168,11 +185,11 @@ func run() error {
 
 	// use protobuf for better performance at scale
 	// https://kubernetes.io/docs/reference/using-api/api-concepts/#alternate-representations-of-resources
-	config.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
-	config.ContentType = "application/vnd.kubernetes.protobuf"
+	restConfig.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
+	restConfig.ContentType = "application/vnd.kubernetes.protobuf"
 
 	// creates the clientset
-	clientset, err := kubernetes.NewForConfig(config)
+	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return fmt.Errorf("can not create client-go client: %w", err)
 	}
@@ -183,7 +200,7 @@ func run() error {
 	}
 
 	// trap Ctrl+C and call cancel on the context
-	ctx := context.Background()
+	ctx := klog.NewContext(context.Background(), logger)
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Enable signal handler
@@ -207,26 +224,27 @@ func run() error {
 	}
 	defer dracpu.Stop()
 	ready.Store(true)
-	klog.Info("driver started")
+	logger.Info("driver started")
 
 	select {
 	case <-signalCh:
-		klog.Infof("Exiting: received signal")
+		logger.Info("exiting", "reason", "received signal")
 		cancel()
 	case <-ctx.Done():
-		klog.Infof("Exiting: context cancelled")
+		logger.Info("exiting", "reason", "context cancelled")
 	}
 
 	// Gracefully shutdown HTTP server
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		klog.Errorf("HTTP server shutdown failed: %v", err)
+		// we prefer to carry on
+		logger.Error(err, "HTTP server shutdown failed")
 	}
 	return nil
 }
 
-func printVersion() {
+func printVersion(logger logr.Logger) {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return
@@ -240,5 +258,5 @@ func printVersion() {
 			vcsTime = f.Value
 		}
 	}
-	klog.Infof("dracpu go %s build: %s time: %s", info.GoVersion, vcsRevision, vcsTime)
+	logger.Info("dracpu", "goVersion", info.GoVersion, "build", vcsRevision, "time", vcsTime)
 }
