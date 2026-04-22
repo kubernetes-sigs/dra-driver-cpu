@@ -165,7 +165,7 @@ func TestCreateContainer(t *testing.T) {
 			}(),
 			cpuAllocationStore: func() *store.CPUAllocation {
 				store := store.NewCPUAllocation(topo, cpuset.New())
-				store.AddResourceClaimAllocation(types.UID(claimUID), cpuset.New(2, 3))
+				store.AddResourceClaimAllocation(testr.New(t), types.UID(claimUID), cpuset.New(2, 3))
 				return store
 			}(),
 			claimTracker: store.NewClaimTracker(),

@@ -19,9 +19,9 @@ package store
 import (
 	"sync"
 
+	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/klog/v2"
 	"k8s.io/utils/cpuset"
 )
 
@@ -52,7 +52,7 @@ func NewCPUAllocation(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUS
 }
 
 // AddResourceClaimAllocation adds a new resource claim allocation to the store.
-func (s *CPUAllocation) AddResourceClaimAllocation(claimUID types.UID, cpus cpuset.CPUSet) {
+func (s *CPUAllocation) AddResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if old, ok := s.resourceClaimAllocations[claimUID]; ok {
@@ -60,17 +60,17 @@ func (s *CPUAllocation) AddResourceClaimAllocation(claimUID types.UID, cpus cpus
 	}
 	s.resourceClaimAllocations[claimUID] = cpus
 	s.allocatedCPUs = s.allocatedCPUs.Union(cpus)
-	klog.Infof("Added allocation for resource claim %s: CPUs %s", claimUID, cpus.String())
+	logger.Info("added allocation for resource claim", "claimUID", claimUID, "cpus", cpus.String())
 }
 
 // RemoveResourceClaimAllocation removes a resource claim allocation from the store.
-func (s *CPUAllocation) RemoveResourceClaimAllocation(claimUID types.UID) {
+func (s *CPUAllocation) RemoveResourceClaimAllocation(logger logr.Logger, claimUID types.UID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if cpus, ok := s.resourceClaimAllocations[claimUID]; ok {
 		delete(s.resourceClaimAllocations, claimUID)
 		s.allocatedCPUs = s.allocatedCPUs.Difference(cpus)
-		klog.Infof("Removed allocation for resource claim %s", claimUID)
+		logger.Info("removed allocation for resource claim", "claimUID", claimUID)
 	}
 }
 

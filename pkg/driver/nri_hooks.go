@@ -64,7 +64,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 
 					allGuaranteedCPUs = allGuaranteedCPUs.Union(cpus)
 					claimUIDs = append(claimUIDs, uid)
-					cpuAllocationStore.AddResourceClaimAllocation(uid, cpus)
+					cpuAllocationStore.AddResourceClaimAllocation(logger, uid, cpus)
 				}
 				logger.Info("found guaranteed CPUs", "pod", klog.KObj(pod), "container", container.Name, "cpus", allGuaranteedCPUs.String())
 				state = store.NewContainerState(container.GetName(), containerUID, claimUIDs...)
@@ -203,7 +203,7 @@ func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr
 		// TODO: This workaround assumes that ResourceClaims are NOT shared across pods/containers. If claim sharing
 		// is supported in the future, this early release of CPUS will need an update.
 		for _, claimUID := range claimUIDs {
-			cp.cpuAllocationStore.RemoveResourceClaimAllocation(claimUID)
+			cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claimUID)
 		}
 		// Remove the guaranteed CPUs from the containers with shared CPUs.
 		updates = cp.getSharedContainerUpdates(logger, types.UID(ctr.GetId()))
