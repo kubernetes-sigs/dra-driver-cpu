@@ -16,13 +16,13 @@ limitations under the License.
 package driver
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/go-logr/logr"
+	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 	cdiSpec "tags.cncf.io/container-device-interface/specs-go"
 )
 
@@ -37,167 +37,146 @@ var (
 	cdiSpecDir = "/var/run/cdi"
 )
 
-// CdiManager manages a single CDI JSON spec file using a mutex for thread safety.
+// CdiManager handles the lifecycle of CDI allocations for the driver.
 type CdiManager struct {
-	path       string
-	mutex      sync.Mutex
-	cdiKind    string
-	driverName string
+	mu            sync.Mutex
+	cache         *cdiapi.Cache
+	cdiKind       string
+	driverName    string
+	specName      string
+	activeDevices map[string]cdiSpec.Device
 }
 
 // NewCdiManager creates a manager for the driver's CDI spec file.
 func NewCdiManager(logger logr.Logger, driverName string) (*CdiManager, error) {
-	path := filepath.Join(cdiSpecDir, fmt.Sprintf("%s.json", driverName))
-
-	if err := os.MkdirAll(cdiSpecDir, 0755); err != nil {
-		return nil, fmt.Errorf("error creating CDI spec directory %q: %w", cdiSpecDir, err)
+	cache, err := cdiapi.NewCache(
+		cdiapi.WithSpecDirs(cdiSpecDir),
+		cdiapi.WithAutoRefresh(false), // Disabled because we manually push our internal state to disk via syncToCache().
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CDI cache: %w", err)
 	}
 
-	cdiKind := fmt.Sprintf("%s/%s", cdiVendor, cdiClass)
 	c := &CdiManager{
-		path:       path,
-		cdiKind:    cdiKind,
-		driverName: driverName,
+		cache:         cache,
+		cdiKind:       fmt.Sprintf("%s/%s", cdiVendor, cdiClass),
+		driverName:    driverName,
+		specName:      fmt.Sprintf("%s.json", driverName),
+		activeDevices: make(map[string]cdiSpec.Device),
 	}
 
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		initialSpec := &cdiSpec.Spec{
-			Version: cdiSpecVersion,
-			Kind:    cdiKind,
-			Devices: []cdiSpec.Device{},
-		}
-		if err := c.writeSpecToFile(logger, initialSpec); err != nil {
-			return nil, err
-		}
-	} else if err != nil {
-		return nil, fmt.Errorf("error accessing CDI spec file %q: %w", path, err)
+	// Recovery logic in case of restart.
+	// We log errors but always attempt recovery because another driver's
+	// malformed CDI file should not prevent us from recovering our own valid state.
+	if err := c.cache.Refresh(); err != nil {
+		logger.Info("Encountered errors refreshing CDI cache (attempting recovery anyway)", "error", err)
 	}
 
-	logger.Info("initialized CDI file manager", "path", path)
+	// Always check the cache, even if Refresh() returned errors.
+	specs := c.cache.GetVendorSpecs(cdiVendor)
+
+	for _, spec := range specs {
+		if spec.GetClass() == cdiClass && filepath.Base(spec.GetPath()) == c.specName {
+			for _, device := range spec.Devices {
+				c.activeDevices[device.Name] = device
+			}
+
+			logger.Info("Successfully recovered state", "devices", len(c.activeDevices))
+			break
+		}
+	}
+
+	logger.Info("Initialized CDI manager with cache", "specName", c.specName)
 	return c, nil
 }
 
-// AddDevice adds a device to the CDI spec file.
+// AddDevice adds a device to the internal state and syncs to the CDI spec file.
 func (c *CdiManager) AddDevice(logger logr.Logger, deviceName string, envVar string) error {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	spec, err := c.readSpecFromFile(logger)
-	if err != nil {
-		return err
-	}
+	// Save previous state in case this is an overwrite (rare, but good for safety)
+	oldDevice, existed := c.activeDevices[deviceName]
 
-	// Remove any existing device with the same name to make this call idempotent.
-	removeDeviceFromSpec(spec, deviceName)
-	newDevice := cdiSpec.Device{
+	// Update internal state
+	c.activeDevices[deviceName] = cdiSpec.Device{
 		Name: deviceName,
 		ContainerEdits: cdiSpec.ContainerEdits{
-			Env: []string{
-				envVar,
-			},
+			Env: []string{envVar},
 		},
 	}
 
-	spec.Devices = append(spec.Devices, newDevice)
-	return c.writeSpecToFile(logger, spec)
-}
-
-// RemoveDevice removes a device from the CDI spec file.
-func (c *CdiManager) RemoveDevice(logger logr.Logger, deviceName string) error {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	spec, err := c.readSpecFromFile(logger)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // File already gone, nothing to do.
+	// Push the updated state to the cache
+	if err := c.syncToCache(); err != nil {
+		// Rollback memory state on failure to stay consistent with disk
+		if existed {
+			c.activeDevices[deviceName] = oldDevice
+		} else {
+			delete(c.activeDevices, deviceName)
 		}
-		return err
+		return fmt.Errorf("failed to sync cache during addition (state rolled back): %w", err)
 	}
 
-	if removeDeviceFromSpec(spec, deviceName) {
-		return c.writeSpecToFile(logger, spec)
-	}
-
+	logger.V(4).Info("Added CDI device", "deviceName", deviceName, "env", envVar)
 	return nil
 }
 
-func (c *CdiManager) GetSpec(logger logr.Logger) (*cdiSpec.Spec, error) {
-	return c.readSpecFromFile(logger)
+// RemoveDevice removes a device from the internal state and syncs to the CDI spec file.
+func (c *CdiManager) RemoveDevice(logger logr.Logger, deviceName string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	device, exists := c.activeDevices[deviceName]
+	if !exists {
+		// Device not found, nothing to do
+		return nil
+	}
+
+	// Remove from internal state temporarily
+	delete(c.activeDevices, deviceName)
+
+	// Push the updated state to the cache
+	if err := c.syncToCache(); err != nil {
+		// Rollback memory state on failure so subsequent Kubelet retries
+		// will actually re-attempt the disk write
+		c.activeDevices[deviceName] = device
+		return fmt.Errorf("failed to sync cache during removal (state rolled back): %w", err)
+	}
+
+	logger.V(4).Info("Removed CDI device", "deviceName", deviceName)
+	return nil
 }
 
-func removeDeviceFromSpec(spec *cdiSpec.Spec, deviceName string) bool {
-	deviceFound := false
-	newDevices := []cdiSpec.Device{}
-	for _, d := range spec.Devices {
-		if d.Name != deviceName {
-			newDevices = append(newDevices, d)
-		} else {
-			deviceFound = true
+// syncToCache generates a fresh CDI spec from the activeDevices map and writes it.
+func (c *CdiManager) syncToCache() error {
+	// If no devices are active, clean up the file entirely
+	if len(c.activeDevices) == 0 {
+		if err := c.cache.RemoveSpec(c.specName); err != nil {
+			return fmt.Errorf("failed to remove empty CDI spec: %w", err)
 		}
-	}
-	spec.Devices = newDevices
-	return deviceFound
-}
-
-func (c *CdiManager) readSpecFromFile(logger logr.Logger) (*cdiSpec.Spec, error) {
-	data, err := os.ReadFile(c.path)
-	if err != nil {
-		return nil, fmt.Errorf("error reading CDI spec file %q: %w", c.path, err)
+		return nil
 	}
 
-	if len(data) == 0 {
-		return &cdiSpec.Spec{
-			Version: cdiSpecVersion,
-			Kind:    c.cdiKind,
-			Devices: []cdiSpec.Device{},
-		}, nil
+	// Build a brand new spec from scratch
+	spec := &cdiSpec.Spec{
+		Version: cdiSpecVersion,
+		Kind:    c.cdiKind,
+		Devices: make([]cdiSpec.Device, 0, len(c.activeDevices)),
 	}
 
-	spec := &cdiSpec.Spec{}
-	if err := json.Unmarshal(data, spec); err != nil {
-		return nil, fmt.Errorf("error unmarshaling CDI spec from %q: %w", c.path, err)
-	}
-	logger.V(4).Info("read CDI spec", "path", c.path, "spec", spec)
-	return spec, nil
-}
-
-func (c *CdiManager) writeSpecToFile(logger logr.Logger, spec *cdiSpec.Spec) (err error) {
-	tmpFile, err := os.CreateTemp(cdiSpecDir, c.driverName)
-	if err != nil {
-		return fmt.Errorf("failed to create temporary CDI spec: %w", err)
-	}
-	defer func() {
-		// avoid file descriptor leakage or undeterministic closure
-		// note we ignore the error; this is intentional because in the happy
-		// path we will have a double close(), which is however harmless.
-		_ = tmpFile.Close()
-		if err != nil {
-			_ = os.Remove(tmpFile.Name())
-		}
-	}()
-
-	data, err := json.MarshalIndent(spec, "", "  ")
-	if err != nil {
-		return fmt.Errorf("error marshaling CDI spec: %w", err)
+	// Populate the new spec's devices
+	for _, device := range c.activeDevices {
+		spec.Devices = append(spec.Devices, device)
 	}
 
-	if _, err := tmpFile.Write(data); err != nil {
-		return fmt.Errorf("failed to write to temporary CDI spec: %w", err)
+	// Sort devices by name to ensure deterministic order
+	sort.Slice(spec.Devices, func(i, j int) bool {
+		return spec.Devices[i].Name < spec.Devices[j].Name
+	})
+
+	if err := c.cache.WriteSpec(spec, c.specName); err != nil {
+		return fmt.Errorf("failed to write CDI spec: %w", err)
 	}
 
-	if err := tmpFile.Sync(); err != nil {
-		return fmt.Errorf("failed to sync temporary CDI spec: %w", err)
-	}
-
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temporary CDI spec: %w", err)
-	}
-
-	if err := os.Rename(tmpFile.Name(), c.path); err != nil {
-		return fmt.Errorf("failed to rename temporary CDI spec: %w", err)
-	}
-
-	logger.V(4).Info("updated and synced CDI spec file", "path", c.path)
 	return nil
 }
