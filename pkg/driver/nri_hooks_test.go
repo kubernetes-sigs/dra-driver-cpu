@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/containerd/nri/pkg/api"
+	"github.com/go-logr/logr/testr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/stretchr/testify/require"
@@ -79,7 +80,8 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			allocations, err := parseDRAEnvToClaimAllocations(tc.envs)
+			logger := testr.New(t)
+			allocations, err := parseDRAEnvToClaimAllocations(logger, tc.envs)
 			if tc.expectedErrorContains != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.expectedErrorContains)
