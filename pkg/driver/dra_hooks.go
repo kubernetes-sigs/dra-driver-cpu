@@ -345,7 +345,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(ctx context.Context, claim *res
 
 	deviceName := getCDIDeviceName(claim.UID)
 	envVar := fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claim.UID, cpuAssignment.String())
-	if err := cp.cdiMgr.AddDevice(deviceName, envVar); err != nil {
+	if err := cp.cdiMgr.AddDevice(logger, deviceName, envVar); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
 
@@ -404,7 +404,7 @@ func (cp *CPUDriver) prepareResourceClaim(ctx context.Context, claim *resourceap
 	cp.cpuAllocationStore.AddResourceClaimAllocation(claim.UID, claimCPUSet)
 	deviceName := getCDIDeviceName(claim.UID)
 	envVar := fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claim.UID, claimCPUSet.String())
-	if err := cp.cdiMgr.AddDevice(deviceName, envVar); err != nil {
+	if err := cp.cdiMgr.AddDevice(logger, deviceName, envVar); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
 
@@ -451,9 +451,10 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 }
 
 func (cp *CPUDriver) unprepareResourceClaim(ctx context.Context, claim kubeletplugin.NamespacedObject) error {
+	logger := klog.FromContext(ctx)
 	cp.cpuAllocationStore.RemoveResourceClaimAllocation(claim.UID)
 	// Remove the device from the CDI spec file using the manager.
-	return cp.cdiMgr.RemoveDevice(getCDIDeviceName(claim.UID))
+	return cp.cdiMgr.RemoveDevice(logger, getCDIDeviceName(claim.UID))
 }
 
 // HandleError is called by the kubelet plugin framework when an error occurs in the background,

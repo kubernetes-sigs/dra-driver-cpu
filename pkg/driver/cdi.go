@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"k8s.io/klog/v2"
+	"github.com/go-logr/logr"
 	cdiSpec "tags.cncf.io/container-device-interface/specs-go"
 )
 
@@ -46,7 +46,7 @@ type CdiManager struct {
 }
 
 // NewCdiManager creates a manager for the driver's CDI spec file.
-func NewCdiManager(driverName string) (*CdiManager, error) {
+func NewCdiManager(logger logr.Logger, driverName string) (*CdiManager, error) {
 	path := filepath.Join(cdiSpecDir, fmt.Sprintf("%s.json", driverName))
 
 	if err := os.MkdirAll(cdiSpecDir, 0755); err != nil {
@@ -66,23 +66,23 @@ func NewCdiManager(driverName string) (*CdiManager, error) {
 			Kind:    cdiKind,
 			Devices: []cdiSpec.Device{},
 		}
-		if err := c.writeSpecToFile(initialSpec); err != nil {
+		if err := c.writeSpecToFile(logger, initialSpec); err != nil {
 			return nil, err
 		}
 	} else if err != nil {
 		return nil, fmt.Errorf("error accessing CDI spec file %q: %w", path, err)
 	}
 
-	klog.Infof("Initialized CDI file manager for %q", path)
+	logger.Info("initialized CDI file manager", "path", path)
 	return c, nil
 }
 
 // AddDevice adds a device to the CDI spec file.
-func (c *CdiManager) AddDevice(deviceName string, envVar string) error {
+func (c *CdiManager) AddDevice(logger logr.Logger, deviceName string, envVar string) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	spec, err := c.readSpecFromFile()
+	spec, err := c.readSpecFromFile(logger)
 	if err != nil {
 		return err
 	}
@@ -99,15 +99,15 @@ func (c *CdiManager) AddDevice(deviceName string, envVar string) error {
 	}
 
 	spec.Devices = append(spec.Devices, newDevice)
-	return c.writeSpecToFile(spec)
+	return c.writeSpecToFile(logger, spec)
 }
 
 // RemoveDevice removes a device from the CDI spec file.
-func (c *CdiManager) RemoveDevice(deviceName string) error {
+func (c *CdiManager) RemoveDevice(logger logr.Logger, deviceName string) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	spec, err := c.readSpecFromFile()
+	spec, err := c.readSpecFromFile(logger)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // File already gone, nothing to do.
@@ -116,14 +116,14 @@ func (c *CdiManager) RemoveDevice(deviceName string) error {
 	}
 
 	if removeDeviceFromSpec(spec, deviceName) {
-		return c.writeSpecToFile(spec)
+		return c.writeSpecToFile(logger, spec)
 	}
 
 	return nil
 }
 
-func (c *CdiManager) GetSpec() (*cdiSpec.Spec, error) {
-	return c.readSpecFromFile()
+func (c *CdiManager) GetSpec(logger logr.Logger) (*cdiSpec.Spec, error) {
+	return c.readSpecFromFile(logger)
 }
 
 func removeDeviceFromSpec(spec *cdiSpec.Spec, deviceName string) bool {
@@ -140,7 +140,7 @@ func removeDeviceFromSpec(spec *cdiSpec.Spec, deviceName string) bool {
 	return deviceFound
 }
 
-func (c *CdiManager) readSpecFromFile() (*cdiSpec.Spec, error) {
+func (c *CdiManager) readSpecFromFile(logger logr.Logger) (*cdiSpec.Spec, error) {
 	data, err := os.ReadFile(c.path)
 	if err != nil {
 		return nil, fmt.Errorf("error reading CDI spec file %q: %w", c.path, err)
@@ -158,11 +158,11 @@ func (c *CdiManager) readSpecFromFile() (*cdiSpec.Spec, error) {
 	if err := json.Unmarshal(data, spec); err != nil {
 		return nil, fmt.Errorf("error unmarshaling CDI spec from %q: %w", c.path, err)
 	}
-	klog.Infof("Read CDI spec from %q spec:%+v", c.path, spec)
+	logger.V(4).Info("read CDI spec", "path", c.path, "spec", spec)
 	return spec, nil
 }
 
-func (c *CdiManager) writeSpecToFile(spec *cdiSpec.Spec) (err error) {
+func (c *CdiManager) writeSpecToFile(logger logr.Logger, spec *cdiSpec.Spec) (err error) {
 	tmpFile, err := os.CreateTemp(cdiSpecDir, c.driverName)
 	if err != nil {
 		return fmt.Errorf("failed to create temporary CDI spec: %w", err)
@@ -198,6 +198,6 @@ func (c *CdiManager) writeSpecToFile(spec *cdiSpec.Spec) (err error) {
 		return fmt.Errorf("failed to rename temporary CDI spec: %w", err)
 	}
 
-	klog.Infof("Successfully updated and synced CDI spec file %q", c.path)
+	logger.V(4).Info("updated and synced CDI spec file", "path", c.path)
 	return nil
 }

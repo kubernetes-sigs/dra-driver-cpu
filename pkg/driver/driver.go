@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/containerd/nri/pkg/stub"
+	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -61,8 +62,8 @@ type KubeletPlugin interface {
 }
 
 type cdiManager interface {
-	AddDevice(deviceName string, envVar string) error
-	RemoveDevice(deviceName string) error
+	AddDevice(logger logr.Logger, deviceName string, envVar string) error
+	RemoveDevice(logger logr.Logger, deviceName string) error
 }
 
 // CPUInfoProvider is an interface for getting CPU information.
@@ -154,13 +155,13 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		return nil, asyncErr, err
 	}
 
-	cdiMgr, err := NewCdiManager(config.DriverName)
+	logger := klog.FromContext(ctx)
+
+	cdiMgr, err := NewCdiManager(logger, config.DriverName)
 	if err != nil {
 		return nil, asyncErr, fmt.Errorf("failed to create CDI manager: %w", err)
 	}
 	plugin.cdiMgr = cdiMgr
-
-	logger := klog.FromContext(ctx)
 
 	// register the NRI plugin
 	nriOpts := []stub.Option{

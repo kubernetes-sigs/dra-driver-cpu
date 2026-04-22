@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/stretchr/testify/require"
@@ -67,7 +68,7 @@ func newMockCdiMgr() *mockCdiMgr {
 	}
 }
 
-func (m *mockCdiMgr) AddDevice(deviceName, envVar string) error {
+func (m *mockCdiMgr) AddDevice(_ logr.Logger, deviceName, envVar string) error {
 	if m.addError != nil {
 		return m.addError
 	}
@@ -75,7 +76,7 @@ func (m *mockCdiMgr) AddDevice(deviceName, envVar string) error {
 	return nil
 }
 
-func (m *mockCdiMgr) RemoveDevice(deviceName string) error {
+func (m *mockCdiMgr) RemoveDevice(_ logr.Logger, deviceName string) error {
 	if m.removeError != nil {
 		return m.removeError
 	}
