@@ -159,6 +159,8 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 	}
 	plugin.cdiMgr = cdiMgr
 
+	logger := klog.FromContext(ctx)
+
 	// register the NRI plugin
 	nriOpts := []stub.Option{
 		stub.WithPluginName(config.DriverName),
@@ -166,7 +168,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		// https://github.com/containerd/nri/pull/173
 		// Otherwise it silently exits the program
 		stub.WithOnClose(func() {
-			klog.Infof("%s NRI plugin closed", config.DriverName)
+			logger.Info("NRI plugin closed", "driver", config.DriverName)
 		}),
 	}
 	stub, err := stub.New(plugin, nriOpts...)
@@ -177,7 +179,8 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 
 	go func() {
 		if err := runNRIPluginWithRetry(ctx, plugin.nriPlugin, maxAttempts); err != nil && ctx.Err() == nil {
-			klog.Fatalf("NRI plugin failed for %d times to be restarted", maxAttempts)
+			logger.Error(err, "NRI plugin failed to be restarted", "maxAttempts", maxAttempts)
+			os.Exit(1)
 		}
 	}()
 
@@ -194,8 +197,9 @@ func (cp *CPUDriver) Stop() {
 }
 
 // Shutdown is called when the runtime is shutting down.
-func (cp *CPUDriver) Shutdown(_ context.Context) {
-	klog.Info("Runtime shutting down...")
+func (cp *CPUDriver) Shutdown(ctx context.Context) {
+	logger := klog.FromContext(ctx)
+	logger.Info("runtime shutting down")
 }
 
 type nriRunner interface {
@@ -203,14 +207,15 @@ type nriRunner interface {
 }
 
 func runNRIPluginWithRetry(ctx context.Context, plugin nriRunner, maxAttempts int) error {
+	logger := klog.FromContext(ctx)
 	for i := 0; i < maxAttempts; i++ {
 		err := plugin.Run(ctx)
 		if ctx.Err() != nil {
-			klog.Infof("NRI plugin stopped: context cancelled")
+			logger.Info("NRI plugin stopped", "reason", "context cancelled")
 			return ctx.Err()
 		}
 		if err != nil {
-			klog.Infof("NRI plugin failed with error %v, restarting %d out of %d", err, i+1, maxAttempts)
+			logger.Error(err, "NRI plugin failed, restarting", "attempt", i+1, "maxAttempts", maxAttempts)
 		}
 	}
 	return fmt.Errorf("NRI plugin failed for %d times to be restarted", maxAttempts)
