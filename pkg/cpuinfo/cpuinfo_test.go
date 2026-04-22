@@ -120,7 +120,7 @@ func createFakeCPUTopology(t *testing.T, dir string, topo fakeCPUTopology) {
 	}
 
 	nodeToCpus := make(map[int][]int)
-	for i := 0; i < numCPUs; i++ {
+	for i := range numCPUs {
 		cpuDir := filepath.Join(cpuSysDir, fmt.Sprintf("cpu%d", i))
 		if err := os.Mkdir(cpuDir, 0755); err != nil {
 			t.Fatal(err)

@@ -32,7 +32,8 @@ GOLANGCI_LINT = $(OUT_DIR)/golangci-lint
 CGO_ENABLED=0
 # remove once either we bump golang to 1.26 or https://github.com/golang/go/issues/75031 is fixed
 TOOOLCHAIN_MODE ?= "$(shell go env GOVERSION)+auto"
-export GOROOT GO111MODULE CGO_ENABLED
+KUBECONFIG ?= $(HOME)/.kube/config
+export GOROOT GO111MODULE CGO_ENABLED KUBECONFIG
 
 # Controls manifest generation behavior.
 # Use OVERRIDE_IMAGE=true to patch the image and tag.
