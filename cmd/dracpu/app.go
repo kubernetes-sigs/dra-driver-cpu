@@ -113,6 +113,12 @@ func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 
+	if err := run(); err != nil {
+		klog.Fatalf("%v", err)
+	}
+}
+
+func run() error {
 	printVersion()
 	flag.VisitAll(func(f *flag.Flag) {
 		klog.Infof("FLAG: --%s=%q", f.Name, f.Value)
@@ -120,7 +126,7 @@ func main() {
 
 	reservedCPUSet, err := cpuset.Parse(reservedCPUs)
 	if err != nil {
-		klog.Fatalf("failed to parse reserved CPUs: %v", err)
+		return fmt.Errorf("failed to parse reserved CPUs: %w", err)
 	}
 
 	mux := http.NewServeMux()
@@ -157,7 +163,7 @@ func main() {
 		config, err = rest.InClusterConfig()
 	}
 	if err != nil {
-		klog.Fatalf("can not create client-go configuration: %v", err)
+		return fmt.Errorf("can not create client-go configuration: %w", err)
 	}
 
 	// use protobuf for better performance at scale
@@ -168,12 +174,12 @@ func main() {
 	// creates the clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		klog.Fatalf("can not create client-go client: %v", err)
+		return fmt.Errorf("can not create client-go client: %w", err)
 	}
 
 	nodeName, err := nodeutil.GetHostname(hostnameOverride)
 	if err != nil {
-		klog.Fatalf("can not obtain the node name, use the hostname-override flag if you want to set it to a specific value: %v", err)
+		return fmt.Errorf("can not obtain the node name, use the hostname-override flag if you want to set it to a specific value: %w", err)
 	}
 
 	// trap Ctrl+C and call cancel on the context
@@ -197,7 +203,7 @@ func main() {
 	}
 	dracpu, err := driver.Start(ctx, clientset, driverConfig)
 	if err != nil {
-		klog.Fatalf("driver failed to start: %v", err)
+		return fmt.Errorf("driver failed to start: %w", err)
 	}
 	defer dracpu.Stop()
 	ready.Store(true)
@@ -217,6 +223,7 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		klog.Errorf("HTTP server shutdown failed: %v", err)
 	}
+	return nil
 }
 
 func printVersion() {
