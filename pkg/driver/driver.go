@@ -102,7 +102,8 @@ type Config struct {
 }
 
 // Start creates and starts a new CPUDriver.
-func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) (*CPUDriver, error) {
+func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) (*CPUDriver, <-chan error, error) {
+	asyncErr := make(chan error, 1)
 	plugin := &CPUDriver{
 		driverName:             config.DriverName,
 		nodeName:               config.NodeName,
@@ -118,10 +119,10 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 	cpuInfoProvider := cpuinfo.NewSystemCPUInfo()
 	topo, err := cpuInfoProvider.GetCPUTopology()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get CPU topology: %w", err)
+		return nil, asyncErr, fmt.Errorf("failed to get CPU topology: %w", err)
 	}
 	if topo == nil {
-		return nil, fmt.Errorf("failed to get CPU topology: topology is nil")
+		return nil, asyncErr, fmt.Errorf("failed to get CPU topology: topology is nil")
 	}
 	plugin.cpuTopology = topo
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.cpuTopology, config.ReservedCPUs)
@@ -129,7 +130,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 
 	driverPluginPath := filepath.Join(kubeletPluginPath, config.DriverName)
 	if err := os.MkdirAll(driverPluginPath, 0750); err != nil {
-		return nil, fmt.Errorf("failed to create plugin path %s: %w", driverPluginPath, err)
+		return nil, asyncErr, fmt.Errorf("failed to create plugin path %s: %w", driverPluginPath, err)
 	}
 
 	kubeletOpts := []kubeletplugin.Option{
@@ -139,7 +140,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 	}
 	d, err := kubeletplugin.Start(ctx, plugin, kubeletOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("start kubelet plugin: %w", err)
+		return nil, asyncErr, fmt.Errorf("start kubelet plugin: %w", err)
 	}
 	plugin.draPlugin = d
 	err = wait.PollUntilContextTimeout(ctx, 1*time.Second, 30*time.Second, true, func(context.Context) (bool, error) {
@@ -150,12 +151,12 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		return status.PluginRegistered, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, asyncErr, err
 	}
 
 	cdiMgr, err := NewCdiManager(config.DriverName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create CDI manager: %w", err)
+		return nil, asyncErr, fmt.Errorf("failed to create CDI manager: %w", err)
 	}
 	plugin.cdiMgr = cdiMgr
 
@@ -173,21 +174,21 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 	}
 	stub, err := stub.New(plugin, nriOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create plugin stub: %w", err)
+		return nil, asyncErr, fmt.Errorf("failed to create plugin stub: %w", err)
 	}
 	plugin.nriPlugin = stub
 
 	go func() {
 		if err := runNRIPluginWithRetry(ctx, plugin.nriPlugin, maxAttempts); err != nil && ctx.Err() == nil {
 			logger.Error(err, "NRI plugin failed to be restarted", "maxAttempts", maxAttempts)
-			os.Exit(1)
+			asyncErr <- err
 		}
 	}()
 
 	// publish available resources
 	go plugin.PublishResources(ctx)
 
-	return plugin, nil
+	return plugin, asyncErr, nil
 }
 
 // Stop stops the CPUDriver.

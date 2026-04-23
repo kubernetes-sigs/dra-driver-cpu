@@ -218,7 +218,7 @@ func run(logger logr.Logger) error {
 		CpuDeviceMode:    cpuDeviceMode,
 		CPUDeviceGroupBy: groupBy,
 	}
-	dracpu, err := driver.Start(ctx, clientset, driverConfig)
+	dracpu, asyncErr, err := driver.Start(ctx, clientset, driverConfig)
 	if err != nil {
 		return fmt.Errorf("driver failed to start: %w", err)
 	}
@@ -232,6 +232,9 @@ func run(logger logr.Logger) error {
 		cancel()
 	case <-ctx.Done():
 		logger.Info("exiting", "reason", "context cancelled")
+	case err := <-asyncErr:
+		cancel()
+		return fmt.Errorf("fatal NRI driver error: %w", err)
 	}
 
 	// Gracefully shutdown HTTP server
