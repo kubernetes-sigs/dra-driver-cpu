@@ -207,7 +207,7 @@ func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr
 		}
 		// Remove the guaranteed CPUs from the containers with shared CPUs.
 		updates = cp.getSharedContainerUpdates(logger, types.UID(ctr.GetId()))
-		cp.claimTracker.Cleanup(logger, claimUIDs...)
+		cp.claimTracker.Cleanup(claimUIDs...)
 		entries = fmt.Sprintf("%d entries", len(updates))
 	}
 	logger.Info("StopContainer updates needed", "entries", entries)

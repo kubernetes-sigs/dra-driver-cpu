@@ -185,6 +185,6 @@ func TestLen(t *testing.T) {
 	}
 	require.Equal(t, bnd.Len(), len(bindings))
 
-	bnd.Cleanup(logger, "claim-123", "claim-456", "claim-789")
+	bnd.Cleanup("claim-123", "claim-456", "claim-789")
 	require.Equal(t, bnd.Len(), 0)
 }

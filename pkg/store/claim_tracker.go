@@ -79,7 +79,7 @@ func (ctk *ClaimTracker) SetOwner(lh logr.Logger, claimUID, podUID k8stypes.UID,
 	return nil
 }
 
-func (ctk *ClaimTracker) Cleanup(lh logr.Logger, claimUIDs ...k8stypes.UID) {
+func (ctk *ClaimTracker) Cleanup(claimUIDs ...k8stypes.UID) {
 	ctk.mu.Lock()
 	defer ctk.mu.Unlock()
 	for _, claimUID := range claimUIDs {
