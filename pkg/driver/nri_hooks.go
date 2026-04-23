@@ -218,7 +218,7 @@ func (cp *CPUDriver) RemoveContainer(_ context.Context, pod *api.PodSandbox, ctr
 	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
 	if len(claimUIDs) > 0 {
 		// this serves only for debugging purposes. We should never get here
-		klog.Errorf("RemoveContainer spurious updates needed (unexpected, please file a bug): %v", cp.getSharedContainerUpdates(types.UID(ctr.GetId())))
+		klog.Infof("RemoveContainer spurious updates needed (unexpected, please file a bug): %v", cp.getSharedContainerUpdates(types.UID(ctr.GetId())))
 	}
 	return nil
 }
