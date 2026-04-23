@@ -79,13 +79,6 @@ func (ctk *ClaimTracker) SetOwner(lh logr.Logger, claimUID, podUID k8stypes.UID,
 	return nil
 }
 
-func (ctk *ClaimTracker) FindOwner(lh logr.Logger, claimUID k8stypes.UID) (OwnerIdent, bool) {
-	ctk.mu.Lock()
-	defer ctk.mu.Unlock()
-	owner, ok := ctk.ownerByClaimUID[claimUID]
-	return owner, ok
-}
-
 func (ctk *ClaimTracker) Cleanup(lh logr.Logger, claimUIDs ...k8stypes.UID) {
 	ctk.mu.Lock()
 	defer ctk.mu.Unlock()
