@@ -57,21 +57,21 @@ func BeFailedToCreate(fxt *fixture.Fixture) types.GomegaMatcher {
 		if actual == nil {
 			return false, errors.New("nil Pod")
 		}
-		lh := fxt.Log.WithValues("podUID", actual.UID, "namespace", actual.Namespace, "name", actual.Name)
+		logger := fxt.Log.WithValues("podUID", actual.UID, "namespace", actual.Namespace, "name", actual.Name)
 		if actual.Status.Phase != v1.PodPending {
-			lh.Info("unexpected phase", "phase", actual.Status.Phase)
+			logger.Info("unexpected phase", "phase", actual.Status.Phase)
 			return false, nil
 		}
 		cntSt := findWaitingContainerStatus(actual.Status.ContainerStatuses)
 		if cntSt == nil {
-			lh.Info("no container in waiting state")
+			logger.Info("no container in waiting state")
 			return false, nil
 		}
 		if cntSt.State.Waiting.Reason != reasonCreateContainerError {
-			lh.Info("container waiting for different reason", "containerName", cntSt.Name, "reason", cntSt.State.Waiting.Reason)
+			logger.Info("container waiting for different reason", "containerName", cntSt.Name, "reason", cntSt.State.Waiting.Reason)
 			return false, nil
 		}
-		lh.Info("container creation error", "containerName", cntSt.Name)
+		logger.Info("container creation error", "containerName", cntSt.Name)
 		return true, nil
 	}).WithTemplate("Pod {{.Actual.Namespace}}/{{.Actual.Name}} UID {{.Actual.UID}} was not in failed phase")
 }
