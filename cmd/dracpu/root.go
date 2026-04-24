@@ -29,6 +29,8 @@ import (
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"golang.org/x/sys/unix"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -52,79 +54,48 @@ var (
 	groupBy          string
 )
 
-type cpuDeviceModeValue struct {
-	value *string
-}
-
-func newCPUDeviceModeValue(val *string, def string) *cpuDeviceModeValue {
-	*val = def
-	return &cpuDeviceModeValue{value: val}
-}
-
-func (v *cpuDeviceModeValue) String() string {
-	if v == nil || v.value == nil {
-		return ""
-	}
-	return *v.value
-}
-
-func (v *cpuDeviceModeValue) Set(s string) error {
-	if s != driver.CPU_DEVICE_MODE_GROUPED && s != driver.CPU_DEVICE_MODE_INDIVIDUAL {
-		return fmt.Errorf("invalid value: %q, must be %s or %s", s, driver.CPU_DEVICE_MODE_GROUPED, driver.CPU_DEVICE_MODE_INDIVIDUAL)
-	}
-	*v.value = s
-	return nil
-}
-
-type groupByValue struct {
-	value *string
-}
-
-func newGroupByValue(val *string, def string) *groupByValue {
-	*val = def
-	return &groupByValue{value: val}
-}
-
-func (v *groupByValue) String() string {
-	if v == nil || v.value == nil {
-		return ""
-	}
-	return *v.value
-}
-
-func (v *groupByValue) Set(s string) error {
-	if s != driver.GROUP_BY_SOCKET && s != driver.GROUP_BY_NUMA_NODE {
-		return fmt.Errorf("invalid value: %q, must be %s or %s", s, driver.GROUP_BY_SOCKET, driver.GROUP_BY_NUMA_NODE)
-	}
-	*v.value = s
-	return nil
+var rootCmd = &cobra.Command{
+	Use:           "dracpu",
+	Short:         "DRA CPU driver for Kubernetes",
+	Long:          `Dynamic Resource Allocation (DRA) driver for CPU resources in Kubernetes clusters.`,
+	RunE:          runDriver,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
 func init() {
-	flag.StringVar(&kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
-	flag.StringVar(&hostnameOverride, "hostname-override", "", "If non-empty, will be used as the name of the Node that kube-network-policies is running on. If unset, the node name is assumed to be the same as the node's hostname.")
-	flag.StringVar(&bindAddress, "bind-address", ":8080", "The address to bind the HTTP server for /healthz and /metrics endpoints")
-	flag.StringVar(&reservedCPUs, "reserved-cpus", "", "cpuset of CPUs to be excluded from ResourceSlice.")
-	flag.Var(newCPUDeviceModeValue(&cpuDeviceMode, driver.CPU_DEVICE_MODE_GROUPED), "cpu-device-mode", "Sets the mode for exposing CPU devices. 'grouped' exposes a single device per socket or numa node (based on --group-by). 'individual' exposes each CPU as a separate device.")
-	flag.Var(newGroupByValue(&groupBy, driver.GROUP_BY_NUMA_NODE), "group-by", "When --cpu-device-mode=grouped, sets the criteria for grouping CPUs. Can be set to 'socket' or 'numanode'.")
+	klog.InitFlags(nil)
+	rootCmd.Flags().AddGoFlagSet(flag.CommandLine)
+
+	rootCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
+	rootCmd.Flags().StringVar(&hostnameOverride, "hostname-override", "", "If non-empty, will be used as the name of the Node that kube-network-policies is running on. If unset, the node name is assumed to be the same as the node's hostname.")
+	rootCmd.Flags().StringVar(&bindAddress, "bind-address", ":8080", "The address to bind the HTTP server for /healthz and /metrics endpoints")
+	rootCmd.Flags().StringVar(&reservedCPUs, "reserved-cpus", "", "cpuset of CPUs to be excluded from ResourceSlice.")
+	rootCmd.Flags().StringVar(&cpuDeviceMode, "cpu-device-mode", driver.CPU_DEVICE_MODE_GROUPED, "Sets the mode for exposing CPU devices. 'grouped' exposes a single device per socket or numa node (based on --group-by). 'individual' exposes each CPU as a separate device.")
+	rootCmd.Flags().StringVar(&groupBy, "group-by", driver.GROUP_BY_NUMA_NODE, "When --cpu-device-mode=grouped, sets the criteria for grouping CPUs. Can be set to 'socket' or 'numanode'.")
 }
 
-func main() {
-	klog.InitFlags(nil)
-	flag.Parse()
-
+func runDriver(cmd *cobra.Command, args []string) error {
 	printVersion()
-	flag.VisitAll(func(f *flag.Flag) {
+
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
 		klog.Infof("FLAG: --%s=%q", f.Name, f.Value)
 	})
 
+	if cpuDeviceMode != driver.CPU_DEVICE_MODE_GROUPED && cpuDeviceMode != driver.CPU_DEVICE_MODE_INDIVIDUAL {
+		return fmt.Errorf("invalid --cpu-device-mode: %q, must be %s or %s", cpuDeviceMode, driver.CPU_DEVICE_MODE_GROUPED, driver.CPU_DEVICE_MODE_INDIVIDUAL)
+	}
+
+	if groupBy != driver.GROUP_BY_SOCKET && groupBy != driver.GROUP_BY_NUMA_NODE {
+		return fmt.Errorf("invalid --group-by: %q, must be %s or %s", groupBy, driver.GROUP_BY_SOCKET, driver.GROUP_BY_NUMA_NODE)
+	}
+
 	reservedCPUSet, err := cpuset.Parse(reservedCPUs)
 	if err != nil {
-		klog.Fatalf("failed to parse reserved CPUs: %v", err)
+		return fmt.Errorf("failed to parse reserved CPUs: %w", err)
 	}
 
 	mux := http.NewServeMux()
-	// Add healthz handler
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if !ready.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -132,7 +103,6 @@ func main() {
 			w.WriteHeader(http.StatusOK)
 		}
 	})
-	// Add metrics handler
 	mux.Handle("/metrics", promhttp.Handler())
 	server := &http.Server{
 		Addr:              bindAddress,
@@ -153,40 +123,34 @@ func main() {
 	if kubeconfig != "" {
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 	} else {
-		// creates the in-cluster config
 		config, err = rest.InClusterConfig()
 	}
 	if err != nil {
-		klog.Fatalf("can not create client-go configuration: %v", err)
+		return fmt.Errorf("can not create client-go configuration: %w", err)
 	}
 
-	// use protobuf for better performance at scale
-	// https://kubernetes.io/docs/reference/using-api/api-concepts/#alternate-representations-of-resources
 	config.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
 	config.ContentType = "application/vnd.kubernetes.protobuf"
 
-	// creates the clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		klog.Fatalf("can not create client-go client: %v", err)
+		return fmt.Errorf("can not create client-go client: %w", err)
 	}
 
 	nodeName, err := nodeutil.GetHostname(hostnameOverride)
 	if err != nil {
-		klog.Fatalf("can not obtain the node name, use the hostname-override flag if you want to set it to a specific value: %v", err)
+		return fmt.Errorf("can not obtain the node name, use the hostname-override flag if you want to set it to a specific value: %w", err)
 	}
 
-	// trap Ctrl+C and call cancel on the context
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
 
-	// Enable signal handler
 	signalCh := make(chan os.Signal, 2)
 	defer func() {
 		close(signalCh)
 		cancel()
 	}()
-	signal.Notify(signalCh, os.Interrupt, unix.SIGINT)
+	signal.Notify(signalCh, os.Interrupt, unix.SIGINT, unix.SIGTERM)
 
 	driverConfig := &driver.Config{
 		DriverName:       driverName,
@@ -197,7 +161,7 @@ func main() {
 	}
 	dracpu, err := driver.Start(ctx, clientset, driverConfig)
 	if err != nil {
-		klog.Fatalf("driver failed to start: %v", err)
+		return fmt.Errorf("driver failed to start: %w", err)
 	}
 	defer dracpu.Stop()
 	ready.Store(true)
@@ -211,12 +175,13 @@ func main() {
 		klog.Infof("Exiting: context cancelled")
 	}
 
-	// Gracefully shutdown HTTP server
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		klog.Errorf("HTTP server shutdown failed: %v", err)
 	}
+
+	return nil
 }
 
 func printVersion() {
