@@ -206,6 +206,26 @@ This discrepancy is a known issue being addressed by [KEP-5517: Native Resource 
 
 **1-to-1 Claim to Container:** This driver enforces that a specific CPU `ResourceClaim` can only be used by *one* container within or across pods. See [Sharing resource claims](#sharing-resource-claims).
 
+## Metrics
+
+> **Note**: The metrics exposed by this driver are provisional and may change or be removed in future releases.
+
+The driver exposes Prometheus metrics via the `/metrics` HTTP endpoint on the address configured by `--bind-address` (default `:8080`).
+
+| Metric Name                              | Type      | Description                                                               |
+| ---------------------------------------- | --------- | ------------------------------------------------------------------------- |
+| `dra_cpu_allocated_cpus`                 | Gauge     | Number of CPUs currently allocated to resource claims.                    |
+| `dra_cpu_available_cpus`                 | Gauge     | Number of CPUs available for allocation.                                  |
+| `dra_cpu_reserved_cpus`                  | Gauge     | Number of CPUs reserved and excluded from allocation.                     |
+| `dra_cpu_resource_claims_active`         | Gauge     | Number of currently active resource claim allocations.                    |
+| `dra_cpu_prepare_claims_success_total`   | Counter   | Total number of successful PrepareResourceClaims operations.              |
+| `dra_cpu_prepare_claims_error_total`     | Counter   | Total number of failed PrepareResourceClaims operations.                  |
+| `dra_cpu_unprepare_claims_total`         | Counter   | Total number of UnprepareResourceClaims operations.                       |
+| `dra_cpu_prepare_claim_duration_seconds` | Histogram | Duration of individual resource claim prepare operations in seconds.      |
+| `dra_cpu_claim_allocated_cpus`           | Histogram | Number of CPUs allocated per claim. Buckets: 1, 2, 4, 8, 16, 32, 64, 128. |
+
+Use `--show-metrics` to print all registered metrics to stdout and exit without starting the driver.
+
 ## Prerequisites
 
 The driver relies on [NRI (Node Resource Interface)](https://github.com/containerd/nri) to pin containers to their
