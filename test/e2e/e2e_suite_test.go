@@ -48,6 +48,8 @@ func TestE2E(t *testing.T) {
 
 const (
 	reasonCreateContainerError = "CreateContainerError"
+	argReservedCPUs            = "--reserved-cpus="
+	argCPUDeviceMode           = "--cpu-device-mode="
 )
 
 func BeFailedToCreate(fxt *fixture.Fixture) types.GomegaMatcher {
@@ -197,20 +199,13 @@ func mustCreateBestEffortPod(ctx context.Context, fxt *fixture.Fixture, nodeName
 	return pod
 }
 
-func parseReservedCPUsArg(arg string) (string, bool) {
-	prefix := "--reserved-cpus="
-	if !strings.HasPrefix(arg, prefix) {
-		return "", false
+func findArgInContainer(container *v1.Container, prefix string) (string, bool) {
+	for _, arg := range container.Args {
+		if strings.HasPrefix(arg, prefix) {
+			return strings.TrimPrefix(arg, prefix), true
+		}
 	}
-	return strings.TrimPrefix(arg, prefix), true
-}
-
-func parseCPUDeviceModeArg(arg string) (string, bool) {
-	prefix := "--cpu-device-mode="
-	if !strings.HasPrefix(arg, prefix) {
-		return "", false
-	}
-	return strings.TrimPrefix(arg, prefix), true
+	return "", false
 }
 
 func makeTesterPodWithNamedClaim(ns, image, claimName string, nodeName string) *v1.Pod {
