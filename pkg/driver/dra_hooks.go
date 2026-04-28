@@ -23,10 +23,12 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpumanager"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
@@ -266,6 +268,7 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 	}
 
 	for _, claim := range claims {
+		start := time.Now()
 		if cp.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
 			klog.Infof("Claim %s/%s is for a grouped resource", claim.Namespace, claim.Name)
 			result[claim.UID] = cp.prepareGroupedResourceClaim(ctx, claim)
@@ -273,6 +276,8 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 			klog.Infof("Claim %s/%s is for an individual resource", claim.Namespace, claim.Name)
 			result[claim.UID] = cp.prepareResourceClaim(ctx, claim)
 		}
+		metrics.Default.PrepareClaimDuration.Observe(time.Since(start).Seconds())
+		metrics.Default.RecordPrepareResult(result[claim.UID].Err)
 	}
 	return result, nil
 }
@@ -339,6 +344,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(ctx context.Context, claim *res
 	}
 
 	cp.cpuAllocationStore.AddResourceClaimAllocation(claim.UID, cpuAssignment)
+	metrics.Default.ClaimAllocatedCPUs.Observe(float64(cpuAssignment.Size()))
 
 	deviceName := getCDIDeviceName(claim.UID)
 	envVar := fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claim.UID, cpuAssignment.String())
@@ -398,6 +404,7 @@ func (cp *CPUDriver) prepareResourceClaim(_ context.Context, claim *resourceapi.
 
 	claimCPUSet := cpuset.New(claimCPUIDs...)
 	cp.cpuAllocationStore.AddResourceClaimAllocation(claim.UID, claimCPUSet)
+	metrics.Default.ClaimAllocatedCPUs.Observe(float64(claimCPUSet.Size()))
 	deviceName := getCDIDeviceName(claim.UID)
 	envVar := fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claim.UID, claimCPUSet.String())
 	if err := cp.cdiMgr.AddDevice(deviceName, envVar); err != nil {
@@ -441,6 +448,7 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 		if err != nil {
 			klog.Infof("error unpreparing resources for claim %s/%s : %v", claim.Namespace, claim.Name, err)
 		}
+		metrics.Default.UnprepareClaimTotal.Inc()
 	}
 	return result, nil
 }

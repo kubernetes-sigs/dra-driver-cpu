@@ -1,5 +1,5 @@
 /*
-Copyright 2025 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/cpuset"
@@ -43,12 +44,14 @@ func NewCPUAllocation(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUS
 	allCPUsSet := cpuset.New(cpuIDs...)
 	availableCPUs := allCPUsSet.Difference(reservedCPUs)
 
-	return &CPUAllocation{
+	s := &CPUAllocation{
 		availableCPUs:            availableCPUs,
 		reservedCPUs:             reservedCPUs,
 		resourceClaimAllocations: make(map[types.UID]cpuset.CPUSet),
 		allocatedCPUs:            cpuset.New(),
 	}
+	s.updateMetricsLocked()
+	return s
 }
 
 // AddResourceClaimAllocation adds a new resource claim allocation to the store.
@@ -60,6 +63,7 @@ func (s *CPUAllocation) AddResourceClaimAllocation(claimUID types.UID, cpus cpus
 	}
 	s.resourceClaimAllocations[claimUID] = cpus
 	s.allocatedCPUs = s.allocatedCPUs.Union(cpus)
+	s.updateMetricsLocked()
 	klog.Infof("Added allocation for resource claim %s: CPUs %s", claimUID, cpus.String())
 }
 
@@ -70,6 +74,7 @@ func (s *CPUAllocation) RemoveResourceClaimAllocation(claimUID types.UID) {
 	if cpus, ok := s.resourceClaimAllocations[claimUID]; ok {
 		delete(s.resourceClaimAllocations, claimUID)
 		s.allocatedCPUs = s.allocatedCPUs.Difference(cpus)
+		s.updateMetricsLocked()
 		klog.Infof("Removed allocation for resource claim %s", claimUID)
 	}
 }
@@ -87,4 +92,14 @@ func (s *CPUAllocation) GetResourceClaimAllocation(claimUID types.UID) (cpuset.C
 	defer s.mu.RUnlock()
 	cpus, ok := s.resourceClaimAllocations[claimUID]
 	return cpus, ok
+}
+
+// updateMetricsLocked updates Prometheus gauges. Caller must hold s.mu
+// (write or exclusive during construction before sharing).
+func (s *CPUAllocation) updateMetricsLocked() {
+	m := metrics.Default
+	m.AllocatedCPUs.Set(float64(s.allocatedCPUs.Size()))
+	m.AvailableCPUs.Set(float64(s.availableCPUs.Difference(s.allocatedCPUs).Size()))
+	m.ReservedCPUs.Set(float64(s.reservedCPUs.Size()))
+	m.ActiveResourceClaims.Set(float64(len(s.resourceClaimAllocations)))
 }
