@@ -324,6 +324,11 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(ctx context.Context, claim *res
 			klog.Infof("NUMA node %d CPUs:%s available CPUs: %s", numaNodeID, numaCPUs.String(), availableCPUsForDevice.String())
 		}
 
+		if availableCPUsForDevice.Size() == 0 {
+			klog.V(2).Infof("No available CPUs for device %s, skipping allocation", alloc.Device)
+			continue
+		}
+
 		logger := klog.FromContext(ctx)
 		cur, err := cpumanager.TakeByTopologyNUMAPacked(logger, topo, availableCPUsForDevice, int(claimCPUCount), cpumanager.CPUSortingStrategyPacked, true)
 		if err != nil {
@@ -334,8 +339,19 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(ctx context.Context, claim *res
 	}
 
 	if cpuAssignment.Size() == 0 {
-		klog.V(5).Infof("prepareResourceClaim claim:%s/%s has no CPU allocations for this driver", claim.Namespace, claim.Name)
-		return kubeletplugin.PrepareResult{}
+		klog.V(2).Infof("No CPUs assigned for claim %s/%s, returning devices without cpuset", claim.Namespace, claim.Name)
+		var preparedDevices []kubeletplugin.Device
+		for _, allocResult := range claim.Status.Allocation.Devices.Results {
+			if allocResult.Driver != cp.driverName {
+				continue
+			}
+			preparedDevices = append(preparedDevices, kubeletplugin.Device{
+				PoolName:   allocResult.Pool,
+				DeviceName: allocResult.Device,
+				Requests:   []string{allocResult.Request},
+			})
+		}
+		return kubeletplugin.PrepareResult{Devices: preparedDevices}
 	}
 
 	cp.cpuAllocationStore.AddResourceClaimAllocation(claim.UID, cpuAssignment)
