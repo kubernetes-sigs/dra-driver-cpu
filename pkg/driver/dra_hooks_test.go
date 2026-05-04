@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/testr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/stretchr/testify/require"
@@ -67,7 +69,7 @@ func newMockCdiMgr() *mockCdiMgr {
 	}
 }
 
-func (m *mockCdiMgr) AddDevice(deviceName, envVar string) error {
+func (m *mockCdiMgr) AddDevice(_ logr.Logger, deviceName, envVar string) error {
 	if m.addError != nil {
 		return m.addError
 	}
@@ -75,7 +77,7 @@ func (m *mockCdiMgr) AddDevice(deviceName, envVar string) error {
 	return nil
 }
 
-func (m *mockCdiMgr) RemoveDevice(deviceName string) error {
+func (m *mockCdiMgr) RemoveDevice(_ logr.Logger, deviceName string) error {
 	if m.removeError != nil {
 		return m.removeError
 	}
@@ -604,6 +606,8 @@ func TestPrepareResourceClaims(t *testing.T) {
 }
 
 func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
+	logger := testr.New(t)
+
 	baseCPUDriver := func(groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet) *CPUDriver {
 		driver := &CPUDriver{}
 		driver.driverName = testDriverName
@@ -615,7 +619,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 		driver.cpuTopology, _ = mockProvider.GetCPUTopology()
 		driver.cpuAllocationStore = store.NewCPUAllocation(driver.cpuTopology, reservedCPUs)
 		for claimUID, cpus := range initialAllocations {
-			driver.cpuAllocationStore.AddResourceClaimAllocation(claimUID, cpus)
+			driver.cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, cpus)
 		}
 
 		topo, err := mockProvider.GetCPUTopology()

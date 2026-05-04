@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/go-logr/logr/testr"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 	cdiSpec "tags.cncf.io/container-device-interface/specs-go"
@@ -74,24 +75,25 @@ func TestAddDevice(t *testing.T) {
 
 	for _, tcase := range testcases {
 		t.Run(tcase.name, func(t *testing.T) {
+			logger := testr.New(t)
 			saveCDIDir := cdiSpecDir
 			t.Cleanup(func() {
 				cdiSpecDir = saveCDIDir
 			})
 			cdiSpecDir = t.TempDir()
 
-			mgr, err := NewCdiManager(testDriverName)
+			mgr, err := NewCdiManager(logger, testDriverName)
 			require.NoError(t, err)
 
 			_, err = os.Stat(filepath.Join(cdiSpecDir, testDriverName+".json"))
 			require.NoError(t, err)
 
 			for _, dev := range tcase.devices {
-				err = mgr.AddDevice(dev.name, dev.env)
+				err = mgr.AddDevice(logger, dev.name, dev.env)
 				require.NoError(t, err)
 			}
 
-			got, err := mgr.GetSpec()
+			got, err := mgr.GetSpec(logger)
 			require.NoError(t, err)
 			if diff := cmp.Diff(got, tcase.expectedSpec); diff != "" {
 				t.Errorf("unexpected spec from empty: %v", diff)
@@ -157,24 +159,25 @@ func TestRemoveDevice(t *testing.T) {
 
 	for _, tcase := range testcases {
 		t.Run(tcase.name, func(t *testing.T) {
+			logger := testr.New(t)
 			saveCDIDir := cdiSpecDir
 			t.Cleanup(func() {
 				cdiSpecDir = saveCDIDir
 			})
 			cdiSpecDir = t.TempDir()
 
-			mgr, err := NewCdiManager(testDriverName)
+			mgr, err := NewCdiManager(logger, testDriverName)
 			require.NoError(t, err)
 			for _, dev := range tcase.initial {
-				err = mgr.AddDevice(dev.name, dev.env)
+				err = mgr.AddDevice(logger, dev.name, dev.env)
 				require.NoError(t, err)
 			}
 			for _, dev := range tcase.toRemove {
-				err = mgr.RemoveDevice(dev.name)
+				err = mgr.RemoveDevice(logger, dev.name)
 				require.NoError(t, err)
 			}
 
-			got, err := mgr.GetSpec()
+			got, err := mgr.GetSpec(logger)
 			require.NoError(t, err)
 			if diff := cmp.Diff(got, tcase.expectedSpec); diff != "" {
 				t.Errorf("unexpected spec from empty: %v", diff)

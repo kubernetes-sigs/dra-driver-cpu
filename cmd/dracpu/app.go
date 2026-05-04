@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -27,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sys/unix"
@@ -35,6 +37,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	nodeutil "k8s.io/component-helpers/node/util"
 	"k8s.io/klog/v2"
+	"k8s.io/klog/v2/textlogger"
 	"k8s.io/utils/cpuset"
 )
 
@@ -110,17 +113,38 @@ func init() {
 }
 
 func main() {
-	klog.InitFlags(nil)
+	config := textlogger.NewConfig()
+	config.AddFlags(flag.CommandLine)
 	flag.Parse()
 
-	printVersion()
+	logger := textlogger.NewLogger(config)
+	// some key deps still call klog directly, so we need this integration.
+	// TODO: check every time we bump kube libs to a new major version,
+	// as the contextual logging transition to kube libs is still ongoing
+	// k8s.io/client-go
+	// k8s.io/apimachinery
+	// k8s.io/dynamic-resource-allocation
+	// k8s.io/kube-openapi
+	// k8s.io/utils
+	// k8s.io/component-helpers
+	// k8s.io/kubelet
+	klog.SetLoggerWithOptions(logger, klog.ContextualLogger(true))
+
+	if err := run(logger); err != nil {
+		logger.Error(err, "failed to run")
+		os.Exit(1)
+	}
+}
+
+func run(logger logr.Logger) error {
+	printVersion(logger)
 	flag.VisitAll(func(f *flag.Flag) {
-		klog.Infof("FLAG: --%s=%q", f.Name, f.Value)
+		logger.Info("FLAG", "name", f.Name, "value", f.Value.String())
 	})
 
 	reservedCPUSet, err := cpuset.Parse(reservedCPUs)
 	if err != nil {
-		klog.Fatalf("failed to parse reserved CPUs: %v", err)
+		return fmt.Errorf("failed to parse reserved CPUs: %w", err)
 	}
 
 	mux := http.NewServeMux()
@@ -145,39 +169,39 @@ func main() {
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			klog.Errorf("HTTP server failed: %v", err)
+			logger.Error(err, "HTTP server failed")
 		}
 	}()
 
-	var config *rest.Config
+	var restConfig *rest.Config
 	if kubeconfig != "" {
-		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+		restConfig, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 	} else {
 		// creates the in-cluster config
-		config, err = rest.InClusterConfig()
+		restConfig, err = rest.InClusterConfig()
 	}
 	if err != nil {
-		klog.Fatalf("can not create client-go configuration: %v", err)
+		return fmt.Errorf("can not create client-go configuration: %w", err)
 	}
 
 	// use protobuf for better performance at scale
 	// https://kubernetes.io/docs/reference/using-api/api-concepts/#alternate-representations-of-resources
-	config.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
-	config.ContentType = "application/vnd.kubernetes.protobuf"
+	restConfig.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
+	restConfig.ContentType = "application/vnd.kubernetes.protobuf"
 
 	// creates the clientset
-	clientset, err := kubernetes.NewForConfig(config)
+	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
-		klog.Fatalf("can not create client-go client: %v", err)
+		return fmt.Errorf("can not create client-go client: %w", err)
 	}
 
 	nodeName, err := nodeutil.GetHostname(hostnameOverride)
 	if err != nil {
-		klog.Fatalf("can not obtain the node name, use the hostname-override flag if you want to set it to a specific value: %v", err)
+		return fmt.Errorf("can not obtain the node name, use the hostname-override flag if you want to set it to a specific value: %w", err)
 	}
 
 	// trap Ctrl+C and call cancel on the context
-	ctx := context.Background()
+	ctx := klog.NewContext(context.Background(), logger)
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Enable signal handler
@@ -195,31 +219,37 @@ func main() {
 		CpuDeviceMode:    cpuDeviceMode,
 		CPUDeviceGroupBy: groupBy,
 	}
-	dracpu, err := driver.Start(ctx, clientset, driverConfig)
+	dracpu, asyncErr, err := driver.Start(ctx, clientset, driverConfig)
 	if err != nil {
-		klog.Fatalf("driver failed to start: %v", err)
+		return fmt.Errorf("driver failed to start: %w", err)
 	}
 	defer dracpu.Stop()
 	ready.Store(true)
-	klog.Info("driver started")
+	logger.Info("driver started")
+
+	var fatalErr error
 
 	select {
 	case <-signalCh:
-		klog.Infof("Exiting: received signal")
+		logger.Info("exiting", "reason", "received signal")
 		cancel()
 	case <-ctx.Done():
-		klog.Infof("Exiting: context cancelled")
+		logger.Info("exiting", "reason", "context cancelled")
+	case err := <-asyncErr:
+		cancel()
+		fatalErr = fmt.Errorf("NRI driver error: %w", err)
 	}
 
 	// Gracefully shutdown HTTP server
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		klog.Errorf("HTTP server shutdown failed: %v", err)
+	if serverErr := server.Shutdown(shutdownCtx); serverErr != nil {
+		fatalErr = errors.Join(fatalErr, fmt.Errorf("HTTP server shutdown error: %w", serverErr))
 	}
+	return fatalErr
 }
 
-func printVersion() {
+func printVersion(logger logr.Logger) {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return
@@ -233,5 +263,5 @@ func printVersion() {
 			vcsTime = f.Value
 		}
 	}
-	klog.Infof("dracpu go %s build: %s time: %s", info.GoVersion, vcsRevision, vcsTime)
+	logger.Info("dracpu", "goVersion", info.GoVersion, "build", vcsRevision, "time", vcsTime)
 }
