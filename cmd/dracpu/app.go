@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -226,6 +227,8 @@ func run(logger logr.Logger) error {
 	ready.Store(true)
 	logger.Info("driver started")
 
+	var fatalErr error
+
 	select {
 	case <-signalCh:
 		logger.Info("exiting", "reason", "received signal")
@@ -234,17 +237,16 @@ func run(logger logr.Logger) error {
 		logger.Info("exiting", "reason", "context cancelled")
 	case err := <-asyncErr:
 		cancel()
-		return fmt.Errorf("fatal NRI driver error: %w", err)
+		fatalErr = fmt.Errorf("NRI driver error: %w", err)
 	}
 
 	// Gracefully shutdown HTTP server
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		// we prefer to carry on
-		logger.Error(err, "HTTP server shutdown failed")
+	if serverErr := server.Shutdown(shutdownCtx); serverErr != nil {
+		fatalErr = errors.Join(fatalErr, fmt.Errorf("HTTP server shutdown error: %w", serverErr))
 	}
-	return nil
+	return fatalErr
 }
 
 func printVersion(logger logr.Logger) {
