@@ -43,7 +43,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 
 	for _, pod := range pods {
 		pLogger := logger.WithValues("pod", klog.KObj(pod), "podUID", pod.Uid)
-		pLogger.Info("synchronize pod")
+		pLogger.V(2).Info("synchronize pod")
 		for _, container := range containers {
 			if container.PodSandboxId != pod.Id {
 				continue
@@ -73,7 +73,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 					claimUIDs = append(claimUIDs, uid)
 					cpuAllocationStore.AddResourceClaimAllocation(caLogger, uid, cpus)
 				}
-				cLogger.Info("found guaranteed CPUs", "cpus", allGuaranteedCPUs.String())
+				cLogger.V(2).Info("found guaranteed CPUs", "cpus", allGuaranteedCPUs.String())
 				state = store.NewContainerState(container.GetName(), containerUID, claimUIDs...)
 
 				// Reconcile guaranteed container CPU mask.
@@ -132,7 +132,7 @@ func (cp *CPUDriver) getSharedContainerUpdates(logger logr.Logger, excludeID typ
 	updates := []*api.ContainerUpdate{}
 	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
 	sharedCPUContainers := cp.podConfigStore.GetContainersWithSharedCPUs()
-	logger.Info("updating CPU allocation for containers without guaranteed CPUs", "sharedCPUs", sharedCPUs.String())
+	logger.V(2).Info("updating CPU allocation for containers without guaranteed CPUs", "sharedCPUs", sharedCPUs.String())
 	for _, containerUID := range sharedCPUContainers {
 		if containerUID == excludeID {
 			// Skip the container being created as it is already covered in the container adjustment.
@@ -174,7 +174,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		cp.podConfigStore.SetContainerState(podUID, state)
 
 		sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
-		logger.Info("no guaranteed CPUs found, using shared CPUs", "sharedCPUs", sharedCPUs.String())
+		logger.V(2).Info("no guaranteed CPUs found, using shared CPUs", "sharedCPUs", sharedCPUs.String())
 		adjust.SetLinuxCPUSetCPUs(sharedCPUs.String())
 	} else {
 		guaranteedCPUs := cpuset.New()
@@ -189,7 +189,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 			guaranteedCPUs = guaranteedCPUs.Union(cpus)
 			claimUIDs = append(claimUIDs, uid)
 		}
-		logger.Info("guaranteed CPUs found", "cpus", guaranteedCPUs.String())
+		logger.V(2).Info("guaranteed CPUs found", "cpus", guaranteedCPUs.String())
 		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs...)
 		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
 		cp.podConfigStore.SetContainerState(podUID, state)
@@ -229,7 +229,7 @@ func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr
 		cp.claimTracker.Cleanup(claimUIDs...)
 		entries = fmt.Sprintf("%d entries", len(updates))
 	}
-	logger.Info("StopContainer updates needed", "entries", entries)
+	logger.V(2).Info("StopContainer updates needed", "entries", entries)
 	return updates, nil
 }
 

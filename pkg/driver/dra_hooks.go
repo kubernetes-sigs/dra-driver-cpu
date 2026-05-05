@@ -57,7 +57,7 @@ const (
 
 // createGroupedCPUDeviceSlices creates Device objects based on the CPU topology, grouped by a specific criteria.
 func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resourceapi.Device {
-	logger.Info("creating grouped CPU devices")
+	logger.V(4).Info("creating grouped CPU devices")
 	var devices []resourceapi.Device
 
 	topo := cp.cpuTopology
@@ -278,10 +278,8 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 	for _, claim := range claims {
 		cLogger := logger.WithValues("claim", klog.KObj(claim), "claimUID", claim.UID)
 		if cp.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
-			cLogger.Info("claim is for a grouped resource")
 			result[claim.UID] = cp.prepareGroupedResourceClaim(cLogger, claim)
 		} else {
-			cLogger.Info("claim is for an individual resource")
 			result[claim.UID] = cp.prepareResourceClaim(cLogger, claim)
 		}
 	}
@@ -293,7 +291,7 @@ func getCDIDeviceName(uid types.UID) string {
 }
 
 func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
-	logger.Info("preparing grouped resource claim")
+	logger.V(2).Info("preparing grouped resource claim")
 
 	if claim.Status.Allocation == nil {
 		return kubeletplugin.PrepareResult{
@@ -311,7 +309,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		if quantity, ok := alloc.ConsumedCapacity[cpuResourceQualifiedName]; ok {
 			count := quantity.Value()
 			claimCPUCount = count
-			logger.Info("found CPU request", "numCPUs", count, "device", alloc.Device)
+			logger.V(4).Info("found CPU request", "numCPUs", count, "device", alloc.Device)
 		}
 
 		topo := cp.cpuTopology
@@ -324,7 +322,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			}
 			socketCPUs := topo.CPUDetails.CPUsInSockets(socketID)
 			availableCPUsForDevice = sharedCPUs.Difference(cpuAssignment).Intersection(socketCPUs)
-			logger.Info("socket CPU availability", "socketID", socketID, "socketCPUs", socketCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
+			logger.V(4).Info("socket CPU availability", "socketID", socketID, "socketCPUs", socketCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
 		} else { // numanode
 			numaNodeID, ok := cp.deviceNameToNUMANodeID[alloc.Device]
 			if !ok {
@@ -332,7 +330,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			}
 			numaCPUs := topo.CPUDetails.CPUsInNUMANodes(numaNodeID)
 			availableCPUsForDevice = sharedCPUs.Difference(cpuAssignment).Intersection(numaCPUs)
-			logger.Info("NUMA node CPU availability", "numaNodeID", numaNodeID, "numaCPUs", numaCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
+			logger.V(4).Info("NUMA node CPU availability", "numaNodeID", numaNodeID, "numaCPUs", numaCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
 		}
 
 		cur, err := cpumanager.TakeByTopologyNUMAPacked(logger, topo, availableCPUsForDevice, int(claimCPUCount), cpumanager.CPUSortingStrategyPacked, true)
@@ -340,11 +338,11 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			return kubeletplugin.PrepareResult{Err: err}
 		}
 		cpuAssignment = cpuAssignment.Union(cur)
-		logger.Info("CPU assignment for device", "device", alloc.Device, "assigned", cur.String(), "allAssigned", cpuAssignment.String())
+		logger.V(4).Info("CPU assignment for device", "device", alloc.Device, "assigned", cur.String(), "allAssigned", cpuAssignment.String())
 	}
 
 	if cpuAssignment.Size() == 0 {
-		logger.V(5).Info("claim has no CPU allocations for this driver")
+		logger.V(6).Info("claim has no CPU allocations for this driver")
 		return kubeletplugin.PrepareResult{}
 	}
 
@@ -357,7 +355,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 	}
 
 	qualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, deviceName)
-	logger.Info("prepared CDI device", "cdiDeviceName", deviceName, "envVar", envVar, "qualifiedName", qualifiedName)
+	logger.V(6).Info("prepared CDI device", "cdiDeviceName", deviceName, "envVar", envVar, "qualifiedName", qualifiedName)
 	preparedDevices := []kubeletplugin.Device{}
 	for _, allocResult := range claim.Status.Allocation.Devices.Results {
 		if allocResult.Driver != cp.driverName {
@@ -372,14 +370,14 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		preparedDevices = append(preparedDevices, preparedDevice)
 	}
 
-	logger.Info("prepared devices for claim", "preparedDevices", preparedDevices)
+	logger.V(4).Info("prepared devices for claim", "preparedDevices", preparedDevices)
 	return kubeletplugin.PrepareResult{
 		Devices: preparedDevices,
 	}
 }
 
 func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
-	logger.Info("preparing individual resource claim")
+	logger.V(2).Info("preparing individual resource claim")
 
 	if claim.Status.Allocation == nil {
 		return kubeletplugin.PrepareResult{
@@ -402,7 +400,7 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 	}
 
 	if len(claimCPUIDs) == 0 {
-		logger.V(5).Info("claim has no CPU allocations for this driver")
+		logger.V(6).Info("claim has no CPU allocations for this driver")
 		return kubeletplugin.PrepareResult{}
 	}
 
@@ -415,7 +413,7 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 	}
 
 	qualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, deviceName)
-	logger.Info("prepared CDI device", "cdiDeviceName", deviceName, "envVar", envVar, "qualifiedName", qualifiedName)
+	logger.V(6).Info("prepared CDI device", "cdiDeviceName", deviceName, "envVar", envVar, "qualifiedName", qualifiedName)
 	preparedDevices := []kubeletplugin.Device{}
 	for _, allocResult := range claim.Status.Allocation.Devices.Results {
 		if allocResult.Driver != cp.driverName {
@@ -452,7 +450,7 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 	for _, claim := range claims {
 		// note kubeletplugin.NamespacedObject doesn't implement KMetadata
 		cLogger := logger.WithValues("claim", claim.String(), "claimUID", claim.UID)
-		cLogger.Info("unpreparing resource claim")
+		cLogger.V(2).Info("unpreparing resource claim")
 		err := cp.unprepareResourceClaim(cLogger, claim)
 		result[claim.UID] = err
 		if err != nil {
