@@ -66,7 +66,7 @@ func (ctk *ClaimTracker) SetOwner(logger logr.Logger, claimUID, podUID k8stypes.
 	owner, ok := ctk.ownerByClaimUID[claimUID]
 	if ok {
 		if owner.Equal(curIdent) {
-			logger.V(2).Info("claim bound again to the same owner", "claimUID", claimUID, "podUID", podUID, "containerName", containerName)
+			logger.V(2).Info("claim bound again to the same owner")
 			return nil // not wrong, not suspicious enough to bail out
 		}
 		return AlreadyOwned{
@@ -75,7 +75,7 @@ func (ctk *ClaimTracker) SetOwner(logger logr.Logger, claimUID, podUID k8stypes.
 		}
 	}
 	ctk.ownerByClaimUID[claimUID] = curIdent
-	logger.V(4).Info("claim bound", "claimUID", claimUID, "podUID", podUID, "containerName", containerName)
+	logger.V(4).Info("claim bound")
 	return nil
 }
 
