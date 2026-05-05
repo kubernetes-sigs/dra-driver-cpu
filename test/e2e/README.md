@@ -50,3 +50,7 @@ honor these settings, where applicable.
   NOTE: the Makefile defaults to "grouped" if not set, because a nonempty value is needed internally.
   NOTE: Likewise the e2e tests, the Makefile also behaves differently depending on this setting.
   It is recommended to set it before to run targets like `make ci-manifests`.
+- `DRACPU_E2E_DUMP_RAW_LOGS`: (optional): if set to any value which is true-ish (e.g. `1`, `true`...)
+  makes the tests which verify the contextual logging integrity dump the full raw captured logs
+  before to run any actual test. Useful for troubleshooting and test fixing/tuning.
+  NOTE: setting this value will make the test output significantly larger.
