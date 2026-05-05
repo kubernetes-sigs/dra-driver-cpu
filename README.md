@@ -2,8 +2,23 @@
 
 Kubernetes Dynamic Resource Allocation (DRA) driver for CPU resources.
 This repository implements a DRA driver that enables Kubernetes clusters to manage and assign exclusive CPUs to workloads using the DRA framework.
+This driver replaces the [CPUManager](https://kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/) functionalities implemented in the kubelet.
 
 ## Configuration
+
+**IMPORTANT:** The kubelet's CPUManager implements assignment of exclusive CPUs to workloads. The CPUManager and this DRA driver are mutually incompatible and only
+one can be enabled at a time on any given node.
+
+## Kubelet configuration prerequisites
+
+You need to disable the CPUManager on the nodes you wish to run this DRA driver.
+
+1. The default settings of the kubelet are compatible with this DRA driver. If you never fine-tuned the kubelet, you are probably fine.
+1. Make sure `cpuManagerPolicy: "none"` is set in the kubelet [configuration file](https://kubernetes.io/docs/tasks/administer-cluster/kubelet-config-file/).
+1. If you changed the kubelet configuration, restart the kubelet to take effect. **NOTE:** you may need to [delete the CPUManager state file](https://kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/#changing-the-cpu-manager-policy).
+1. You may now proceed with deploying and configuring this DRA driver.
+
+## Driver configuration
 
 The driver can be configured with the following command-line flags:
 
