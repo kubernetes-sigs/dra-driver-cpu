@@ -60,7 +60,7 @@ func (s *CPUAllocation) AddResourceClaimAllocation(logger logr.Logger, claimUID 
 	}
 	s.resourceClaimAllocations[claimUID] = cpus
 	s.allocatedCPUs = s.allocatedCPUs.Union(cpus)
-	logger.Info("added allocation for resource claim", "claimUID", claimUID, "cpus", cpus.String())
+	logger.Info("added allocation for resource claim", "cpus", cpus.String())
 }
 
 // RemoveResourceClaimAllocation removes a resource claim allocation from the store.
@@ -70,7 +70,7 @@ func (s *CPUAllocation) RemoveResourceClaimAllocation(logger logr.Logger, claimU
 	if cpus, ok := s.resourceClaimAllocations[claimUID]; ok {
 		delete(s.resourceClaimAllocations, claimUID)
 		s.allocatedCPUs = s.allocatedCPUs.Difference(cpus)
-		logger.Info("removed allocation for resource claim", "claimUID", claimUID)
+		logger.Info("removed allocation for resource claim")
 	}
 }
 
