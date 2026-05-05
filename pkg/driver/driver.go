@@ -156,6 +156,8 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 	}
 
 	logger := klog.FromContext(ctx)
+	logger = logger.WithValues("driver", config.DriverName)
+	ctx = klog.NewContext(ctx, logger)
 
 	cdiMgr, err := NewCdiManager(logger, config.DriverName)
 	if err != nil {
@@ -170,7 +172,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		// https://github.com/containerd/nri/pull/173
 		// Otherwise it silently exits the program
 		stub.WithOnClose(func() {
-			logger.Info("NRI plugin closed", "driver", config.DriverName)
+			logger.Info("NRI plugin closed")
 		}),
 	}
 	stub, err := stub.New(plugin, nriOpts...)
