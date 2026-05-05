@@ -57,7 +57,7 @@ const (
 
 // createGroupedCPUDeviceSlices creates Device objects based on the CPU topology, grouped by a specific criteria.
 func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resourceapi.Device {
-	logger.Info("creating grouped CPU devices", "groupBy", cp.cpuDeviceGroupBy)
+	logger.Info("creating grouped CPU devices")
 	var devices []resourceapi.Device
 
 	topo := cp.cpuTopology
@@ -224,7 +224,8 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 
 // PublishResources publishes ResourceSlice for CPU resources.
 func (cp *CPUDriver) PublishResources(ctx context.Context) {
-	logger := klog.FromContext(ctx)
+	logger := klog.FromContext(ctx).WithValues("deviceMode", cp.cpuDeviceMode, "groupBy", cp.cpuDeviceGroupBy)
+	ctx = klog.NewContext(ctx, logger)
 	logger.Info("publishing resources")
 
 	var deviceChunks [][]resourceapi.Device
@@ -269,12 +270,13 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 	}
 
 	for _, claim := range claims {
+		cLogger := logger.WithValues("claim", klog.KObj(claim), "claimUID", claim.UID)
 		if cp.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
-			logger.Info("claim is for a grouped resource", "claim", klog.KObj(claim))
-			result[claim.UID] = cp.prepareGroupedResourceClaim(logger, claim)
+			cLogger.Info("claim is for a grouped resource")
+			result[claim.UID] = cp.prepareGroupedResourceClaim(cLogger, claim)
 		} else {
-			logger.Info("claim is for an individual resource", "claim", klog.KObj(claim))
-			result[claim.UID] = cp.prepareResourceClaim(logger, claim)
+			cLogger.Info("claim is for an individual resource")
+			result[claim.UID] = cp.prepareResourceClaim(cLogger, claim)
 		}
 	}
 	return result, nil
@@ -285,7 +287,7 @@ func getCDIDeviceName(uid types.UID) string {
 }
 
 func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
-	logger.Info("preparing grouped resource claim", "claim", klog.KObj(claim))
+	logger.Info("preparing grouped resource claim")
 
 	if claim.Status.Allocation == nil {
 		return kubeletplugin.PrepareResult{
@@ -303,7 +305,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		if quantity, ok := alloc.ConsumedCapacity[cpuResourceQualifiedName]; ok {
 			count := quantity.Value()
 			claimCPUCount = count
-			logger.Info("found CPU request", "numCPUs", count, "device", alloc.Device, "claim", klog.KObj(claim))
+			logger.Info("found CPU request", "numCPUs", count, "device", alloc.Device)
 		}
 
 		topo := cp.cpuTopology
@@ -336,7 +338,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 	}
 
 	if cpuAssignment.Size() == 0 {
-		logger.V(5).Info("claim has no CPU allocations for this driver", "claim", klog.KObj(claim))
+		logger.V(5).Info("claim has no CPU allocations for this driver")
 		return kubeletplugin.PrepareResult{}
 	}
 
@@ -371,7 +373,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 }
 
 func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
-	logger.Info("preparing individual resource claim", "claim", klog.KObj(claim))
+	logger.Info("preparing individual resource claim")
 
 	if claim.Status.Allocation == nil {
 		return kubeletplugin.PrepareResult{
@@ -394,7 +396,7 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 	}
 
 	if len(claimCPUIDs) == 0 {
-		logger.V(5).Info("claim has no CPU allocations for this driver", "claim", klog.KObj(claim))
+		logger.V(5).Info("claim has no CPU allocations for this driver")
 		return kubeletplugin.PrepareResult{}
 	}
 
@@ -438,11 +440,13 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 	}
 
 	for _, claim := range claims {
-		logger.Info("unpreparing resource claim", "claim", claim)
-		err := cp.unprepareResourceClaim(logger, claim)
+		// note kubeletplugin.NamespacedObject doesn't implement KMetadata
+		cLogger := logger.WithValues("claim", claim.String(), "claimUID", claim.UID)
+		cLogger.Info("unpreparing resource claim")
+		err := cp.unprepareResourceClaim(cLogger, claim)
 		result[claim.UID] = err
 		if err != nil {
-			logger.Error(err, "error unpreparing resources for claim", "namespace", claim.Namespace, "name", claim.Name)
+			cLogger.Error(err, "error unpreparing resources for claim")
 		}
 	}
 	return result, nil
