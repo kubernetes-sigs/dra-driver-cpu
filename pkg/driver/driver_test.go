@@ -19,6 +19,7 @@ package driver
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -98,4 +99,45 @@ func TestRunNRIPluginWithRetry_SuccessfulRunNoRetry(t *testing.T) {
 	err := runNRIPluginWithRetry(ctx, runner, maxAttempts)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, int32(1), runner.calls.Load())
+}
+
+func TestGenerateShortID(t *testing.T) {
+	testCases := []struct {
+		name   string
+		length int
+	}{
+		{name: "zero length", length: 0},
+		{name: "single char", length: 1},
+		{name: "batchIDLen", length: batchIDLen},
+		{name: "large", length: 64},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			id := generateShortID(tc.length)
+			require.Len(t, id, tc.length)
+			if tc.length == 0 {
+				return
+			}
+			require.True(t, isHex(id))
+		})
+	}
+}
+
+func TestGenerateShortIDUnique(t *testing.T) {
+	a := generateShortID(batchIDLen)
+	b := generateShortID(batchIDLen)
+	require.NotEqual(t, a, b)
+}
+
+func isHex(s string) bool {
+	s = strings.ToLower(s)
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if b-'0' < 10 || b-'a' < 6 {
+			continue
+		}
+		return false
+	}
+	return true
 }

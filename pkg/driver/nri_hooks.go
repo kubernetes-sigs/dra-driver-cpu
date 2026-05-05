@@ -32,6 +32,7 @@ import (
 // Synchronize is called by the NRI to synchronize the state of the driver during bootstrap.
 func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, containers []*api.Container) ([]*api.ContainerUpdate, error) {
 	logger := klog.FromContext(ctx)
+
 	logger.Info("synchronized state with the runtime", "numPods", len(pods), "numContainers", len(containers))
 
 	cpuAllocationStore := store.NewCPUAllocation(cp.cpuTopology, cp.reservedCPUs)
@@ -148,7 +149,11 @@ func (cp *CPUDriver) getSharedContainerUpdates(logger logr.Logger, excludeID typ
 // CreateContainer handles container creation requests from the NRI.
 func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
 	logger := klog.FromContext(ctx).WithValues("pod", klog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
+	// unnecessary now, but easy to miss in the future. Reset the context to a known-good state to be forward compatible
+	_ = klog.NewContext(ctx, logger)
+
 	logger.Info("CreateContainer")
+
 	adjust := &api.ContainerAdjustment{}
 	var updates []*api.ContainerUpdate
 
@@ -194,7 +199,11 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 
 func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) ([]*api.ContainerUpdate, error) {
 	logger := klog.FromContext(ctx).WithValues("pod", klog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
+	// unnecessary now, but easy to miss in the future. Reset the context to a known-good state to be forward compatible
+	_ = klog.NewContext(ctx, logger)
+
 	logger.Info("StopContainer")
+
 	updates := []*api.ContainerUpdate{}
 	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
 	entries := "none"
@@ -223,6 +232,9 @@ func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr
 // RemoveContainer handles container removal requests from the NRI.
 func (cp *CPUDriver) RemoveContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) error {
 	logger := klog.FromContext(ctx).WithValues("pod", klog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
+	// unnecessary now, but easy to miss in the future. Reset the context to a known-good state to be forward compatible
+	_ = klog.NewContext(ctx, logger)
+
 	logger.Info("RemoveContainer")
 	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
 	if len(claimUIDs) > 0 {
