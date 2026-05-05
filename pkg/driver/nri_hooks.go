@@ -39,14 +39,17 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	var containerUpdates []*api.ContainerUpdate
 
 	for _, pod := range pods {
-		logger.Info("synchronize pod", "pod", klog.KObj(pod), "podUID", pod.Uid)
+		pLogger := logger.WithValues("pod", klog.KObj(pod), "podUID", pod.Uid)
+		pLogger.Info("synchronize pod")
 		for _, container := range containers {
 			if container.PodSandboxId != pod.Id {
 				continue
 			}
-			claimAllocations, err := parseDRAEnvToClaimAllocations(logger, container.Env)
+			cLogger := pLogger.WithValues("container", container.Name)
+
+			claimAllocations, err := parseDRAEnvToClaimAllocations(cLogger, container.Env)
 			if err != nil {
-				logger.Error(err, "error parsing DRA env for container", "pod", klog.KObj(pod), "container", container.Name)
+				cLogger.Error(err, "error parsing DRA env for container")
 				continue
 			}
 			containerUID := types.UID(container.GetId())
@@ -57,16 +60,17 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			} else {
 				allGuaranteedCPUs := cpuset.New()
 				for uid, cpus := range claimAllocations {
-					err := cp.claimTracker.SetOwner(logger, uid, types.UID(pod.Uid), container.Name)
+					caLogger := cLogger.WithValues("claimUID", uid)
+					err := cp.claimTracker.SetOwner(caLogger, uid, types.UID(pod.Uid), container.Name)
 					if err != nil {
 						return nil, err
 					}
 
 					allGuaranteedCPUs = allGuaranteedCPUs.Union(cpus)
 					claimUIDs = append(claimUIDs, uid)
-					cpuAllocationStore.AddResourceClaimAllocation(logger, uid, cpus)
+					cpuAllocationStore.AddResourceClaimAllocation(caLogger, uid, cpus)
 				}
-				logger.Info("found guaranteed CPUs", "pod", klog.KObj(pod), "container", container.Name, "cpus", allGuaranteedCPUs.String())
+				cLogger.Info("found guaranteed CPUs", "cpus", allGuaranteedCPUs.String())
 				state = store.NewContainerState(container.GetName(), containerUID, claimUIDs...)
 
 				// Reconcile guaranteed container CPU mask.
@@ -143,14 +147,14 @@ func (cp *CPUDriver) getSharedContainerUpdates(logger logr.Logger, excludeID typ
 
 // CreateContainer handles container creation requests from the NRI.
 func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
-	logger := klog.FromContext(ctx)
-	logger.Info("CreateContainer", "pod", klog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
+	logger := klog.FromContext(ctx).WithValues("pod", klog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
+	logger.Info("CreateContainer")
 	adjust := &api.ContainerAdjustment{}
 	var updates []*api.ContainerUpdate
 
 	claimAllocations, err := parseDRAEnvToClaimAllocations(logger, ctr.Env)
 	if err != nil {
-		logger.Error(err, "error parsing DRA env for container", "pod", klog.KObj(pod), "container", ctr.Name)
+		logger.Error(err, "error parsing DRA env for container")
 	}
 
 	containerId := types.UID(ctr.GetId())
@@ -162,13 +166,14 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		cp.podConfigStore.SetContainerState(podUID, state)
 
 		sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
-		logger.Info("no guaranteed CPUs found, using shared CPUs", "pod", klog.KObj(pod), "container", ctr.Name, "sharedCPUs", sharedCPUs.String())
+		logger.Info("no guaranteed CPUs found, using shared CPUs", "sharedCPUs", sharedCPUs.String())
 		adjust.SetLinuxCPUSetCPUs(sharedCPUs.String())
 	} else {
 		guaranteedCPUs := cpuset.New()
 		claimUIDs := []types.UID{}
 		for uid, cpus := range claimAllocations {
-			err := cp.claimTracker.SetOwner(logger, uid, types.UID(pod.Uid), ctr.Name)
+			cLogger := logger.WithValues("claimUID", uid)
+			err := cp.claimTracker.SetOwner(cLogger, uid, types.UID(pod.Uid), ctr.Name)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -176,7 +181,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 			guaranteedCPUs = guaranteedCPUs.Union(cpus)
 			claimUIDs = append(claimUIDs, uid)
 		}
-		logger.Info("guaranteed CPUs found", "pod", klog.KObj(pod), "container", ctr.Name, "cpus", guaranteedCPUs.String())
+		logger.Info("guaranteed CPUs found", "cpus", guaranteedCPUs.String())
 		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs...)
 		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
 		cp.podConfigStore.SetContainerState(podUID, state)
@@ -188,8 +193,8 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 }
 
 func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) ([]*api.ContainerUpdate, error) {
-	logger := klog.FromContext(ctx)
-	logger.Info("StopContainer", "pod", klog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
+	logger := klog.FromContext(ctx).WithValues("pod", klog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
+	logger.Info("StopContainer")
 	updates := []*api.ContainerUpdate{}
 	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
 	entries := "none"
@@ -203,7 +208,8 @@ func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr
 		// TODO: This workaround assumes that ResourceClaims are NOT shared across pods/containers. If claim sharing
 		// is supported in the future, this early release of CPUS will need an update.
 		for _, claimUID := range claimUIDs {
-			cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claimUID)
+			cLogger := logger.WithValues("claimUID", claimUID)
+			cp.cpuAllocationStore.RemoveResourceClaimAllocation(cLogger, claimUID)
 		}
 		// Remove the guaranteed CPUs from the containers with shared CPUs.
 		updates = cp.getSharedContainerUpdates(logger, types.UID(ctr.GetId()))
@@ -216,8 +222,8 @@ func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr
 
 // RemoveContainer handles container removal requests from the NRI.
 func (cp *CPUDriver) RemoveContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) error {
-	logger := klog.FromContext(ctx)
-	logger.Info("RemoveContainer", "pod", klog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
+	logger := klog.FromContext(ctx).WithValues("pod", klog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
+	logger.Info("RemoveContainer")
 	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
 	if len(claimUIDs) > 0 {
 		// this serves only for debugging purposes. We should never get here
