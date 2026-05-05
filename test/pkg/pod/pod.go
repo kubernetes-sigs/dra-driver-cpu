@@ -139,3 +139,29 @@ func PinToNode(pod *v1.Pod, nodeName string) *v1.Pod {
 func Identify(pod *v1.Pod) string {
 	return pod.Namespace + "/" + pod.Name + "@" + pod.Spec.NodeName
 }
+
+func GetDRACPUPod(ctx context.Context, cs kubernetes.Interface, nodeName string) (*v1.Pod, error) {
+	const (
+		// TODO: these should be common constants or introspected
+		dracpuNamespace = "kube-system"
+		dracpuName      = "dracpu"
+	)
+
+	daemonSet, err := cs.AppsV1().DaemonSets(dracpuNamespace).Get(ctx, dracpuName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("cannot get dracpu daemonset: %w", err)
+	}
+
+	labelSelector := metav1.FormatLabelSelector(daemonSet.Spec.Selector)
+	pods, err := cs.CoreV1().Pods(daemonSet.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+		FieldSelector: "spec.nodeName=" + nodeName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("cannot get dracpu pods: %w", err)
+	}
+	if len(pods.Items) != 1 {
+		return nil, fmt.Errorf("found unexpected amount of dracpu pods: %d", len(pods.Items))
+	}
+	return &pods.Items[0], nil
+}
