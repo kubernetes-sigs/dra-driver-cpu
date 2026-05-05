@@ -33,7 +33,9 @@ import (
 func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, containers []*api.Container) ([]*api.ContainerUpdate, error) {
 	logger := klog.FromContext(ctx)
 
-	logger.Info("synchronized state with the runtime", "numPods", len(pods), "numContainers", len(containers))
+	// this happens once at startup and it's critical enough that we always want to see it.
+	logger.Info("begin: synchronize state with the runtime", "numPods", len(pods), "numContainers", len(containers))
+	defer logger.Info("end: synchronize state with the runtime", "numPods", len(pods), "numContainers", len(containers))
 
 	cpuAllocationStore := store.NewCPUAllocation(cp.cpuTopology, cp.reservedCPUs)
 	podConfigStore := store.NewPodConfig()
@@ -152,7 +154,8 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 	// unnecessary now, but easy to miss in the future. Reset the context to a known-good state to be forward compatible
 	_ = klog.NewContext(ctx, logger)
 
-	logger.Info("CreateContainer")
+	logger.V(4).Info("begin: CreateContainer")
+	defer logger.V(4).Info("end: CreateContainer")
 
 	adjust := &api.ContainerAdjustment{}
 	var updates []*api.ContainerUpdate
@@ -202,7 +205,8 @@ func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr
 	// unnecessary now, but easy to miss in the future. Reset the context to a known-good state to be forward compatible
 	_ = klog.NewContext(ctx, logger)
 
-	logger.Info("StopContainer")
+	logger.V(4).Info("begin: StopContainer")
+	defer logger.V(4).Info("end: StopContainer")
 
 	updates := []*api.ContainerUpdate{}
 	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
@@ -235,7 +239,9 @@ func (cp *CPUDriver) RemoveContainer(ctx context.Context, pod *api.PodSandbox, c
 	// unnecessary now, but easy to miss in the future. Reset the context to a known-good state to be forward compatible
 	_ = klog.NewContext(ctx, logger)
 
-	logger.Info("RemoveContainer")
+	logger.V(4).Info("begin: RemoveContainer")
+	defer logger.V(4).Info("end: RemoveContainer")
+
 	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
 	if len(claimUIDs) > 0 {
 		// this serves only for debugging purposes. We should never get here

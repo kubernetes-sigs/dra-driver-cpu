@@ -227,7 +227,8 @@ func (cp *CPUDriver) PublishResources(ctx context.Context) {
 	logger := klog.FromContext(ctx).WithValues("deviceMode", cp.cpuDeviceMode, "groupBy", cp.cpuDeviceGroupBy)
 	ctx = klog.NewContext(ctx, logger)
 
-	logger.Info("publishing resources")
+	logger.V(4).Info("begin: publishing resources")
+	defer logger.V(4).Info("end: publishing resources")
 
 	var deviceChunks [][]resourceapi.Device
 	if cp.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
@@ -265,7 +266,8 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 	// unnecessary now, but easy to miss in the future. Reset the context to a known-good state to be forward compatible
 	_ = klog.NewContext(ctx, logger)
 
-	logger.Info("preparing resource claims", "numClaims", len(claims))
+	logger.V(4).Info("begin: preparing resource claims", "numClaims", len(claims))
+	defer logger.V(4).Info("end: preparing resource claims", "numClaims", len(claims))
 
 	result := make(map[types.UID]kubeletplugin.PrepareResult)
 
@@ -438,7 +440,8 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 	// unnecessary now, but easy to miss in the future. Reset the context to a known-good state to be forward compatible
 	_ = klog.NewContext(ctx, logger)
 
-	logger.Info("unpreparing resource claims", "numClaims", len(claims))
+	logger.V(4).Info("begin: unpreparing resource claims", "numClaims", len(claims))
+	defer logger.V(4).Info("end: unpreparing resource claims", "numClaims", len(claims))
 
 	result := make(map[types.UID]error)
 
