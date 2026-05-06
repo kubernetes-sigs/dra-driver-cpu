@@ -571,6 +571,31 @@ func TestPrepareResourceClaims(t *testing.T) {
 				{PoolName: testNodeName, DeviceName: "cpudev0", CDIDeviceIDs: []string{cdiQualifiedName}},
 			},
 		},
+		{
+			name: "error - overlapping device assignment",
+			driver: func() *CPUDriver {
+				d := baseCPUDriver()
+				// Pre-allocate cpudev0 to an existing claim
+				d.cpuAllocationStore.AddResourceClaimAllocation(testr.New(t), "claim0", cpuset.New(0))
+				return d
+			}(),
+			claims: []*resourceapi.ResourceClaim{
+				{
+					ObjectMeta: metav1.ObjectMeta{UID: "claim1", Name: "claim1", Namespace: "default"},
+					Status: resourceapi.ResourceClaimStatus{
+						Allocation: &resourceapi.AllocationResult{
+							Devices: resourceapi.DeviceAllocationResult{
+								Results: []resourceapi.DeviceRequestAllocationResult{
+									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev0"},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedResultsCount: 1,
+			expectedError:        true,
+		},
 	}
 
 	for _, tc := range testCases {

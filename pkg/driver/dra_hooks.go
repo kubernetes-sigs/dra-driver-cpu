@@ -399,6 +399,14 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 	}
 
 	claimCPUSet := cpuset.New(claimCPUIDs...)
+	// All the CPUs allocated to a claim should currently be in the shared pool.
+	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
+	if claimCPUSet.Difference(sharedCPUs).Size() > 0 {
+		return kubeletplugin.PrepareResult{
+			Err: fmt.Errorf("claim %s/%s has overlapping device assignment with other claims", claim.Namespace, claim.Name),
+		}
+	}
+
 	cp.cpuAllocationStore.AddResourceClaimAllocation(logger, claim.UID, claimCPUSet)
 	deviceName := getCDIDeviceName(claim.UID)
 	envVar := fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claim.UID, claimCPUSet.String())
