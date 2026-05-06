@@ -1,0 +1,67 @@
+---
+# Configures containerd on all worker nodes to enable NRI and CDI.
+# Only needed for runtimes older than containerd 2.0 / CRI-O 1.30.
+# See README.md "Automated Configuration for Older Runtimes" for usage.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dracpu-setup
+  namespace: kube-system
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dracpu-setup-containerd
+  namespace: kube-system
+spec:
+  parallelism: WORKER_COUNT
+  completions: WORKER_COUNT
+  template:
+    metadata:
+      labels:
+        app: dracpu-setup
+    spec:
+      serviceAccountName: dracpu-setup
+      hostNetwork: true
+      hostPID: true
+      restartPolicy: Never
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      topologySpreadConstraints:
+      - maxSkew: 1
+        whenUnsatisfiable: DoNotSchedule
+        topologyKey: kubernetes.io/hostname
+        labelSelector:
+          matchLabels:
+            app: dracpu-setup
+        matchLabelKeys:
+        - pod-template-hash
+      containers:
+      - name: setup-runtime
+        image: IMAGE_NAME
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu -x
+          if /bin/setup-runtime-containerd /etc/containerd/config.toml; then
+            echo "restarting containerd"
+            /usr/bin/nsenter -t 1 -m -u -i -n -p -- /usr/bin/systemctl restart containerd
+          fi
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        volumeMounts:
+        - mountPath: /etc
+          name: etc
+      securityContext:
+        runAsUser: 0
+      volumes:
+      - name: etc
+        hostPath:
+          path: /etc
+          type: Directory
