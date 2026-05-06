@@ -19,13 +19,12 @@ package e2e
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
-	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/node"
+	e2enode "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/node"
 	e2epod "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/pod"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -83,22 +82,9 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 		}
 
 		// Find target node
-		if targetNodeName := os.Getenv("DRACPU_E2E_TARGET_NODE"); len(targetNodeName) > 0 {
-			targetNode, err = rootFxt.K8SClientset.CoreV1().Nodes().Get(ctx, targetNodeName, metav1.GetOptions{})
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		} else {
-			gomega.Eventually(func() error {
-				workerNodes, err := node.FindWorkers(ctx, infraFxt.K8SClientset)
-				if err != nil {
-					return err
-				}
-				if len(workerNodes) == 0 {
-					return fmt.Errorf("no worker nodes detected")
-				}
-				targetNode = workerNodes[0]
-				return nil
-			}).WithTimeout(1 * time.Minute).WithPolling(5 * time.Second).Should(gomega.Succeed())
-		}
+		targetNode, err = e2enode.PickWorker(ctx, rootFxt.K8SClientset, 5*time.Second, 1*time.Minute, rootFxt.Log)
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		rootFxt.Log.Info("using worker node", "nodeName", targetNode.Name)
 
 		// Discover topology
 		infoPod := discovery.MakePod(infraFxt.Namespace.Name, dracpuTesterImage)
