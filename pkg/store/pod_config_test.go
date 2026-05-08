@@ -22,20 +22,23 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/cpuset"
 )
 
 func TestSetAndGetContainerState(t *testing.T) {
 	store := NewPodConfig()
 	podUID := types.UID("pod-uid-1")
 	ctrName := "ctr-name-1"
-	state := NewContainerState(ctrName, "ctr-uid-1", types.UID("claim-uid-1"))
+	state := NewContainerState(ctrName, "ctr-uid-1", AllocationTypeGuaranteed, ClaimInfo{ClaimUID: "claim-uid-1", CPUs: cpuset.New()})
 
 	// Get non-existent state
-	require.Nil(t, store.GetContainerState(podUID, ctrName))
+	_, ok := store.GetContainerStateByUID("ctr-uid-1")
+	require.False(t, ok)
 
 	// Set and get state
 	store.SetContainerState(podUID, state)
-	gotState := store.GetContainerState(podUID, ctrName)
+	gotState, ok := store.GetContainerStateByUID("ctr-uid-1")
+	require.True(t, ok)
 	require.Equal(t, state, gotState)
 }
 
@@ -44,23 +47,28 @@ func TestRemoveContainerState(t *testing.T) {
 	podUID := types.UID("pod-uid-1")
 	ctrName1 := "ctr-name-1"
 	ctrName2 := "ctr-name-2"
-	state1 := NewContainerState(ctrName1, "ctr-uid-1", types.UID("claim-uid-1"))
-	state2 := NewContainerState(ctrName2, "ctr-uid-2")
+	state1 := NewContainerState(ctrName1, "ctr-uid-1", AllocationTypeGuaranteed, ClaimInfo{ClaimUID: "claim-uid-1", CPUs: cpuset.New()})
+	state2 := NewContainerState(ctrName2, "ctr-uid-2", AllocationTypeShared)
 
 	// Setup: add a pod with two containers
 	store.SetContainerState(podUID, state1)
 	store.SetContainerState(podUID, state2)
-	require.NotNil(t, store.GetContainerState(podUID, ctrName1))
-	require.NotNil(t, store.GetContainerState(podUID, ctrName2))
+	_, ok1 := store.GetContainerStateByUID("ctr-uid-1")
+	require.True(t, ok1)
+	_, ok2 := store.GetContainerStateByUID("ctr-uid-2")
+	require.True(t, ok2)
 
 	// Remove one container
 	store.RemoveContainerState(podUID, ctrName1)
-	require.Nil(t, store.GetContainerState(podUID, ctrName1))
-	require.NotNil(t, store.GetContainerState(podUID, ctrName2), "other container should still exist")
+	_, ok1 = store.GetContainerStateByUID("ctr-uid-1")
+	require.False(t, ok1)
+	_, ok2 = store.GetContainerStateByUID("ctr-uid-2")
+	require.True(t, ok2, "other container should still exist")
 
 	// Remove the second container, which should remove the pod entry
 	store.RemoveContainerState(podUID, ctrName2)
-	require.Nil(t, store.GetContainerState(podUID, ctrName2))
+	_, ok2 = store.GetContainerStateByUID("ctr-uid-2")
+	require.False(t, ok2)
 	_, podExists := store.configs[podUID]
 	require.False(t, podExists, "pod entry should be gone after last container is removed")
 
@@ -69,9 +77,9 @@ func TestRemoveContainerState(t *testing.T) {
 }
 
 func TestGetSharedCPUContainerUIDs(t *testing.T) {
-	sharedState1 := NewContainerState("c1", "id1")
-	sharedState2 := NewContainerState("c2", "id2")
-	guaranteedState := NewContainerState("c3", "id3", types.UID("claim-uid-1"))
+	sharedState1 := NewContainerState("c1", "id1", AllocationTypeShared)
+	sharedState2 := NewContainerState("c2", "id2", AllocationTypeShared)
+	guaranteedState := NewContainerState("c3", "id3", AllocationTypeGuaranteed, ClaimInfo{ClaimUID: "claim-uid-1", CPUs: cpuset.New()})
 
 	testCases := []struct {
 		name     string
@@ -105,7 +113,7 @@ func TestGetSharedCPUContainerUIDs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := NewPodConfig()
 			tc.setup(store)
-			gotUIDs := store.GetContainersWithSharedCPUs()
+			gotUIDs := store.GetContainersWithSharedCPUs(false)
 			require.ElementsMatch(t, tc.wantUIDs, gotUIDs)
 		})
 	}
@@ -114,29 +122,29 @@ func TestGetSharedCPUContainerUIDs(t *testing.T) {
 func TestSharedCPUContainersCacheConsistency(t *testing.T) {
 	store := NewPodConfig()
 
-	store.SetContainerState("pod1", NewContainerState("c1", "id1"))
-	store.SetContainerState("pod1", NewContainerState("c2", "id2"))
-	store.SetContainerState("pod2", NewContainerState("c3", "id3"))
+	store.SetContainerState("pod1", NewContainerState("c1", "id1", AllocationTypeShared))
+	store.SetContainerState("pod1", NewContainerState("c2", "id2", AllocationTypeShared))
+	store.SetContainerState("pod2", NewContainerState("c3", "id3", AllocationTypeShared))
 
-	sharedUIDs := store.GetContainersWithSharedCPUs()
+	sharedUIDs := store.GetContainersWithSharedCPUs(false)
 	require.Len(t, sharedUIDs, 3)
 
-	store.SetContainerState("pod3", NewContainerState("c4", "id4", "claim-1"))
-	sharedUIDs = store.GetContainersWithSharedCPUs()
+	store.SetContainerState("pod3", NewContainerState("c4", "id4", AllocationTypeGuaranteed, ClaimInfo{ClaimUID: "claim-1", CPUs: cpuset.New()}))
+	sharedUIDs = store.GetContainersWithSharedCPUs(false)
 	require.Len(t, sharedUIDs, 3)
 
-	store.SetContainerState("pod1", NewContainerState("c1", "id1", "claim-2"))
-	sharedUIDs = store.GetContainersWithSharedCPUs()
+	store.SetContainerState("pod1", NewContainerState("c1", "id1", AllocationTypeGuaranteed, ClaimInfo{ClaimUID: "claim-2", CPUs: cpuset.New()}))
+	sharedUIDs = store.GetContainersWithSharedCPUs(false)
 	require.Len(t, sharedUIDs, 2)
 	require.NotContains(t, sharedUIDs, types.UID("id1"))
 
 	store.RemoveContainerState("pod1", "c2")
-	sharedUIDs = store.GetContainersWithSharedCPUs()
+	sharedUIDs = store.GetContainersWithSharedCPUs(false)
 	require.Len(t, sharedUIDs, 1)
 	require.ElementsMatch(t, []types.UID{"id3"}, sharedUIDs)
 
 	store.RemoveContainerState("pod2", "c3")
-	sharedUIDs = store.GetContainersWithSharedCPUs()
+	sharedUIDs = store.GetContainersWithSharedCPUs(false)
 	require.Len(t, sharedUIDs, 0)
 }
 
@@ -145,12 +153,12 @@ func TestSetContainerState_ContainerRestart(t *testing.T) {
 	podUID := types.UID("pod1")
 
 	// Initial container with shared CPUs.
-	store.SetContainerState(podUID, NewContainerState("ctr", "old-uid"))
-	require.ElementsMatch(t, []types.UID{"old-uid"}, store.GetContainersWithSharedCPUs())
+	store.SetContainerState(podUID, NewContainerState("ctr", "old-uid", AllocationTypeShared))
+	require.ElementsMatch(t, []types.UID{"old-uid"}, store.GetContainersWithSharedCPUs(false))
 
 	// Container restarts: same name, new UID.
-	store.SetContainerState(podUID, NewContainerState("ctr", "new-uid"))
-	sharedUIDs := store.GetContainersWithSharedCPUs()
+	store.SetContainerState(podUID, NewContainerState("ctr", "new-uid", AllocationTypeShared))
+	sharedUIDs := store.GetContainersWithSharedCPUs(false)
 	require.Len(t, sharedUIDs, 1)
 	require.NotContains(t, sharedUIDs, types.UID("old-uid"), "stale UID should be removed")
 	require.Contains(t, sharedUIDs, types.UID("new-uid"))
@@ -160,7 +168,7 @@ func getContainersWithSharedCPUsNaive(configs map[types.UID]map[string]*Containe
 	var result []types.UID
 	for _, containers := range configs {
 		for _, state := range containers {
-			if len(state.resourceClaimUIDs) == 0 {
+			if state.Type() == AllocationTypeShared {
 				result = append(result, state.containerUID)
 			}
 		}
@@ -196,9 +204,9 @@ func BenchmarkGetContainersWithSharedCPUs(b *testing.B) {
 
 				var state *ContainerState
 				if (ctrIndex*100)/(tc.numPods*tc.ctrsPerPod) < tc.sharedPercent {
-					state = NewContainerState(ctrName, ctrUID)
+					state = NewContainerState(ctrName, ctrUID, AllocationTypeShared)
 				} else {
-					state = NewContainerState(ctrName, ctrUID, types.UID(fmt.Sprintf("claim-%d", ctrIndex)))
+					state = NewContainerState(ctrName, ctrUID, AllocationTypeGuaranteed, ClaimInfo{ClaimUID: types.UID(fmt.Sprintf("claim-%d", ctrIndex)), CPUs: cpuset.New()})
 				}
 				configs[podUID][ctrName] = state
 				store.SetContainerState(podUID, state)
@@ -214,7 +222,7 @@ func BenchmarkGetContainersWithSharedCPUs(b *testing.B) {
 
 		b.Run(tc.name+"/optimized", func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				_ = store.GetContainersWithSharedCPUs()
+				_ = store.GetContainersWithSharedCPUs(false)
 			}
 		})
 	}

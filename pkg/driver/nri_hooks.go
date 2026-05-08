@@ -29,6 +29,12 @@ import (
 	"k8s.io/utils/cpuset"
 )
 
+const (
+	// MinCPUShares is the minimum CPU shares assigned by Kubelet to a container without CPU requests.
+	// See: https://github.com/kubernetes/kubernetes/blob/d0ab3fc75768ae8081bff58d7050be045eb7ec2e/pkg/kubelet/cm/helpers_linux.go#L44
+	MinCPUShares = 2
+)
+
 // Synchronize is called by the NRI to synchronize the state of the driver during bootstrap.
 func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, containers []*api.Container) ([]*api.ContainerUpdate, error) {
 	logger := klog.FromContext(ctx).WithValues("opID", generateShortID(opIDLen))
@@ -57,31 +63,35 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			}
 			containerUID := types.UID(container.GetId())
 			var state *store.ContainerState
-			var claimUIDs []types.UID
 			if len(claimAllocations) == 0 {
-				state = store.NewContainerState(container.GetName(), containerUID)
+				state = store.NewContainerState(container.GetName(), containerUID, store.AllocationTypeShared)
 			} else {
-				allGuaranteedCPUs := cpuset.New()
-				for uid, cpus := range claimAllocations {
-					caLogger := cLogger.WithValues("claimUID", uid)
-					err := cp.claimTracker.SetOwner(caLogger, uid, types.UID(pod.Uid), container.Name)
-					if err != nil {
-						return nil, err
-					}
-
-					allGuaranteedCPUs = allGuaranteedCPUs.Union(cpus)
-					claimUIDs = append(claimUIDs, uid)
-					cpuAllocationStore.AddResourceClaimAllocation(caLogger, uid, cpus)
+				claims, allGuaranteedCPUs, err := cp.getGuaranteedCPUsFromClaims(cLogger, types.UID(pod.Uid), container.Name, claimAllocations)
+				if err != nil {
+					return nil, err
+				}
+				for _, claim := range claims {
+					caLogger := cLogger.WithValues("claimUID", claim.ClaimUID)
+					cpuAllocationStore.AddResourceClaimAllocation(caLogger, claim.ClaimUID, claim.CPUs)
 				}
 				cLogger.V(2).Info("found guaranteed CPUs", "cpus", allGuaranteedCPUs.String())
-				state = store.NewContainerState(container.GetName(), containerUID, claimUIDs...)
-
-				// Reconcile guaranteed container CPU mask.
-				guaranteedUpdate := &api.ContainerUpdate{
-					ContainerId: container.GetId(),
+				isMixed := cp.isMixedAllocation(cLogger, container)
+				allocType := store.AllocationTypeGuaranteed
+				if isMixed {
+					allocType = store.AllocationTypeMixed
 				}
-				guaranteedUpdate.SetLinuxCPUSetCPUs(allGuaranteedCPUs.String())
-				containerUpdates = append(containerUpdates, guaranteedUpdate)
+				state = store.NewContainerState(container.GetName(), containerUID, allocType, claims...)
+
+				if !isMixed {
+					// Reconcile strictly guaranteed container CPU mask.
+					// Mixed containers will be fully updated to guaranteed + shared CPUs during
+					// the post-synchronize reconciliation at the end of this function.
+					guaranteedUpdate := &api.ContainerUpdate{
+						ContainerId: container.GetId(),
+					}
+					guaranteedUpdate.SetLinuxCPUSetCPUs(allGuaranteedCPUs.String())
+					containerUpdates = append(containerUpdates, guaranteedUpdate)
+				}
 			}
 			podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
 		}
@@ -131,18 +141,28 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 func (cp *CPUDriver) getSharedContainerUpdates(logger logr.Logger, excludeID types.UID) []*api.ContainerUpdate {
 	updates := []*api.ContainerUpdate{}
 	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
-	sharedCPUContainers := cp.podConfigStore.GetContainersWithSharedCPUs()
-	logger.V(2).Info("updating CPU allocation for containers without guaranteed CPUs", "sharedCPUs", sharedCPUs.String())
+	sharedCPUContainers := cp.podConfigStore.GetContainersWithSharedCPUs(true)
+	logger.V(2).Info("updating CPU allocation for shared and mixed containers", "sharedCPUs", sharedCPUs.String())
 	for _, containerUID := range sharedCPUContainers {
 		if containerUID == excludeID {
-			// Skip the container being created as it is already covered in the container adjustment.
 			continue
+		}
+
+		cs, ok := cp.podConfigStore.GetContainerStateByUID(containerUID)
+		if !ok {
+			continue
+		}
+
+		assignedCPUs := sharedCPUs
+		if cs.Type() == store.AllocationTypeMixed {
+			assignedCPUs = cs.GetExclusiveCPUs().Union(sharedCPUs)
+			logger.Info("recalculating cpus for running mixed container", "container", cs.GetContainerName(), "exclusive", cs.GetExclusiveCPUs().String(), "shared", sharedCPUs.String(), "union", assignedCPUs.String())
 		}
 
 		containerUpdate := &api.ContainerUpdate{
 			ContainerId: string(containerUID),
 		}
-		containerUpdate.SetLinuxCPUSetCPUs(sharedCPUs.String())
+		containerUpdate.SetLinuxCPUSetCPUs(assignedCPUs.String())
 		updates = append(updates, containerUpdate)
 	}
 	return updates
@@ -167,28 +187,30 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 
 	if len(claimAllocations) == 0 {
 		// This is a shared container.
-		state := store.NewContainerState(ctr.GetName(), containerId)
+		state := store.NewContainerState(ctr.GetName(), containerId, store.AllocationTypeShared)
 		cp.podConfigStore.SetContainerState(podUID, state)
 
 		sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
 		logger.V(2).Info("no guaranteed CPUs found, using shared CPUs", "sharedCPUs", sharedCPUs.String())
 		adjust.SetLinuxCPUSetCPUs(sharedCPUs.String())
 	} else {
-		guaranteedCPUs := cpuset.New()
-		claimUIDs := []types.UID{}
-		for uid, cpus := range claimAllocations {
-			cLogger := logger.WithValues("claimUID", uid)
-			err := cp.claimTracker.SetOwner(cLogger, uid, types.UID(pod.Uid), ctr.Name)
-			if err != nil {
-				return nil, nil, err
-			}
-
-			guaranteedCPUs = guaranteedCPUs.Union(cpus)
-			claimUIDs = append(claimUIDs, uid)
+		claims, guaranteedCPUs, err := cp.getGuaranteedCPUsFromClaims(logger, types.UID(pod.Uid), ctr.Name, claimAllocations)
+		if err != nil {
+			return nil, nil, err
 		}
 		logger.V(2).Info("guaranteed CPUs found", "cpus", guaranteedCPUs.String())
-		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs...)
-		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
+
+		assignedCPUs := guaranteedCPUs
+		allocType := store.AllocationTypeGuaranteed
+		if cp.isMixedAllocation(logger, ctr) {
+			sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
+			assignedCPUs = guaranteedCPUs.Union(sharedCPUs)
+			logger.Info("assigning both guaranteed and shared CPUs to mixed container", "pod", klog.KObj(pod), "container", ctr.Name, "assignedCPUs", assignedCPUs.String())
+			allocType = store.AllocationTypeMixed
+		}
+
+		state := store.NewContainerState(ctr.GetName(), containerId, allocType, claims...)
+		adjust.SetLinuxCPUSetCPUs(assignedCPUs.String())
 		cp.podConfigStore.SetContainerState(podUID, state)
 		// Remove the guaranteed CPUs from the containers with shared CPUs.
 		updates = cp.getSharedContainerUpdates(logger, containerId)
@@ -239,4 +261,51 @@ func (cp *CPUDriver) RemoveContainer(ctx context.Context, pod *api.PodSandbox, c
 		logger.Info("RemoveContainer spurious updates needed (unexpected, please file a bug)", "updates", cp.getSharedContainerUpdates(logger, types.UID(ctr.GetId())))
 	}
 	return nil
+}
+
+func (cp *CPUDriver) isMixedAllocation(logger logr.Logger, ctr *api.Container) bool {
+	if !cp.mixedAllocationMode {
+		return false
+	}
+	if ctr.Linux == nil || ctr.Linux.Resources == nil || ctr.Linux.Resources.Cpu == nil || ctr.Linux.Resources.Cpu.Shares == nil {
+		logger.Info("could not read cpu shares for container, skipping mixed allocation check")
+		return false
+	}
+	shares := ctr.Linux.Resources.Cpu.Shares.GetValue()
+
+	// Kubernetes/Kubelet maps container CPU requests to CGroup CPU shares.
+	//
+	// If a container does NOT specify any standard CPU request (e.g. it only uses DRA claims),
+	// Kubelet defaults to the absolute minimum CPU shares on Linux, which is 2.
+	//
+	// However, if the container requests ANY standard CPU resources (e.g., cpu: "100m"), Kubelet
+	// configures CGroup shares strictly greater than 2 (shares = milliCPUs * 1024 / 1000).
+	//
+	// Comparing shares > 2 tells us whether the container explicitly requested standard CPU resources
+	// alongside its DRA claims, identifying it as a mixed allocation container.
+	// See Kubelet helper: https://github.com/kubernetes/kubernetes/blob/d0ab3fc75768ae8081bff58d7050be045eb7ec2e/pkg/kubelet/cm/helpers_linux.go
+	if shares > MinCPUShares {
+		logger.Info("mixed allocation detected", "shares", shares)
+		return true
+	}
+	return false
+}
+
+func (cp *CPUDriver) getGuaranteedCPUsFromClaims(logger logr.Logger, podUID types.UID, containerName string, claimAllocations map[types.UID]cpuset.CPUSet) ([]store.ClaimInfo, cpuset.CPUSet, error) {
+	var claims []store.ClaimInfo
+	guaranteedCPUs := cpuset.New()
+	for uid, cpus := range claimAllocations {
+		cLogger := logger.WithValues("claimUID", uid)
+		err := cp.claimTracker.SetOwner(cLogger, uid, podUID, containerName)
+		if err != nil {
+			return nil, cpuset.New(), err
+		}
+
+		claims = append(claims, store.ClaimInfo{
+			ClaimUID: uid,
+			CPUs:     cpus,
+		})
+		guaranteedCPUs = guaranteedCPUs.Union(cpus)
+	}
+	return claims, guaranteedCPUs, nil
 }

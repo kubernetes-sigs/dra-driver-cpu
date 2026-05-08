@@ -20,7 +20,26 @@ import (
 
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/utils/cpuset"
 )
+
+// AllocationType defines the high-level CPU allocation category for a container.
+type AllocationType string
+
+const (
+	// AllocationTypeShared indicates a container running entirely on the node's shared CPU pool.
+	AllocationTypeShared AllocationType = "shared"
+	// AllocationTypeGuaranteed indicates a container with dedicated exclusive CPU resource (requested through claims) allocated via DRA claims.
+	AllocationTypeGuaranteed AllocationType = "guaranteed"
+	// AllocationTypeMixed indicates a container running on both dedicated exclusive CPU resources (requested through claims) and the shared CPU pool.
+	AllocationTypeMixed AllocationType = "mixed"
+)
+
+// ClaimInfo holds information about a single resource claim's allocation.
+type ClaimInfo struct {
+	ClaimUID types.UID
+	CPUs     cpuset.CPUSet
+}
 
 // ContainerState holds the allocation type and all claim assignments for a container.
 type ContainerState struct {
@@ -28,16 +47,19 @@ type ContainerState struct {
 	containerName string
 	// containerUID is used by the container runtime to apply updates to a container.
 	containerUID types.UID
-	// resourceClaimUIDs is a list of resource claims associated with this container.
-	resourceClaimUIDs []types.UID
+	// claims holds information about resource claims allocated to this container.
+	claims []ClaimInfo
+	// allocationType indicates the high-level CPU allocation category for this container.
+	allocationType AllocationType
 }
 
 // NewContainerState creates a new ContainerState.
-func NewContainerState(containerName string, containerUID types.UID, claimUIDs ...types.UID) *ContainerState {
+func NewContainerState(containerName string, containerUID types.UID, allocType AllocationType, claims ...ClaimInfo) *ContainerState {
 	return &ContainerState{
-		containerName:     containerName,
-		containerUID:      containerUID,
-		resourceClaimUIDs: claimUIDs,
+		containerName:  containerName,
+		containerUID:   containerUID,
+		claims:         claims,
+		allocationType: allocType,
 	}
 }
 
@@ -48,14 +70,18 @@ type PodCPUAssignments map[string]*ContainerState
 type PodConfig struct {
 	mu                  sync.RWMutex
 	configs             map[types.UID]PodCPUAssignments
+	containersByUID     map[types.UID]*ContainerState
 	sharedCPUContainers sets.Set[types.UID]
+	mixedCPUContainers  sets.Set[types.UID]
 }
 
 // NewPodConfig creates a new PodConfig.
 func NewPodConfig() *PodConfig {
 	return &PodConfig{
 		configs:             make(map[types.UID]PodCPUAssignments),
+		containersByUID:     make(map[types.UID]*ContainerState),
 		sharedCPUContainers: sets.New[types.UID](),
+		mixedCPUContainers:  sets.New[types.UID](),
 	}
 }
 
@@ -71,25 +97,28 @@ func (s *PodConfig) SetContainerState(podUID types.UID, state *ContainerState) {
 	}
 
 	if oldState, exists := podAssignments[state.containerName]; exists {
+		delete(s.containersByUID, oldState.containerUID)
 		s.sharedCPUContainers.Delete(oldState.containerUID)
+		s.mixedCPUContainers.Delete(oldState.containerUID)
 	}
 
 	podAssignments[state.containerName] = state
+	s.containersByUID[state.containerUID] = state
 
-	if !state.HasExclusiveCPUAllocation() {
+	switch state.allocationType {
+	case AllocationTypeShared:
 		s.sharedCPUContainers.Insert(state.containerUID)
+	case AllocationTypeMixed:
+		s.mixedCPUContainers.Insert(state.containerUID)
 	}
 }
 
-// GetContainerState retrieves a container's state.
-func (s *PodConfig) GetContainerState(podUID types.UID, containerName string) *ContainerState {
+// GetContainerStateByUID retrieves a container's state by its runtime UID in O(1) time.
+func (s *PodConfig) GetContainerStateByUID(containerUID types.UID) (*ContainerState, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-
-	if podAssignments, ok := s.configs[podUID]; ok {
-		return podAssignments[containerName]
-	}
-	return nil
+	cs, ok := s.containersByUID[containerUID]
+	return cs, ok
 }
 
 // RemoveContainerState removes a container's state from the store.
@@ -107,13 +136,11 @@ func (s *PodConfig) RemoveContainerState(podUID types.UID, containerName string)
 		return []types.UID{}
 	}
 
-	claimUIDs := cs.resourceClaimUIDs
-	if claimUIDs == nil {
-		claimUIDs = []types.UID{}
-	}
+	claimUIDs := cs.GetResourceClaimUIDs()
 
-	// Remove from sharedCPUContainers cache.
+	delete(s.containersByUID, cs.containerUID)
 	s.sharedCPUContainers.Delete(cs.containerUID)
+	s.mixedCPUContainers.Delete(cs.containerUID)
 
 	delete(podAssignments, containerName)
 	if len(podAssignments) == 0 {
@@ -124,10 +151,15 @@ func (s *PodConfig) RemoveContainerState(podUID types.UID, containerName string)
 }
 
 // GetContainersWithSharedCPUs returns a list of container UIDs that have shared CPU allocation.
-func (s *PodConfig) GetContainersWithSharedCPUs() []types.UID {
+// The caller can specify whether to include mixed-allocation containers.
+func (s *PodConfig) GetContainersWithSharedCPUs(includeMixed bool) []types.UID {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.sharedCPUContainers.UnsortedList()
+	list := s.sharedCPUContainers.UnsortedList()
+	if includeMixed {
+		list = append(list, s.mixedCPUContainers.UnsortedList()...)
+	}
+	return list
 }
 
 func (s *PodConfig) Len() int {
@@ -136,7 +168,30 @@ func (s *PodConfig) Len() int {
 	return len(s.configs)
 }
 
-// HasExclusiveCPUAllocation returns true if the container has associated resource claims.
-func (cs *ContainerState) HasExclusiveCPUAllocation() bool {
-	return len(cs.resourceClaimUIDs) > 0
+// Type returns the high-level CPU allocation category of the container.
+func (cs *ContainerState) Type() AllocationType {
+	return cs.allocationType
+}
+
+// GetResourceClaimUIDs returns the list of resource claim UIDs.
+func (cs *ContainerState) GetResourceClaimUIDs() []types.UID {
+	var uids []types.UID
+	for _, claim := range cs.claims {
+		uids = append(uids, claim.ClaimUID)
+	}
+	return uids
+}
+
+// GetContainerName returns the container name.
+func (cs *ContainerState) GetContainerName() string {
+	return cs.containerName
+}
+
+// GetExclusiveCPUs retrieves the stored exclusive CPU set.
+func (cs *ContainerState) GetExclusiveCPUs() cpuset.CPUSet {
+	exclusiveCPUs := cpuset.New()
+	for _, claim := range cs.claims {
+		exclusiveCPUs = exclusiveCPUs.Union(claim.CPUs)
+	}
+	return exclusiveCPUs
 }

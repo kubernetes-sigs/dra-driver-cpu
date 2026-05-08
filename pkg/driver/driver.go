@@ -19,7 +19,7 @@ package driver
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
+	rand "math/rand/v2"
 	"os"
 	"path/filepath"
 	"time"
@@ -32,7 +32,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
-	"k8s.io/klog/v2"
+	klog "k8s.io/klog/v2"
 	"k8s.io/utils/cpuset"
 )
 
@@ -78,32 +78,34 @@ type CPUInfoProvider interface {
 
 // CPUDriver is the structure that holds all the driver runtime information.
 type CPUDriver struct {
-	driverName             string
-	nodeName               string
-	kubeClient             kubernetes.Interface
-	draPlugin              KubeletPlugin
-	nriPlugin              stub.Stub
-	podConfigStore         *store.PodConfig
-	cpuAllocationStore     *store.CPUAllocation
-	cdiMgr                 cdiManager
-	cpuTopology            *cpuinfo.CPUTopology
-	deviceNameToCPUID      map[string]int
-	deviceNameToSocketID   map[string]int
-	deviceNameToNUMANodeID map[string]int
-	reservedCPUs           cpuset.CPUSet
-	cpuDeviceMode          string
-	cpuDeviceGroupBy       string
-	claimTracker           *store.ClaimTracker
+	driverName                    string
+	nodeName                      string
+	kubeClient                    kubernetes.Interface
+	draPlugin                     KubeletPlugin
+	nriPlugin                     stub.Stub
+	podConfigStore                *store.PodConfig
+	cpuAllocationStore            *store.CPUAllocation
+	cdiMgr                        cdiManager
+	cpuTopology                   *cpuinfo.CPUTopology
+	deviceNameToCPUID             map[string]int
+	deviceNameToSocketID          map[string]int
+	deviceNameToNUMANodeID        map[string]int
+	reservedCPUs                  cpuset.CPUSet
+	cpuDeviceMode                 string
+	cpuDeviceGroupBy              string
+	claimTracker                  *store.ClaimTracker
+	mixedAllocationMode           bool
 	disableNodeAllocatableMapping bool
 }
 
 // Config is the configuration for the CPUDriver.
 type Config struct {
-	DriverName       string
-	NodeName         string
-	ReservedCPUs     cpuset.CPUSet
-	CpuDeviceMode    string
+	DriverName                    string
+	NodeName                      string
+	ReservedCPUs                  cpuset.CPUSet
+	CpuDeviceMode                 string
 	CPUDeviceGroupBy              string
+	MixedAllocationMode           bool
 	DisableNodeAllocatableMapping bool
 }
 
@@ -111,16 +113,17 @@ type Config struct {
 func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) (*CPUDriver, <-chan error, error) {
 	asyncErr := make(chan error, 1)
 	plugin := &CPUDriver{
-		driverName:             config.DriverName,
-		nodeName:               config.NodeName,
-		kubeClient:             clientset,
-		deviceNameToCPUID:      make(map[string]int),
-		deviceNameToSocketID:   make(map[string]int),
-		deviceNameToNUMANodeID: make(map[string]int),
-		reservedCPUs:           config.ReservedCPUs,
-		cpuDeviceMode:          config.CpuDeviceMode,
-		cpuDeviceGroupBy:       config.CPUDeviceGroupBy,
+		driverName:                    config.DriverName,
+		nodeName:                      config.NodeName,
+		kubeClient:                    clientset,
+		deviceNameToCPUID:             make(map[string]int),
+		deviceNameToSocketID:          make(map[string]int),
+		deviceNameToNUMANodeID:        make(map[string]int),
+		reservedCPUs:                  config.ReservedCPUs,
+		cpuDeviceMode:                 config.CpuDeviceMode,
+		cpuDeviceGroupBy:              config.CPUDeviceGroupBy,
 		claimTracker:                  store.NewClaimTracker(),
+		mixedAllocationMode:           config.MixedAllocationMode,
 		disableNodeAllocatableMapping: config.DisableNodeAllocatableMapping,
 	}
 	cpuInfoProvider := cpuinfo.NewSystemCPUInfo()
