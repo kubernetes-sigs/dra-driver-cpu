@@ -32,8 +32,20 @@ if [[ -z ${IMG_TAG:-} ]]; then
 fi
 echo "Using IMG_TAG=${IMG_TAG}"
 
+CHART_VERSION="${IMG_TAG#v}"
+if [[ -z ${CHART_VERSION} ]]; then
+	echo "CHART_VERSION is empty (IMG_TAG=${IMG_TAG})"
+	exit 1
+fi
+echo "Using CHART_VERSION=${CHART_VERSION}"
+
 # Pass the Cloud Build variables to the Makefile and enable multi-arch
 make push-image \
 	STAGING_IMAGE_NAME="${IMG_PREFIX}/dra-driver-cpu" \
 	TAG="${IMG_TAG}" \
 	PLATFORMS="linux/amd64,linux/arm64"
+
+make helm-push \
+	CHART_REGISTRY="${IMG_PREFIX}/charts" \
+	CHART_VERSION="${CHART_VERSION}" \
+	TAG="${IMG_TAG}"

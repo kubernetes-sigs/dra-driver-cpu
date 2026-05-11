@@ -235,7 +235,7 @@ install-yq: $(OUT_DIR)  ## make sure the yq tool is available locally
 install-golangci-lint: $(OUT_DIR) ## make sure the golangci-lint tool is available locally
 	@hack/fetch-golangci-lint.sh $(OUT_DIR) $(GOLANGCI_LINT_VERSION)
 
-helm-lint:
+helm-lint: ## lint helm chart with strict mode
 	helm lint --strict deployment/helm/dra-driver-cpu
 
 .PHONY: helm-docs
@@ -259,3 +259,23 @@ helm-schema: ## regenerate values.schema.json from values.yaml @schema annotatio
 helm-schema-check: helm-schema ## verify values.schema.json is up to date; fails if regeneration produces a diff
 	@git diff --exit-code deployment/helm/dra-driver-cpu/values.schema.json || \
 		(echo "ERROR: values.schema.json is out of date. Run 'make helm-schema' to update it." && exit 1)
+CHART_REGISTRY?=$(REGISTRY)/$(STAGING_REPO_NAME)/charts
+HELM_VERSION_SHA?=a2369ca71c0ef633bf6e4fccd66d634eb379b371 # v3.20.1
+
+.PHONY: ensure-helm
+ensure-helm:
+	@if ! helm version >/dev/null 2>&1; then \
+		echo "Helm not found, installing helm@$(HELM_VERSION_SHA) ..."; \
+		go install helm.sh/helm/v3/cmd/helm@$(HELM_VERSION_SHA); \
+	fi
+
+.PHONY: helm-package
+helm-package: ensure-helm ## package helm chart for release
+	helm package deployment/helm/dra-driver-cpu \
+		--version "$(CHART_VERSION)" \
+		--app-version "$(TAG)" \
+		--destination $(OUT_DIR)
+
+.PHONY: helm-push
+helm-push: helm-package ## push helm chart to OCI registry
+	helm push $(OUT_DIR)/dra-driver-cpu-$(CHART_VERSION).tgz oci://$(CHART_REGISTRY)
