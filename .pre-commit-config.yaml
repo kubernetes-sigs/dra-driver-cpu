@@ -22,13 +22,13 @@ repos:
       - id: check-added-large-files
       - id: trailing-whitespace
       - id: end-of-file-fixer
-        exclude: helm/.*/README.md$
+        exclude: deployment/helm/.*/README.md$
       - id: detect-private-key
   - repo: https://github.com/executablebooks/mdformat
     rev: 0.7.22
     hooks:
       - id: mdformat
-        exclude: (\.chglog/.*|helm/.*)\.md
+        exclude: (\.chglog/.*|deployment/helm/.*)\.md
         additional_dependencies:
           - mdformat-toc
           - mdformat-tables

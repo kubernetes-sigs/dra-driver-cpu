@@ -1,0 +1,30 @@
+name: Helm Lint
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'deployment/helm/**'
+      - '.github/workflows/helm-lint.yaml'
+
+jobs:
+  helm-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.25'
+
+      - name: Install Helm
+        uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
+
+      - name: Run Helm lint
+        run: make helm-lint
+
+      - name: Check helm-docs is up to date
+        run: make helm-docs-check
+
+      - name: Check values.schema.json is up to date
+        run: make helm-schema-check

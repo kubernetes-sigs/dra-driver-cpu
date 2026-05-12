@@ -24,6 +24,8 @@ ARCH=$(shell go env GOARCH)
 YQ_VERSION ?= 4.47.1
 # matches golang 1.25.z
 GOLANGCI_LINT_VERSION ?= 2.7.2
+HELM_DOCS_VERSION ?= 1.14.2
+HELM_SCHEMA_VERSION ?= 2.3.1
 # paths
 YQ = $(OUT_DIR)/yq
 GOLANGCI_LINT = $(OUT_DIR)/golangci-lint
@@ -232,3 +234,28 @@ install-yq: $(OUT_DIR)  ## make sure the yq tool is available locally
 .PHONY: install-golangci-lint
 install-golangci-lint: $(OUT_DIR) ## make sure the golangci-lint tool is available locally
 	@hack/fetch-golangci-lint.sh $(OUT_DIR) $(GOLANGCI_LINT_VERSION)
+
+helm-lint:
+	helm lint --strict deployment/helm/dra-driver-cpu
+
+.PHONY: helm-docs
+helm-docs: ## regenerate helm chart README from values.yaml annotations and README.md.gotmpl
+	go run github.com/norwoodj/helm-docs/cmd/helm-docs@v$(HELM_DOCS_VERSION) --chart-search-root=deployment/helm
+
+.PHONY: helm-docs-check
+helm-docs-check: helm-docs ## verify helm chart README is up to date; fails if regeneration produces a diff
+	@git diff --exit-code deployment/helm/ || \
+		(echo "ERROR: Helm chart README.md is out of date. Run 'make helm-docs' to update it." && exit 1)
+
+.PHONY: helm-schema
+helm-schema: ## regenerate values.schema.json from values.yaml @schema annotations
+	go run github.com/losisin/helm-values-schema-json/v2@v$(HELM_SCHEMA_VERSION) \
+		-f deployment/helm/dra-driver-cpu/values.yaml \
+		-o deployment/helm/dra-driver-cpu/values.schema.json \
+		--use-helm-docs \
+		--indent 2
+
+.PHONY: helm-schema-check
+helm-schema-check: helm-schema ## verify values.schema.json is up to date; fails if regeneration produces a diff
+	@git diff --exit-code deployment/helm/dra-driver-cpu/values.schema.json || \
+		(echo "ERROR: values.schema.json is out of date. Run 'make helm-schema' to update it." && exit 1)
