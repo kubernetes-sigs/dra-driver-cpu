@@ -91,7 +91,7 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 		infoPod = e2epod.PinToNode(infoPod, targetNode.Name)
 		infoPod, err = e2epod.RunToCompletion(ctx, infraFxt.K8SClientset, infoPod)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		data, err := e2epod.GetLogs(infraFxt.K8SClientset, ctx, infoPod.Namespace, infoPod.Name, infoPod.Spec.Containers[0].Name)
+		data, err := e2epod.GetLogs(ctx, infraFxt.K8SClientset, infoPod)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		gomega.Expect(json.Unmarshal([]byte(data), &targetNodeCPUInfo)).To(gomega.Succeed())
 		allocatableCPUs = makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)

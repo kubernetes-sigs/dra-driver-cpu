@@ -116,7 +116,13 @@ func WaitForPhase(ctx context.Context, cs kubernetes.Interface, podNamespace, po
 	return podPhase, err
 }
 
-func GetLogs(cs kubernetes.Interface, ctx context.Context, podNamespace, podName, containerName string) (string, error) {
+// GetLogs gets the logs for the default (aka the first) container of a pod.
+// If you need full control over the container to grab logs from, use GetLogsForContainer
+func GetLogs(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod) (string, error) {
+	return GetLogsForContainer(ctx, cs, pod.Namespace, pod.Name, pod.Spec.Containers[0].Name)
+}
+
+func GetLogsForContainer(ctx context.Context, cs kubernetes.Interface, podNamespace, podName, containerName string) (string, error) {
 	previous := false
 	request := cs.CoreV1().RESTClient().Get().Resource("pods").Namespace(podNamespace).Name(podName).SubResource("log").Param("container", containerName).Param("previous", strconv.FormatBool(previous))
 	logs, err := request.Do(ctx).Raw()
