@@ -280,26 +280,49 @@ systemctl restart containerd
 
 ### Installation
 
-- If needed, create a kind cluster. We have one in the repo, if needed, that
-  can be deplayed as follows:
-  ```bash
-  make kind-cluster
-  ```
-- Deploy the driver and all necessary RBAC configurations using the provided manifest
-  ```bash
-  make manifests
-  kubectl apply -f dist/install.yaml
-  ```
+If needed, create a kind cluster. We have one in the repo, if needed, that
+can be deployed as follows:
 
-### Installation via Helm
+```bash
+make kind-cluster
+```
 
-The driver can also be installed using the provided Helm chart:
+The recommended way to install the driver is via the provided Helm chart:
 
 ```bash
 helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system
 ```
 
 See the [Helm chart README](deployment/helm/dra-driver-cpu/README.md) for the full list of configuration options.
+
+#### Installation via install.yaml (deprecated)
+
+> **Deprecated:** `install.yaml` is deprecated in favor of the Helm chart and will be removed in a future release.
+> New users should use the Helm-based installation above.
+
+```bash
+make manifests
+kubectl apply -f dist/install.yaml
+```
+
+### Migrating from install.yaml to Helm
+
+Because the DaemonSet label selectors differ between `install.yaml` (`app: dracpu`) and the Helm chart
+(`app.kubernetes.io/name`, `app.kubernetes.io/instance`), and DaemonSet selectors are immutable, an
+in-place migration is not possible. The only practical migration path is a delete and reinstall:
+
+```bash
+# Step 1: remove the install.yaml-managed resources
+kubectl delete -f dist/install.yaml
+
+# Step 2: install the Helm-managed release
+helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system
+```
+
+**Disruption:** Deleting the DaemonSet terminates the driver pods on all nodes simultaneously. During
+the migration window, no new CPU allocations can be made and the shared-pool cpuset updates stop.
+Existing workloads are not evicted and their CPUs should remain. Once the new DaemonSet is scheduled
+and the driver pods are running, the driver should recover its state.
 
 ### Example Usage
 
