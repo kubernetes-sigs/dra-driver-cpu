@@ -28,10 +28,14 @@ jobs:
       - name: Build the image
         run: make build-image
 
+      # Try to parse KIND_K8S_VERSION from the Makefile and use it to build the node image and create the cluster.
       - name: Create kind cluster
         run: |
+          KIND_K8S_VERSION=$(grep -E '^KIND_K8S_VERSION \?=' Makefile | awk '{print $3}')
+          KIND_K8S_VERSION=${KIND_K8S_VERSION:-v1.36.0}
           kind delete cluster --name dra-driver-cpu || true
-          kind create cluster --name dra-driver-cpu --config hack/ci/kind-ci.yaml
+          kind build node-image --image=kindest/node:${KIND_K8S_VERSION} ${KIND_K8S_VERSION}
+          kind create cluster --name dra-driver-cpu --image=kindest/node:${KIND_K8S_VERSION} --config hack/ci/kind-ci.yaml
           kind get kubeconfig --name dra-driver-cpu > /tmp/kubeconfig-dra-driver-cpu
           kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
             label node dra-driver-cpu-worker node-role.kubernetes.io/worker=''

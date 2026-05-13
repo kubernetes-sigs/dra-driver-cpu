@@ -26,6 +26,7 @@ YQ_VERSION ?= 4.47.1
 GOLANGCI_LINT_VERSION ?= 2.7.2
 HELM_DOCS_VERSION ?= 1.14.2
 HELM_SCHEMA_VERSION ?= 2.3.1
+KIND_K8S_VERSION ?= v1.36.0
 # paths
 YQ = $(OUT_DIR)/yq
 GOLANGCI_LINT = $(OUT_DIR)/golangci-lint
@@ -130,8 +131,15 @@ push-image: ## build and push image directly to registry (supports multi-arch)
 		--push
 	-docker buildx rm dracpu-builder
 
-kind-cluster:  ## create kind cluster
-	kind create cluster --name ${CLUSTER_NAME} --config hack/kind.yaml
+# Builds the Kind node image on-the-fly if it is not pre-cached locally.
+ensure-kind-node-image:
+	@if [ -z "$$(docker images -q kindest/node:$(KIND_K8S_VERSION) 2>/dev/null)" ]; then \
+		echo "Building kindest/node:$(KIND_K8S_VERSION) ..."; \
+		kind build node-image --image=kindest/node:$(KIND_K8S_VERSION) $(KIND_K8S_VERSION); \
+	fi
+
+kind-cluster: ensure-kind-node-image ## create kind cluster
+	kind create cluster --name ${CLUSTER_NAME} --image=kindest/node:$(KIND_K8S_VERSION) --config hack/kind.yaml
 
 kind-load-image: build-image  ## load the current container image into kind
 	kind load docker-image ${IMAGE} ${IMAGE_LATEST} --name ${CLUSTER_NAME}
@@ -146,7 +154,7 @@ delete-kind-cluster: ## delete kind cluster
 	kind delete cluster --name ${CLUSTER_NAME}
 
 define kind_setup
-	kind create cluster --name ${CLUSTER_NAME} --config hack/ci/kind-ci.yaml
+	kind create cluster --name ${CLUSTER_NAME} --image=kindest/node:$(KIND_K8S_VERSION) --config hack/ci/kind-ci.yaml
 	kubectl label node ${CLUSTER_NAME}-worker node-role.kubernetes.io/worker=''
 	kind load docker-image --name ${CLUSTER_NAME} ${IMAGE_CI} ${IMAGE_TEST}
 	kubectl create -f $(1)
@@ -195,7 +203,7 @@ ifneq ($(DRACPU_E2E_VERBOSE),)
 endif
 	$(call generate_ci_manifest,$(CI_MANIFEST_FILE),.spec.template.spec.containers[0].args |= (del(.[] | select(. == "--cpu-device-mode=*")) | . + ["--cpu-device-mode=$(DRACPU_E2E_CPU_DEVICE_MODE)", "--reserved-cpus=$(DRACPU_E2E_RESERVED_CPUS)"]))
 
-ci-kind-setup: ci-manifests build-image build-test-image ## setup a CI cluster from scratch using reserved CPUs
+ci-kind-setup: ensure-kind-node-image ci-manifests build-image build-test-image ## setup a CI cluster from scratch using reserved CPUs
 ifneq ($(DRACPU_E2E_VERBOSE),)
 	@echo "creating a kind cluster for mode=$(DRACPU_E2E_CPU_DEVICE_MODE)"
 endif
