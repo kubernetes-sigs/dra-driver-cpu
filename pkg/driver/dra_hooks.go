@@ -224,7 +224,7 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 
 // PublishResources publishes ResourceSlice for CPU resources.
 func (cp *CPUDriver) PublishResources(ctx context.Context) {
-	logger := klog.FromContext(ctx).WithValues("deviceMode", cp.cpuDeviceMode, "groupBy", cp.cpuDeviceGroupBy)
+	logger := klog.FromContext(ctx).WithValues("opID", generateShortID(opIDLen), "deviceMode", cp.cpuDeviceMode, "groupBy", cp.cpuDeviceGroupBy)
 	ctx = klog.NewContext(ctx, logger)
 
 	logger.V(4).Info("begin: publishing resources")
@@ -262,7 +262,7 @@ func (cp *CPUDriver) PublishResources(ctx context.Context) {
 
 // PrepareResourceClaims is called by the kubelet to prepare a resource claim.
 func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resourceapi.ResourceClaim) (map[types.UID]kubeletplugin.PrepareResult, error) {
-	logger := klog.FromContext(ctx).WithValues("batchID", generateShortID(batchIDLen))
+	logger := klog.FromContext(ctx).WithValues("opID", generateShortID(opIDLen))
 
 	logger.V(4).Info("begin: preparing resource claims", "numClaims", len(claims))
 	defer logger.V(4).Info("end: preparing resource claims", "numClaims", len(claims))
@@ -440,7 +440,7 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 
 // UnprepareResourceClaims is called by the kubelet to unprepare the resources for a claim.
 func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubeletplugin.NamespacedObject) (map[types.UID]error, error) {
-	logger := klog.FromContext(ctx).WithValues("batchID", generateShortID(batchIDLen))
+	logger := klog.FromContext(ctx).WithValues("opID", generateShortID(opIDLen))
 
 	logger.V(4).Info("begin: unpreparing resource claims", "numClaims", len(claims))
 	defer logger.V(4).Info("end: unpreparing resource claims", "numClaims", len(claims))

@@ -108,7 +108,7 @@ func TestGenerateShortID(t *testing.T) {
 	}{
 		{name: "zero length", length: 0},
 		{name: "single char", length: 1},
-		{name: "batchIDLen", length: batchIDLen},
+		{name: "opIDLen", length: opIDLen},
 		{name: "large", length: 64},
 	}
 
@@ -125,8 +125,8 @@ func TestGenerateShortID(t *testing.T) {
 }
 
 func TestGenerateShortIDUnique(t *testing.T) {
-	a := generateShortID(batchIDLen)
-	b := generateShortID(batchIDLen)
+	a := generateShortID(opIDLen)
+	b := generateShortID(opIDLen)
 	require.NotEqual(t, a, b)
 }
 

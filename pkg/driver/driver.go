@@ -56,7 +56,7 @@ const (
 	maxAttempts = 5
 )
 
-const batchIDLen = 12
+const opIDLen = 8
 
 // KubeletPlugin is an interface that describes the methods used from kubeletplugin.Helper.
 type KubeletPlugin interface {
