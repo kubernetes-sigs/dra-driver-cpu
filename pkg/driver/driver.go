@@ -19,6 +19,7 @@ package driver
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"time"
@@ -54,6 +55,8 @@ const (
 	// maxAttempts indicates the number of times the driver will try to recover itself before failing
 	maxAttempts = 5
 )
+
+const batchIDLen = 12
 
 // KubeletPlugin is an interface that describes the methods used from kubeletplugin.Helper.
 type KubeletPlugin interface {
@@ -223,4 +226,14 @@ func runNRIPluginWithRetry(ctx context.Context, plugin nriRunner, maxAttempts in
 		}
 	}
 	return fmt.Errorf("NRI plugin failed for %d times to be restarted", maxAttempts)
+}
+
+// generateShortID generates a non-crypto safe unique ID in cases on which a full UUID would be a overkill.
+func generateShortID(length int) string {
+	const hexDigits = "0123456789abcdef"
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = hexDigits[rand.IntN(len(hexDigits))] //nolint:gosec
+	}
+	return string(b)
 }
