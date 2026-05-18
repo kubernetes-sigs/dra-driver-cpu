@@ -104,7 +104,7 @@ type CPUAllocation struct {
 func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod *v1.Pod) CPUAllocation {
 	ginkgo.GinkgoHelper()
 
-	data, err := e2epod.GetLogs(cs, ctx, pod.Namespace, pod.Name, pod.Spec.Containers[0].Name)
+	data, err := e2epod.GetLogs(ctx, cs, pod)
 	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs for %s/%s/%s", pod.Namespace, pod.Name, pod.Spec.Containers[0].Name)
 
 	// Split logs by newline and find the last non-empty line

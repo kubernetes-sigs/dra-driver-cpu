@@ -116,7 +116,13 @@ func WaitForPhase(ctx context.Context, cs kubernetes.Interface, podNamespace, po
 	return podPhase, err
 }
 
-func GetLogs(cs kubernetes.Interface, ctx context.Context, podNamespace, podName, containerName string) (string, error) {
+// GetLogs gets the logs for the default (aka the first) container of a pod.
+// If you need full control over the container to grab logs from, use GetLogsForContainer
+func GetLogs(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod) (string, error) {
+	return GetLogsForContainer(ctx, cs, pod.Namespace, pod.Name, pod.Spec.Containers[0].Name)
+}
+
+func GetLogsForContainer(ctx context.Context, cs kubernetes.Interface, podNamespace, podName, containerName string) (string, error) {
 	previous := false
 	request := cs.CoreV1().RESTClient().Get().Resource("pods").Namespace(podNamespace).Name(podName).SubResource("log").Param("container", containerName).Param("previous", strconv.FormatBool(previous))
 	logs, err := request.Do(ctx).Raw()
@@ -138,4 +144,30 @@ func PinToNode(pod *v1.Pod, nodeName string) *v1.Pod {
 
 func Identify(pod *v1.Pod) string {
 	return pod.Namespace + "/" + pod.Name + "@" + pod.Spec.NodeName
+}
+
+func GetDRACPUPod(ctx context.Context, cs kubernetes.Interface, nodeName string) (*v1.Pod, error) {
+	const (
+		// TODO: these should be common constants or introspected
+		dracpuNamespace = "kube-system"
+		dracpuName      = "dracpu"
+	)
+
+	daemonSet, err := cs.AppsV1().DaemonSets(dracpuNamespace).Get(ctx, dracpuName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("cannot get dracpu daemonset: %w", err)
+	}
+
+	labelSelector := metav1.FormatLabelSelector(daemonSet.Spec.Selector)
+	pods, err := cs.CoreV1().Pods(daemonSet.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+		FieldSelector: "spec.nodeName=" + nodeName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("cannot get dracpu pods: %w", err)
+	}
+	if len(pods.Items) != 1 {
+		return nil, fmt.Errorf("found unexpected amount of dracpu pods: %d", len(pods.Items))
+	}
+	return &pods.Items[0], nil
 }
