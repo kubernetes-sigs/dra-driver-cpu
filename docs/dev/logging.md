@@ -3,7 +3,7 @@
 ## picking a verbosity level
 
 V(0): high-signal operational logs and errors always visible at default verbosity
-V(2): normal operation, important decisions, summary
+V(2): normal operation, important decisions, summary, container lifecycle
 V(4): allocation internals, fine details about decisions
 V(6): debug messages, very fine details, mostly for developers
 
