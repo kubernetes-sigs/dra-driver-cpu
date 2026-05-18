@@ -28,6 +28,8 @@ import (
 
 // NOTE: This file is a copy of https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/cm/cpumanager/cpu_assignment_test.go
 // as of commit https://github.com/kubernetes/kubernetes/commit/fd5b2efa76e44c5ef523cd0711f5ed23eb7e6b1a with minor modifications.
+// NOTE: about contextual logging: different from the other parts of the codebase, we *intentionally* keep klog references
+// to minimize the changes wrt the kubernetes codebase till (if) we decide to fully fork it.
 
 func TestCPUAccumulatorFreeSockets(t *testing.T) {
 	logger := klog.Background()
