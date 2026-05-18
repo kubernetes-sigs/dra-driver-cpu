@@ -289,7 +289,7 @@ func getCDIDeviceName(uid types.UID) string {
 }
 
 func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
-	logger.V(2).Info("preparing grouped resource claim")
+	logger.V(4).Info("preparing grouped resource claim")
 
 	if claim.Status.Allocation == nil {
 		return kubeletplugin.PrepareResult{
@@ -336,7 +336,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			return kubeletplugin.PrepareResult{Err: err}
 		}
 		cpuAssignment = cpuAssignment.Union(cur)
-		logger.V(4).Info("CPU assignment for device", "device", alloc.Device, "assigned", cur.String(), "allAssigned", cpuAssignment.String())
+		logger.V(2).Info("CPU assignment for device", "device", alloc.Device, "assigned", cur.String(), "allAssigned", cpuAssignment.String())
 	}
 
 	if cpuAssignment.Size() == 0 {
@@ -368,14 +368,14 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		preparedDevices = append(preparedDevices, preparedDevice)
 	}
 
-	logger.V(4).Info("prepared devices for claim", "preparedDevices", preparedDevices)
+	logger.V(4).Info("prepared devices for grouped resource claim", "preparedDevices", preparedDevices)
 	return kubeletplugin.PrepareResult{
 		Devices: preparedDevices,
 	}
 }
 
 func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
-	logger.V(2).Info("preparing individual resource claim")
+	logger.V(4).Info("preparing individual resource claim")
 
 	if claim.Status.Allocation == nil {
 		return kubeletplugin.PrepareResult{
@@ -433,6 +433,7 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 		preparedDevices = append(preparedDevices, preparedDevice)
 	}
 
+	logger.V(4).Info("prepared devices for individual resource claim", "preparedDevices", preparedDevices)
 	return kubeletplugin.PrepareResult{
 		Devices: preparedDevices,
 	}
