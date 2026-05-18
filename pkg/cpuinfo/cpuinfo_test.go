@@ -25,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-logr/logr/testr"
 	"k8s.io/utils/cpuset"
 )
 
@@ -198,6 +199,7 @@ func createFakeCPUTopology(t *testing.T, dir string, topo fakeCPUTopology) {
 }
 
 func TestGetCPUInfos(t *testing.T) {
+	logger := testr.New(t)
 	testCases := []struct {
 		name          string
 		topology      fakeCPUTopology
@@ -318,7 +320,7 @@ func TestGetCPUInfos(t *testing.T) {
 			createFakeCPUTopology(t, tmpDir, tc.topology)
 
 			provider := NewSystemCPUInfo()
-			cpuInfos, err := provider.GetCPUInfos()
+			cpuInfos, err := provider.GetCPUInfos(logger)
 			if err != nil {
 				t.Fatalf("GetCPUInfos() failed: %v", err)
 			}
@@ -338,6 +340,7 @@ func TestGetCPUInfos(t *testing.T) {
 }
 
 func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
+	logger := testr.New(t)
 	baseTopo := fakeCPUTopology{
 		numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 1, cpusPerCore: 1, coresPerL3: 1,
 	}
@@ -427,7 +430,7 @@ func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
 			tc.setup(t, tmpDir)
 
 			provider := NewSystemCPUInfo()
-			cpuInfos, err := provider.GetCPUInfos()
+			cpuInfos, err := provider.GetCPUInfos(logger)
 			if tc.expectedErrorSubstring != "" {
 				if err == nil {
 					t.Fatal("expected an error, but got none")
@@ -448,6 +451,7 @@ func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
 }
 
 func TestSMTDetection(t *testing.T) {
+	logger := testr.New(t)
 	testCases := []struct {
 		name          string
 		topology      fakeCPUTopology
@@ -544,7 +548,7 @@ func TestSMTDetection(t *testing.T) {
 			}
 
 			provider := NewSystemCPUInfo()
-			topo, err := provider.GetCPUTopology()
+			topo, err := provider.GetCPUTopology(logger)
 			if err != nil {
 				t.Fatalf("GetCPUTopology() failed: %v", err)
 			}
@@ -557,6 +561,7 @@ func TestSMTDetection(t *testing.T) {
 }
 
 func TestGetCPUTopology(t *testing.T) {
+	logger := testr.New(t)
 	testCases := []struct {
 		name          string
 		topology      fakeCPUTopology
@@ -597,7 +602,7 @@ func TestGetCPUTopology(t *testing.T) {
 			createFakeCPUTopology(t, tmpDir, tc.topology)
 
 			provider := NewSystemCPUInfo()
-			topo, err := provider.GetCPUTopology()
+			topo, err := provider.GetCPUTopology(logger)
 			if err != nil {
 				t.Fatalf("GetCPUTopology() failed: %v", err)
 			}

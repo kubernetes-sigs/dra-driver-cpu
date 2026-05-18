@@ -19,12 +19,12 @@ package cpuinfo
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/cpuset"
 )
@@ -141,8 +141,8 @@ func NewSystemCPUInfo() *SystemCPUInfo {
 }
 
 // GetCPUTopology returns the CPUTopology of the system.
-func (s *SystemCPUInfo) GetCPUTopology() (*CPUTopology, error) {
-	cpuInfos, err := s.GetCPUInfos()
+func (s *SystemCPUInfo) GetCPUTopology(logger logr.Logger) (*CPUTopology, error) {
+	cpuInfos, err := s.GetCPUInfos(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get CPU infos: %w", err)
 	}
@@ -173,7 +173,7 @@ func (s *SystemCPUInfo) GetCPUTopology() (*CPUTopology, error) {
 
 	smtEnabled, err := s.IsSMTEnabled()
 	if err != nil {
-		log.Printf("Warning: could not determine SMT status from sysfs: %v. Falling back to CPU/Core count.", err)
+		logger.Info("could not determine SMT status from sysfs, falling back to CPU/Core count", "err", err)
 		smtEnabled = len(cpuInfos) > cores.Len()
 	}
 
@@ -206,7 +206,7 @@ func (s *SystemCPUInfo) IsSMTEnabled() (bool, error) {
 }
 
 // GetCPUInfos returns a slice of CPUInfo structs, one for each logical CPU.
-func (s *SystemCPUInfo) GetCPUInfos() ([]CPUInfo, error) {
+func (s *SystemCPUInfo) GetCPUInfos(logger logr.Logger) ([]CPUInfo, error) {
 	// Discover online CPUs from sysfs
 	onlineFilename := hostSys("devices/system/cpu/online")
 	onlineContent, err := ReadFile(onlineFilename)
@@ -258,8 +258,8 @@ func (s *SystemCPUInfo) GetCPUInfos() ([]CPUInfo, error) {
 			cpuInfo.CoreType = CoreTypeStandard
 		}
 
-		if err := populateTopologyInfo(&cpuInfo); err != nil {
-			log.Printf("Warning: skipping CPU %d due to incomplete topology: %v", cpuID, err)
+		if err := populateTopologyInfo(&cpuInfo, logger); err != nil {
+			logger.Info("skipping CPU due to incomplete topology", "cpuID", cpuID, "err", err)
 			continue
 		}
 
@@ -271,7 +271,7 @@ func (s *SystemCPUInfo) GetCPUInfos() ([]CPUInfo, error) {
 	return cpuInfos, nil
 }
 
-func populateTopologyInfo(cpuInfo *CPUInfo) error {
+func populateTopologyInfo(cpuInfo *CPUInfo, logger logr.Logger) error {
 	cpuID := cpuInfo.CpuID
 
 	// Get Socket ID from sysfs
@@ -293,7 +293,7 @@ func populateTopologyInfo(cpuInfo *CPUInfo) error {
 	if err == nil {
 		clusterID, err := strconv.Atoi(strings.TrimSpace(clusterStr))
 		if err != nil {
-			log.Printf("Warning: could not parse cluster_id %q for cpu %d: %v", clusterStr, cpuID, err)
+			logger.V(2).Info("could not parse sysfs data", "clusterID", clusterStr, "cpuID", cpuID, "err", err)
 			cpuInfo.ClusterID = -1
 		} else {
 			// The kernel default for an undefined cluster id is -1.
@@ -333,7 +333,7 @@ func populateTopologyInfo(cpuInfo *CPUInfo) error {
 		if strings.HasPrefix(file.Name(), "node") {
 			nodeID, err := strconv.Atoi(strings.TrimPrefix(file.Name(), "node"))
 			if err != nil {
-				log.Printf("Warning: could not parse NUMA node ID from %s: %v", file.Name(), err)
+				logger.V(2).Info("could not parse sysfs data for NUMA node ID", "entry", file.Name(), "err", err)
 				continue
 			}
 			cpuInfo.NUMANodeID = nodeID
@@ -343,12 +343,12 @@ func populateTopologyInfo(cpuInfo *CPUInfo) error {
 			cpuListPath := hostSys(fmt.Sprintf("devices/system/node/node%d/cpulist", nodeID))
 			cpuListLines, err := ReadLines(cpuListPath)
 			if err != nil || len(cpuListLines) == 0 {
-				log.Printf("Warning: could not read NUMA affinity mask for node %d: %v", nodeID, err)
+				logger.V(2).Info("could not read sysfs data for NUMA affinity mask", "nodeID", nodeID, "err", err)
 				continue
 			}
 			cpuInfo.NumaNodeCPUSet, err = cpuset.Parse(cpuListLines[0])
 			if err != nil {
-				log.Printf("Warning: could not parse NUMA affinity mask for node %d: %v", nodeID, err)
+				logger.V(2).Info("could not parse sysfs data for NUMA affinity mask", "nodeID", nodeID, "err", err)
 				continue
 			}
 			break

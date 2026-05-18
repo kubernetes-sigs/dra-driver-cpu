@@ -32,6 +32,7 @@ import (
 )
 
 func TestParseDRAEnvToClaimAllocations(t *testing.T) {
+	logger := testr.New(t)
 	testCases := []struct {
 		name                  string
 		envs                  []string
@@ -80,7 +81,6 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			logger := testr.New(t)
 			allocations, err := parseDRAEnvToClaimAllocations(logger, tc.envs)
 			if tc.expectedErrorContains != "" {
 				require.Error(t, err)
@@ -107,8 +107,9 @@ func TestCreateContainer(t *testing.T) {
 	for _, cpuID := range allCPUs.UnsortedList() {
 		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
 	}
+	logger := testr.New(t)
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
-	topo, _ := mockProvider.GetCPUTopology()
+	topo, _ := mockProvider.GetCPUTopology(logger)
 
 	// newTestContainer is a local helper to simplify test case definitions.
 	newTestContainer := func(claimUID, cpus string) *api.Container {
@@ -165,7 +166,7 @@ func TestCreateContainer(t *testing.T) {
 			}(),
 			cpuAllocationStore: func() *store.CPUAllocation {
 				store := store.NewCPUAllocation(topo, cpuset.New())
-				store.AddResourceClaimAllocation(testr.New(t), types.UID(claimUID), cpuset.New(2, 3))
+				store.AddResourceClaimAllocation(logger, types.UID(claimUID), cpuset.New(2, 3))
 				return store
 			}(),
 			claimTracker: store.NewClaimTracker(),
@@ -219,6 +220,7 @@ func TestCreateContainer(t *testing.T) {
 }
 
 func TestStopContainer(t *testing.T) {
+	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	pod1 := &api.PodSandbox{Id: "pod-id-1", Name: "my-pod-1", Namespace: "my-ns", Uid: "pod-uid-1"}
 	ctr1 := &api.Container{Id: "ctr-id-1", PodSandboxId: pod1.Id, Name: "my-ctr-1"}
@@ -230,7 +232,7 @@ func TestStopContainer(t *testing.T) {
 		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
 	}
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
-	topo, _ := mockProvider.GetCPUTopology()
+	topo, _ := mockProvider.GetCPUTopology(logger)
 
 	testCases := []struct {
 		name               string
@@ -280,13 +282,14 @@ func TestStopContainer(t *testing.T) {
 }
 
 func TestNRISynchronize(t *testing.T) {
+	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	var infos []cpuinfo.CPUInfo
 	for _, cpuID := range allCPUs.UnsortedList() {
 		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID})
 	}
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
-	topo, _ := mockProvider.GetCPUTopology()
+	topo, _ := mockProvider.GetCPUTopology(logger)
 
 	pod1 := &api.PodSandbox{Id: "pod-id-1", Name: "my-pod-1", Namespace: "my-ns", Uid: "pod-uid-1"}
 	pod2 := &api.PodSandbox{Id: "pod-id-2", Name: "my-pod-2", Namespace: "my-ns", Uid: "pod-uid-2"}

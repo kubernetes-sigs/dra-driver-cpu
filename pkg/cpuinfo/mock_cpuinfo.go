@@ -18,6 +18,8 @@ package cpuinfo
 
 import (
 	"fmt"
+
+	"github.com/go-logr/logr"
 )
 
 type MockCPUInfoProvider struct {
@@ -25,11 +27,11 @@ type MockCPUInfoProvider struct {
 	Err      error
 }
 
-func (m *MockCPUInfoProvider) GetCPUInfos() ([]CPUInfo, error) {
+func (m *MockCPUInfoProvider) GetCPUInfos(_ logr.Logger) ([]CPUInfo, error) {
 	return m.CPUInfos, m.Err
 }
 
-func (m *MockCPUInfoProvider) GetCPUTopology() (*CPUTopology, error) {
+func (m *MockCPUInfoProvider) GetCPUTopology(_ logr.Logger) (*CPUTopology, error) {
 	cpuDetails := make(CPUDetails)
 	sockets := make(map[int]struct{})
 	numaNodes := make(map[int]struct{})
