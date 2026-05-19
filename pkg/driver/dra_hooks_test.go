@@ -27,6 +27,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -170,15 +171,18 @@ var (
 
 func TestPublishResources(t *testing.T) {
 	testCases := []struct {
-		name                       string
-		cpuInfos                   []cpuinfo.CPUInfo
-		cpuInfoErr                 error
-		publishError               error
-		reservedCPUs               cpuset.CPUSet
-		expectPublish              bool
-		expectedNumSlices          int
-		expectedDevices            int
-		expectedDevicesPerNUMANode map[int]int
+		name                          string
+		cpuInfos                      []cpuinfo.CPUInfo
+		cpuInfoErr                    error
+		publishError                  error
+		reservedCPUs                  cpuset.CPUSet
+		expectPublish                 bool
+		expectedNumSlices             int
+		expectedDevices               int
+		expectedDevicesPerNUMANode    map[int]int
+		cpuDeviceMode                 string
+		cpuDeviceGroupBy              string
+		disableNodeAllocatableMapping bool
 	}{
 		{
 			name:                       "single socket, HT on",
@@ -291,6 +295,48 @@ func TestPublishResources(t *testing.T) {
 			expectedDevices:            0,
 			expectedDevicesPerNUMANode: map[int]int{},
 		},
+		{
+			name:              "grouped by socket, HT on",
+			cpuInfos:          mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			reservedCPUs:      cpuset.New(),
+			expectPublish:     true,
+			expectedNumSlices: 1,
+			expectedDevices:   2, // 2 sockets
+			cpuDeviceMode:     CPU_DEVICE_MODE_GROUPED,
+			cpuDeviceGroupBy:  GROUP_BY_SOCKET,
+		},
+		{
+			name:              "grouped by NUMA, HT on",
+			cpuInfos:          mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			reservedCPUs:      cpuset.New(0), // Reserve one CPU on Socket 0 (NUMA 0)
+			expectPublish:     true,
+			expectedNumSlices: 1,
+			expectedDevices:   2, // 2 NUMA nodes
+			cpuDeviceMode:     CPU_DEVICE_MODE_GROUPED,
+			cpuDeviceGroupBy:  GROUP_BY_NUMA_NODE,
+		},
+		{
+			name:                          "grouped by NUMA, HT on, disable NodeAllocatable",
+			cpuInfos:                      mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			reservedCPUs:                  cpuset.New(0),
+			expectPublish:                 true,
+			expectedNumSlices:             1,
+			expectedDevices:               2,
+			cpuDeviceMode:                 CPU_DEVICE_MODE_GROUPED,
+			cpuDeviceGroupBy:              GROUP_BY_NUMA_NODE,
+			disableNodeAllocatableMapping: true,
+		},
+		{
+			name:                          "individual mode, disable NodeAllocatable",
+			cpuInfos:                      mockCPUInfos_SingleSocket_4CPUS_HT,
+			reservedCPUs:                  cpuset.New(),
+			expectPublish:                 true,
+			expectedNumSlices:             1,
+			expectedDevices:               len(mockCPUInfos_SingleSocket_4CPUS_HT),
+			expectedDevicesPerNUMANode:    map[int]int{0: 4},
+			cpuDeviceMode:                 CPU_DEVICE_MODE_INDIVIDUAL,
+			disableNodeAllocatableMapping: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -299,11 +345,16 @@ func TestPublishResources(t *testing.T) {
 			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: tc.cpuInfos, Err: tc.cpuInfoErr}
 			topo, _ := mockProvider.GetCPUTopology()
 			cp := &CPUDriver{
-				nodeName:          testNodeName,
-				draPlugin:         mockPlugin,
-				deviceNameToCPUID: make(map[string]int),
-				cpuTopology:       topo,
-				reservedCPUs:      tc.reservedCPUs,
+				nodeName:                      testNodeName,
+				draPlugin:                     mockPlugin,
+				deviceNameToCPUID:             make(map[string]int),
+				deviceNameToSocketID:          make(map[string]int),
+				deviceNameToNUMANodeID:        make(map[string]int),
+				cpuTopology:                   topo,
+				reservedCPUs:                  tc.reservedCPUs,
+				cpuDeviceMode:                 tc.cpuDeviceMode,
+				cpuDeviceGroupBy:              tc.cpuDeviceGroupBy,
+				disableNodeAllocatableMapping: tc.disableNodeAllocatableMapping,
 			}
 
 			cp.PublishResources(context.Background())
@@ -337,6 +388,28 @@ func TestPublishResources(t *testing.T) {
 				totalDevices += len(s.Devices)
 			}
 			require.Equal(t, tc.expectedDevices, totalDevices)
+
+			if tc.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
+				// Verify NodeAllocatableResourceMappings for Grouped Mode
+				expectedCapacityKey := "dra.cpu/cpu"
+				for _, slice := range pool.Slices {
+					for _, device := range slice.Devices {
+						if tc.disableNodeAllocatableMapping {
+							require.Nil(t, device.NodeAllocatableResourceMappings)
+						} else {
+							require.NotNil(t, device.NodeAllocatableResourceMappings)
+							mapping, ok := device.NodeAllocatableResourceMappings[corev1.ResourceCPU]
+							require.True(t, ok)
+							require.NotNil(t, mapping.CapacityKey)
+							require.Equal(t, expectedCapacityKey, string(*mapping.CapacityKey))
+							require.NotNil(t, mapping.AllocationMultiplier)
+							require.Equal(t, int64(1), mapping.AllocationMultiplier.Value())
+						}
+					}
+				}
+				return
+			}
+
 			require.Equal(t, tc.expectedDevices, len(cp.deviceNameToCPUID))
 
 			// Verify device attributes
@@ -371,6 +444,19 @@ func TestPublishResources(t *testing.T) {
 					require.Equal(t, CacheL3ID, *device.Attributes["dra.cpu/cacheL3ID"].IntValue)
 					require.Equal(t, coreType, *device.Attributes["dra.cpu/coreType"].StringValue)
 					require.Equal(t, socketID, *device.Attributes["dra.cpu/socketID"].IntValue)
+
+					// Verify NodeAllocatableResourceMappings
+					if tc.disableNodeAllocatableMapping {
+						require.Nil(t, device.NodeAllocatableResourceMappings)
+					} else {
+						require.NotNil(t, device.NodeAllocatableResourceMappings)
+						mapping, ok := device.NodeAllocatableResourceMappings[corev1.ResourceCPU]
+						require.True(t, ok, "missing mapping for resource CPU")
+						require.Nil(t, mapping.CapacityKey)
+						require.NotNil(t, mapping.AllocationMultiplier)
+						require.Equal(t, int64(1), mapping.AllocationMultiplier.Value())
+					}
+
 					devicesPerNumaInSlices[cpuInfo.NUMANodeID]++
 				}
 			}

@@ -94,6 +94,7 @@ type CPUDriver struct {
 	cpuDeviceMode          string
 	cpuDeviceGroupBy       string
 	claimTracker           *store.ClaimTracker
+	disableNodeAllocatableMapping bool
 }
 
 // Config is the configuration for the CPUDriver.
@@ -102,7 +103,8 @@ type Config struct {
 	NodeName         string
 	ReservedCPUs     cpuset.CPUSet
 	CpuDeviceMode    string
-	CPUDeviceGroupBy string
+	CPUDeviceGroupBy              string
+	DisableNodeAllocatableMapping bool
 }
 
 // Start creates and starts a new CPUDriver.
@@ -118,7 +120,8 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		reservedCPUs:           config.ReservedCPUs,
 		cpuDeviceMode:          config.CpuDeviceMode,
 		cpuDeviceGroupBy:       config.CPUDeviceGroupBy,
-		claimTracker:           store.NewClaimTracker(),
+		claimTracker:                  store.NewClaimTracker(),
+		disableNodeAllocatableMapping: config.DisableNodeAllocatableMapping,
 	}
 	cpuInfoProvider := cpuinfo.NewSystemCPUInfo()
 	topo, err := cpuInfoProvider.GetCPUTopology()

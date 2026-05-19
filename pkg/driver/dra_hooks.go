@@ -28,6 +28,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpumanager"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+	corev1 "k8s.io/api/core/v1"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
@@ -88,10 +89,11 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 			}
 
 			devices = append(devices, resourceapi.Device{
-				Name:                     deviceName,
-				Attributes:               deviceAttrs,
-				Capacity:                 deviceCapacity,
-				AllowMultipleAllocations: ptr.To(true),
+				Name:                            deviceName,
+				Attributes:                      deviceAttrs,
+				Capacity:                        deviceCapacity,
+				AllowMultipleAllocations:        ptr.To(true),
+				NodeAllocatableResourceMappings: cp.getNodeAllocatableResourceMappings(ptr.To(resourceapi.QualifiedName(cpuResourceQualifiedName))),
 			})
 		}
 	case GROUP_BY_NUMA_NODE:
@@ -125,10 +127,11 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 			device.SetCompatibilityAttributes(deviceAttrs, int64(numaID))
 
 			devices = append(devices, resourceapi.Device{
-				Name:                     deviceName,
-				Attributes:               deviceAttrs,
-				Capacity:                 deviceCapacity,
-				AllowMultipleAllocations: ptr.To(true),
+				Name:                            deviceName,
+				Attributes:                      deviceAttrs,
+				Capacity:                        deviceCapacity,
+				AllowMultipleAllocations:        ptr.To(true),
+				NodeAllocatableResourceMappings: cp.getNodeAllocatableResourceMappings(ptr.To(resourceapi.QualifiedName(cpuResourceQualifiedName))),
 			})
 		}
 	}
@@ -206,9 +209,10 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 			devId++
 			cp.deviceNameToCPUID[deviceName] = cpu.CpuID
 			cpuDevice := resourceapi.Device{
-				Name:       deviceName,
-				Attributes: deviceAttrs,
-				Capacity:   make(map[resourceapi.QualifiedName]resourceapi.DeviceCapacity),
+				Name:                            deviceName,
+				Attributes:                      deviceAttrs,
+				Capacity:                        make(map[resourceapi.QualifiedName]resourceapi.DeviceCapacity),
+				NodeAllocatableResourceMappings: cp.getNodeAllocatableResourceMappings(nil),
 			}
 			allDevices = append(allDevices, cpuDevice)
 		}
@@ -490,5 +494,20 @@ func (cp *CPUDriver) HandleError(ctx context.Context, err error, msg string) {
 		)
 		klog.Flush()
 		os.Exit(1)
+	}
+}
+
+func (cp *CPUDriver) getNodeAllocatableResourceMappings(capacityKey *resourceapi.QualifiedName) map[corev1.ResourceName]resourceapi.NodeAllocatableResourceMapping {
+	if cp.disableNodeAllocatableMapping {
+		return nil
+	}
+	mapping := resourceapi.NodeAllocatableResourceMapping{
+		AllocationMultiplier: resource.NewQuantity(1, resource.DecimalSI),
+	}
+	if capacityKey != nil {
+		mapping.CapacityKey = capacityKey
+	}
+	return map[corev1.ResourceName]resourceapi.NodeAllocatableResourceMapping{
+		corev1.ResourceCPU: mapping,
 	}
 }
