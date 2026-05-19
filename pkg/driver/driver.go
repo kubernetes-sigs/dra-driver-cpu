@@ -96,6 +96,7 @@ type CPUDriver struct {
 	cpuDeviceMode          string
 	cpuDeviceGroupBy       string
 	claimTracker           *store.ClaimTracker
+	cpuIDToPCIeDomain      map[int][]*device.PCIeDomain
 }
 
 // Config is the configuration for the CPUDriver.
@@ -120,6 +121,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		deviceNameToCPUID:      make(map[string]int),
 		deviceNameToSocketID:   make(map[string]int),
 		deviceNameToNUMANodeID: make(map[string]int),
+		cpuIDToPCIeDomain:      make(map[int][]*device.PCIeDomain),
 		reservedCPUs:           config.ReservedCPUs,
 		cpuDeviceMode:          config.CPUDeviceMode,
 		cpuDeviceGroupBy:       config.CPUDeviceGroupBy,
@@ -148,8 +150,9 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		return nil, asyncErr, fmt.Errorf("failed to list PCIe domains: %w", err)
 	}
 	if len(plugin.pcieDomains) > 0 {
+		logger.V(2).Info("PCIe domains detected", "count", len(plugin.pcieDomains))
 		for idx, dom := range plugin.pcieDomains {
-			logger.V(2).Info("PCIe domains", "index", idx, "total", len(plugin.pcieDomains), "domain", dom.String())
+			logger.V(4).Info("PCIe domain", "index", idx, "domain", dom.String())
 		}
 	} else {
 		logger.Info("PCIe domains: none detected, device attributes will not be available")
@@ -158,6 +161,9 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 	if !extraCPUs.IsEmpty() {
 		logger.Info("PCIe domains: detected cpus not local to any detected PCIe Root", "CPUs", extraCPUs.String())
 	}
+
+	plugin.cpuIDToPCIeDomain = device.MapCPUsToPCIeDomain(plugin.pcieDomains, onlineCPUs)
+	logger.V(4).Info("mapped CPUs to PCIe domains", "count", len(plugin.cpuIDToPCIeDomain))
 
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.cpuTopology, config.ReservedCPUs)
 	plugin.podConfigStore = store.NewPodConfig()
