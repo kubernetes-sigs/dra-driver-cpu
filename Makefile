@@ -22,8 +22,8 @@ ARCH=$(shell go env GOARCH)
 # dependencies
 ## versions
 YQ_VERSION ?= 4.47.1
-# matches golang 1.25.z
-GOLANGCI_LINT_VERSION ?= 2.7.2
+# matches golang 1.26.z
+GOLANGCI_LINT_VERSION ?= 2.12.2
 HELM_DOCS_VERSION ?= 1.14.2
 HELM_SCHEMA_VERSION ?= 2.3.1
 KIND_K8S_VERSION ?= v1.36.0
