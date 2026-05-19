@@ -9,6 +9,32 @@ V(6): debug messages, very fine details, mostly for developers
 
 V(7) or more is reserved for future usage.
 
+## when to use Error()
+
+Summary: use Error() if we need to log an unrecoverable error which leads
+to a failed state, not to a degraded-but-operational state.
+
+Description: sometimes a code flow returns an error we want to log.
+How to log it depends on what the error means.
+
+If the error is *recoverable*, and the flow can continue,
+the log should represent a non-fatal, handled situation and we prefer to use
+something like
+
+```
+logger.Info("descriptive message", "key", value, "err", error)
+```
+
+note the error is always the last pair.
+
+If the error is *unrecoverable* and represents an actionable failure, then
+first and foremost the flow must fail, then the error should guide
+the log-reader towards resolution. We prefer to use something like
+
+```
+logger.Error(err, "descriptive message")
+```
+
 ## the opID tag
 
 `opID` is a cheap trace identifier similar in spirit to OTEL's
