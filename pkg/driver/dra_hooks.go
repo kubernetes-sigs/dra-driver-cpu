@@ -230,6 +230,9 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 				"dra.cpu/coreID":     {IntValue: ptr.To(int64(cpu.CoreID))},
 				"dra.cpu/cpuID":      {IntValue: ptr.To(int64(cpu.CpuID))},
 			}
+			if domain := cp.cpuIDToPCIeDomain[cpu.CpuID]; domain != nil {
+				deviceAttrs[domain.PCIeRootAttr.Name] = domain.PCIeRootAttr.Value
+			}
 			device.SetCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID))
 
 			deviceName := fmt.Sprintf("%s%03d", cpuDevicePrefix, devId)
