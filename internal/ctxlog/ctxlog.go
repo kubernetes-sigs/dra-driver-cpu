@@ -73,13 +73,19 @@ func NewContext(ctx context.Context, logger logr.Logger) context.Context {
 // FromContext returns the logger stored in ctx. If no logger is found,
 // it falls back to a stdlib-based logger via stdr rather than discarding
 // messages silently.
-// TODO: pending item: enriched context loss
 func FromContext(ctx context.Context) logr.Logger {
 	logger, err := logr.FromContext(ctx)
 	if err != nil {
 		return fallback
 	}
 	return logger
+}
+
+// WithValues extracts the logger from ctx, enriches it with the given
+// key-value pairs, and reinjects it into the returned context.
+func WithValues(ctx context.Context, keysAndValues ...any) (context.Context, logr.Logger) {
+	logger := FromContext(ctx).WithValues(keysAndValues...)
+	return NewContext(ctx, logger), logger
 }
 
 // KMetadata is satisfied by Kubernetes objects and NRI protobuf types

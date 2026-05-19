@@ -159,8 +159,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		return nil, asyncErr, err
 	}
 
-	logger = logger.WithValues("driver", config.DriverName)
-	ctx = ctxlog.NewContext(ctx, logger)
+	ctx, logger = ctxlog.WithValues(ctx, "driver", config.DriverName)
 
 	cdiMgr, err := NewCdiManager(logger, config.DriverName)
 	if err != nil {
