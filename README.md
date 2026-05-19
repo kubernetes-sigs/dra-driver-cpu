@@ -147,6 +147,67 @@ However, this is only a partial replacement of the corresponding CPU Manager opt
 We hardcode the NUMA split and, unlike the cpumanager feature, it won't automatically adapt if the same claim is handled by a 1-NUMA, 2-NUMA or 4-NUMA machine;
 the claim would need to be updated or recreated manually.
 
+### Exposing PCIe roots
+
+The DRA CPU Driver can expose the PCIe root locality of CPU devices via the driver-specific `dra.cpu/pcieRoots` attribute.
+While devices don't expose the PCIe root locality, the reverse is true: the linux kernel does report the CPUs local to PCIe buses and devices; the driver scans the PCIe
+buses and tracks the PCIe host bridges CPU locality; from there, we can reconstruct the CPU to PCIe root mapping and then populate the attributes.
+
+Because how the linux kernel retrieves the data from the firmware, and because how the ACPI data reports locality, the PCIe root mapping acts as coarse alignment hint
+and it is not consumed by the internal CPU selection when the driver operates in grouped mode.
+While the driver can consume the PCIe root locality data in its internal CPU selection, the locality granularity hard depends on the kernel-provided data.
+These limitations are planned to be addressed (CPU selection input) and mitigated (coarse granularity) in future versions of the driver.
+
+This is an example of a resource slice produced by a driver running in a kind CI cluster, grouped mode, grouping by numa nodes:
+
+```yaml
+apiVersion: resource.k8s.io/v1
+kind: ResourceSlice
+metadata:
+  creationTimestamp: "2026-05-29T14:09:35Z"
+  generateName: 00000-dra.cpu-dra-driver-cpu-worker-
+  generation: 1
+  name: 00000-dra.cpu-dra-driver-cpu-worker-v7pdl
+  ownerReferences:
+  - apiVersion: v1
+    controller: true
+    kind: Node
+    name: dra-driver-cpu-worker
+    uid: 80fbb23c-ae26-44b4-a21a-dce4037db82d
+  resourceVersion: "651"
+  uid: 08664794-f96b-43fd-b8ce-233c7bd172f6
+spec:
+  devices:
+  - allowMultipleAllocations: true
+    attributes:
+      dra.cpu/numCPUs:
+        int: 31
+      dra.cpu/numaNodeID:
+        int: 0
+      dra.cpu/pcieRoots:
+        strings:
+        - pci0000:00
+      dra.cpu/smtEnabled:
+        bool: true
+      dra.cpu/socketID:
+        int: 0
+      dra.net/numaNode:
+        int: 0
+    capacity:
+      dra.cpu/cpu:
+        value: "31"
+    name: cpudevnuma000
+  driver: dra.cpu
+  nodeName: dra-driver-cpu-worker
+  pool:
+    generation: 1
+    name: dra-driver-cpu-worker
+    resourceSliceCount: 1
+```
+
+Note the amount of PCIe roots may vary and depends on both the physical wiring of the system and on whether slots are populated or not;
+most firmware don't enumerate PCIe buses - and therefore don't expose PCIe roots - if no devices are connected.
+
 ## Workload Configuration Requirements
 
 Currently, Kubernetes has two separate systems for requesting CPU resources: standard requests in pod/container fields (`pod.spec.resources` or `pod.spec.containers[].resources`) and DRA `ResourceClaim`s.

@@ -206,6 +206,7 @@ func run(logger logr.Logger) error {
 		CPUDeviceMode:    cpuDeviceMode,
 		CPUDeviceGroupBy: groupBy,
 	}
+
 	dracpu, asyncErr, err := driver.Start(ctx, clientset, driverConfig)
 	if err != nil {
 		return fmt.Errorf("driver failed to start: %w", err)
