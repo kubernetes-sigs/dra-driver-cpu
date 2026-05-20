@@ -181,7 +181,7 @@ endef
 dist:
 	@mkdir -p dist
 
-manifests: dist install-yq ## create the install manifest
+manifests-legacy: dist install-yq ## create the install manifest (legacy, pre-helm)
 	@cd dist && cp -a ../manifests/base/*.part.yaml .
 ifeq ($(OVERRIDE_IMAGE),true)
 	@$(YQ) -i '.spec.template.spec.containers[0].image = "${IMAGE}"' dist/daemonset-dracpu.part.yaml
@@ -196,6 +196,25 @@ endif
 		dist/deviceclass-dracpu.part.yaml \
 		> dist/install.yaml
 	@rm dist/*.part.yaml
+
+manifests: dist ensure-helm ## create the install manifest
+ifeq ($(OVERRIDE_IMAGE),true)
+	helm template dra-driver-cpu deployment/helm/dra-driver-cpu \
+		--namespace kube-system \
+		--set fullnameOverride=dracpu \
+		--set podLabels.app=dracpu \
+		--set podLabels.build=${GIT_VERSION} \
+		--set image.repository=${STAGING_IMAGE_NAME} \
+		--set image.tag=${TAG} \
+		--set image.pullPolicy=IfNotPresent \
+		> dist/install.yaml
+else
+	helm template dra-driver-cpu deployment/helm/dra-driver-cpu \
+		--namespace kube-system \
+		--set fullnameOverride=dracpu \
+		--set podLabels.app=dracpu \
+		> dist/install.yaml
+endif
 
 ci-manifests: install-yq ## create the CI install manifests
 ifneq ($(DRACPU_E2E_VERBOSE),)
