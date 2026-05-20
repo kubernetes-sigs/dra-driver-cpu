@@ -46,13 +46,15 @@ const (
 )
 
 var (
-	hostnameOverride string
-	kubeconfig       string
-	bindAddress      string
-	reservedCPUs     string
-	ready            atomic.Bool
-	cpuDeviceMode    string
-	groupBy          string
+	hostnameOverride              string
+	kubeconfig                    string
+	bindAddress                   string
+	reservedCPUs                  string
+	ready                         atomic.Bool
+	cpuDeviceMode                 string
+	groupBy                       string
+	mixedAllocationMode           bool
+	disableNodeAllocatableMapping bool
 )
 
 type cpuDeviceModeValue struct {
@@ -110,6 +112,8 @@ func init() {
 	flag.StringVar(&reservedCPUs, "reserved-cpus", "", "cpuset of CPUs to be excluded from ResourceSlice.")
 	flag.Var(newCPUDeviceModeValue(&cpuDeviceMode, driver.CPU_DEVICE_MODE_GROUPED), "cpu-device-mode", "Sets the mode for exposing CPU devices. 'grouped' exposes a single device per socket or numa node (based on --group-by). 'individual' exposes each CPU as a separate device.")
 	flag.Var(newGroupByValue(&groupBy, driver.GROUP_BY_NUMA_NODE), "group-by", "When --cpu-device-mode=grouped, sets the criteria for grouping CPUs. Can be set to 'socket' or 'numanode'.")
+	flag.BoolVar(&mixedAllocationMode, "mixed-allocation-mode", false, "Enable mixed shared and isolated CPU allocation mode.")
+	flag.BoolVar(&disableNodeAllocatableMapping, "disable-node-allocatable-mapping", false, "Disable NodeAllocatable mapping in resource slice. This disables the kube-scheduler from natively subtracting the DRA claim resources from node allocatable.")
 }
 
 func main() {
@@ -213,11 +217,13 @@ func run(logger logr.Logger) error {
 	signal.Notify(signalCh, os.Interrupt, unix.SIGINT)
 
 	driverConfig := &driver.Config{
-		DriverName:       driverName,
-		NodeName:         nodeName,
-		ReservedCPUs:     reservedCPUSet,
-		CpuDeviceMode:    cpuDeviceMode,
-		CPUDeviceGroupBy: groupBy,
+		DriverName:                    driverName,
+		NodeName:                      nodeName,
+		ReservedCPUs:                  reservedCPUSet,
+		CpuDeviceMode:                 cpuDeviceMode,
+		CPUDeviceGroupBy:              groupBy,
+		MixedAllocationMode:           mixedAllocationMode,
+		DisableNodeAllocatableMapping: disableNodeAllocatableMapping,
 	}
 	dracpu, asyncErr, err := driver.Start(ctx, clientset, driverConfig)
 	if err != nil {

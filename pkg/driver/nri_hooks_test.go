@@ -126,6 +126,7 @@ func TestCreateContainer(t *testing.T) {
 
 	testCases := []struct {
 		name                        string
+		mixedAllocationMode         bool
 		podConfigStore              *store.PodConfig
 		cpuAllocationStore          *store.CPUAllocation
 		claimTracker                *store.ClaimTracker
@@ -159,8 +160,8 @@ func TestCreateContainer(t *testing.T) {
 			name: "guaranteed container triggers container adjustment and update for other shared container",
 			podConfigStore: func() *store.PodConfig {
 				conf := store.NewPodConfig()
-				conf.SetContainerState("shared-pod-1", store.NewContainerState("shared-ctr-1", "shared-uid-1"))
-				conf.SetContainerState("shared-pod-2", store.NewContainerState("shared-ctr-2", "shared-uid-2"))
+				conf.SetContainerState("shared-pod-1", store.NewContainerState("shared-ctr-1", "shared-uid-1", store.AllocationTypeShared))
+				conf.SetContainerState("shared-pod-2", store.NewContainerState("shared-ctr-2", "shared-uid-2", store.AllocationTypeShared))
 				return conf
 			}(),
 			cpuAllocationStore: func() *store.CPUAllocation {
@@ -200,14 +201,111 @@ func TestCreateContainer(t *testing.T) {
 			},
 			expectedContainerUpdates: []*api.ContainerUpdate{},
 		},
+		{
+			name: "guaranteed container triggers update and shrink for running mixed allocation container",
+			podConfigStore: func() *store.PodConfig {
+				conf := store.NewPodConfig()
+				cs := store.NewContainerState("mixed-ctr-1", "mixed-uid-1", store.AllocationTypeMixed, store.ClaimInfo{ClaimUID: "claim-A", CPUs: cpuset.New(0)})
+				conf.SetContainerState("mixed-pod-1", cs)
+				return conf
+			}(),
+			cpuAllocationStore: func() *store.CPUAllocation {
+				store := store.NewCPUAllocation(topo, cpuset.New())
+				store.AddResourceClaimAllocation(testr.New(t), "claim-A", cpuset.New(0))
+				store.AddResourceClaimAllocation(testr.New(t), "claim-B", cpuset.New(1))
+				return store
+			}(),
+			claimTracker: store.NewClaimTracker(),
+			container:    newTestContainer("claim-B", "1"),
+			expectedContainerAdjustment: &api.ContainerAdjustment{
+				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "1"}}},
+			},
+			expectedContainerUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "mixed-uid-1",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0,2-7"}}},
+				},
+			},
+		},
+		{
+			name:                "guaranteed container with mixed mode enabled but shares at minimum triggers strictly guaranteed adjustment",
+			mixedAllocationMode: true,
+			podConfigStore: func() *store.PodConfig {
+				conf := store.NewPodConfig()
+				conf.SetContainerState("shared-pod-1", store.NewContainerState("shared-ctr-1", "shared-uid-1", store.AllocationTypeShared))
+				return conf
+			}(),
+			cpuAllocationStore: func() *store.CPUAllocation {
+				store := store.NewCPUAllocation(topo, cpuset.New())
+				store.AddResourceClaimAllocation(testr.New(t), types.UID(claimUID), cpuset.New(2, 3))
+				return store
+			}(),
+			claimTracker: store.NewClaimTracker(),
+			container: func() *api.Container {
+				ctr := newTestContainer(claimUID, "2-3")
+				ctr.Linux = &api.LinuxContainer{
+					Resources: &api.LinuxResources{
+						Cpu: &api.LinuxCPU{
+							Shares: &api.OptionalUInt64{Value: MinCPUShares},
+						},
+					},
+				}
+				return ctr
+			}(),
+			expectedContainerAdjustment: &api.ContainerAdjustment{
+				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-3"}}},
+			},
+			expectedContainerUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "shared-uid-1",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1,4-7"}}},
+				},
+			},
+		},
+		{
+			name:                "mixed container triggers container adjustment and updates other shared container",
+			mixedAllocationMode: true,
+			podConfigStore: func() *store.PodConfig {
+				conf := store.NewPodConfig()
+				conf.SetContainerState("shared-pod-1", store.NewContainerState("shared-ctr-1", "shared-uid-1", store.AllocationTypeShared))
+				return conf
+			}(),
+			cpuAllocationStore: func() *store.CPUAllocation {
+				store := store.NewCPUAllocation(topo, cpuset.New())
+				store.AddResourceClaimAllocation(testr.New(t), types.UID(claimUID), cpuset.New(2, 3))
+				return store
+			}(),
+			claimTracker: store.NewClaimTracker(),
+			container: func() *api.Container {
+				ctr := newTestContainer(claimUID, "2-3")
+				ctr.Linux = &api.LinuxContainer{
+					Resources: &api.LinuxResources{
+						Cpu: &api.LinuxCPU{
+							Shares: &api.OptionalUInt64{Value: 3072},
+						},
+					},
+				}
+				return ctr
+			}(),
+			expectedContainerAdjustment: &api.ContainerAdjustment{
+				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
+			},
+			expectedContainerUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "shared-uid-1",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1,4-7"}}},
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			driver := &CPUDriver{
-				podConfigStore:     tc.podConfigStore,
-				cpuAllocationStore: tc.cpuAllocationStore,
-				claimTracker:       tc.claimTracker,
+				podConfigStore:      tc.podConfigStore,
+				cpuAllocationStore:  tc.cpuAllocationStore,
+				claimTracker:        tc.claimTracker,
+				mixedAllocationMode: tc.mixedAllocationMode,
 			}
 			adjust, updates, err := driver.CreateContainer(context.Background(), pod, tc.container)
 			require.NoError(t, err)
@@ -246,8 +344,8 @@ func TestStopContainer(t *testing.T) {
 					claimTracker:       store.NewClaimTracker(),
 					cpuTopology:        topo,
 				}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id), types.UID("claim-uid-1")))
-				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id), store.AllocationTypeGuaranteed, store.ClaimInfo{ClaimUID: "claim-uid-1", CPUs: cpuset.New()}))
+				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id), store.AllocationTypeShared))
 				return driver
 			}(),
 			expectedUpdatesFor: []string{ctr2.Id},
@@ -261,8 +359,8 @@ func TestStopContainer(t *testing.T) {
 					claimTracker:       store.NewClaimTracker(),
 					cpuTopology:        topo,
 				}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id)))
-				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id), store.AllocationTypeShared))
+				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id), store.AllocationTypeShared))
 				return driver
 			}(),
 			expectedUpdatesFor: []string{},
@@ -308,7 +406,7 @@ func TestNRISynchronize(t *testing.T) {
 					claimTracker:       store.NewClaimTracker(),
 					cpuTopology:        topo,
 				}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState("stale-ctr", "stale-id", types.UID("stale-claim")))
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState("stale-ctr", "stale-id", store.AllocationTypeGuaranteed, store.ClaimInfo{ClaimUID: "stale-claim", CPUs: cpuset.New()}))
 				return driver
 			}(),
 			runtimePods:     []*api.PodSandbox{},
@@ -411,6 +509,70 @@ func TestNRISynchronize(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "mixed allocation container recovery",
+			driver: &CPUDriver{
+				podConfigStore:      store.NewPodConfig(),
+				cpuAllocationStore:  store.NewCPUAllocation(topo, cpuset.New()),
+				claimTracker:        store.NewClaimTracker(),
+				cpuTopology:         topo,
+				mixedAllocationMode: true,
+			},
+			runtimePods: []*api.PodSandbox{pod1},
+			runtimeCtrs: []*api.Container{
+				{
+					Id:           "p1-mixed",
+					PodSandboxId: pod1.Id,
+					Name:         "mixed-ctr",
+					Env:          []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")},
+					Linux: &api.LinuxContainer{
+						Resources: &api.LinuxResources{
+							Cpu: &api.LinuxCPU{
+								Shares: &api.OptionalUInt64{Value: 3072},
+							},
+						},
+					},
+				},
+			},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-mixed",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
+				},
+			},
+		},
+		{
+			name: "guaranteed container recovery with mixed mode enabled but shares at minimum defaults to guaranteed",
+			driver: &CPUDriver{
+				podConfigStore:      store.NewPodConfig(),
+				cpuAllocationStore:  store.NewCPUAllocation(topo, cpuset.New()),
+				claimTracker:        store.NewClaimTracker(),
+				cpuTopology:         topo,
+				mixedAllocationMode: true,
+			},
+			runtimePods: []*api.PodSandbox{pod1},
+			runtimeCtrs: []*api.Container{
+				{
+					Id:           "p1-guaranteed",
+					PodSandboxId: pod1.Id,
+					Name:         "guaranteed-ctr",
+					Env:          []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")},
+					Linux: &api.LinuxContainer{
+						Resources: &api.LinuxResources{
+							Cpu: &api.LinuxCPU{
+								Shares: &api.OptionalUInt64{Value: MinCPUShares},
+							},
+						},
+					},
+				},
+			},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-guaranteed",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1"}}},
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -430,7 +592,8 @@ func TestNRISynchronize(t *testing.T) {
 					if container.PodSandboxId != pod.Id {
 						continue
 					}
-					state := tc.driver.podConfigStore.GetContainerState(types.UID(pod.Uid), container.Name)
+					state, ok := tc.driver.podConfigStore.GetContainerStateByUID(types.UID(container.Id))
+					require.True(t, ok)
 					require.NotNil(t, state)
 				}
 			}
