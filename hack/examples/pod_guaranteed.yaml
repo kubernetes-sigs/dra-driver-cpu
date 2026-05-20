@@ -1,0 +1,39 @@
+# This example illustrates a Pod consuming exclusive CPUs under Guaranteed-Only mode.
+# Even when Mixed Allocation Mode is enabled on the driver, containers that omit
+# standard CPU requests automatically default back to strictly exclusive guaranteed allocations.
+#
+# Required Driver Configuration:
+#   --mixed-allocation-mode: true (or false)
+#   --cpu-device-mode: "grouped" (this example uses grouped mode).
+#   --disable-node-allocatable-mapping: false (Default, recommended so that the scheduler natively
+#                                            accounts for DRA exclusive allocations and avoids double-counting).
+#
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: claim-cpu-guaranteed-test
+spec:
+  devices:
+    requests:
+    - name: req-cpu-slice
+      exactly:
+        deviceClassName: dra.cpu
+        capacity:
+          requests:
+            dra.cpu/cpu: "4"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-cpu-guaranteed-test
+spec:
+  containers:
+    - name: guaranteed-app
+      image: "registry.k8s.io/pause:3.9"
+      resources:
+        # Standard requests.cpu is intentionally omitted to verify fallback
+        claims:
+          - name: "dedicated-cpu-claim-ref"
+  resourceClaims:
+    - name: "dedicated-cpu-claim-ref"
+      resourceClaimName: claim-cpu-guaranteed-test

@@ -1,3 +1,11 @@
+# This example illustrates a Pod consuming exclusive CPUs under Individual CPU Device Mode.
+#
+# Required Driver Configuration:
+#   --cpu-device-mode: "individual" (Each CPU is exposed as an individual device in the ResourceSlice).
+#   --disable-node-allocatable-mapping: true (Required because container CPU requests are explicitly replicated in
+#                                            the standard 'resources.requests.cpu' block to perform manual scheduling
+#                                            accounting and prevent scheduler-level double-counting).
+#
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
 metadata:

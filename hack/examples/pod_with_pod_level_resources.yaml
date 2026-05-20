@@ -1,0 +1,62 @@
+# This example illustrates a Pod using the Pod-Level Resources
+#
+#
+# Required Driver Configuration:
+#   --cpu-device-mode: "grouped" (CPUs are grouped, e.g. by NUMA node, and exposed as consumable capacity).
+#
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: claim-cpu-capacity-10
+spec:
+  devices:
+    requests:
+    - name: req-cpu-slice
+      exactly:
+        deviceClassName: dra.cpu
+        capacity:
+          requests:
+            dra.cpu/cpu: "10"
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: claim-cpu-capacity-4
+spec:
+  devices:
+    requests:
+    - name: req-cpu-slice-2
+      exactly:
+        deviceClassName: dra.cpu
+        capacity:
+          requests:
+            dra.cpu/cpu: "4"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-with-pod-level-resources
+spec:
+  resources:
+    requests:
+      cpu: "16" # 10 (exclusive CPUs for claim1) + 4 (exclusive CPUs for claim2) + 2 (shared CPUs for sidecars)
+    limits:
+      cpu: "16"
+  containers:
+    - name: main-app
+      image: "registry.k8s.io/pause:3.9"
+      resources:
+        claims:
+          - name: "container1-claim"
+    - name: worker
+      image: "registry.k8s.io/pause:3.9"
+      resources:
+        claims:
+          - name: "container2-claim"
+    - name: sidecar
+      image: "registry.k8s.io/pause:3.9"
+  resourceClaims:
+    - name: "container1-claim"
+      resourceClaimName: claim-cpu-capacity-10
+    - name: "container2-claim"
+      resourceClaimName: claim-cpu-capacity-4

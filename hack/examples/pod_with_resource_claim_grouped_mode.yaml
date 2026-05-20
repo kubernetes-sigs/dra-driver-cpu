@@ -1,3 +1,11 @@
+# This example illustrates a Pod consuming exclusive CPUs under Grouped CPU Device Mode (default).
+#
+# Required Driver Configuration:
+#   --cpu-device-mode: "grouped" (CPUs are grouped, e.g. by NUMA node, and exposed as consumable capacity).
+#   --disable-node-allocatable-mapping: true (Required because container CPU requests are explicitly replicated in
+#                                            the standard 'resources.requests.cpu' block to perform manual scheduling
+#                                            accounting and prevent scheduler-level double-counting).
+#
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
 metadata:
