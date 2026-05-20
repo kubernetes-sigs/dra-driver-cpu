@@ -69,6 +69,7 @@ var _ = ginkgo.ReportAfterSuite("contextual logging", func(report ginkgo.Report)
 	}
 
 	parsedLog := logcheck.NewParsedLog(logs)
+	parsedLog.OpaqueKeys = []string{"response"}
 	ctxlogFxt.Log.Info("ingested log lines", "count", parsedLog.Len())
 
 	dupKeys := logcheck.DuplicateKeys(parsedLog)

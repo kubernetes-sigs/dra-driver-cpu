@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -67,7 +68,12 @@ func logSeverityFromRawLine(rawLine string) string {
 }
 
 type ParsedLog struct {
-	lines []parsedLogLine
+	// OpaqueKeys tell the log parser which keys it should avoid to process.
+	// The reason for not processing keys is that we want to implement a minimal
+	// log parser for validation purposes. A general purpose structured log parser
+	// is a much larger endeavour which has no real usecase yet.
+	OpaqueKeys []string
+	lines      []parsedLogLine
 }
 
 // parseTextloggerPayload splits a payload line in message and kvPairs.
@@ -136,9 +142,11 @@ func (pl ParsedLog) KVPairsAt(idx int) [][]string {
 	if idx < 0 || idx >= len(pl.lines) {
 		return nil
 	}
-	// differently from other *At() method, we do lazily because
-	// this is a relatively expensive operation
-	return kvPairRE.FindAllStringSubmatch(pl.lines[idx].kvPairs, -1)
+	kvPairs := pl.lines[idx].kvPairs
+	for _, sk := range pl.OpaqueKeys {
+		kvPairs = RedactQuotedValue(kvPairs, sk)
+	}
+	return kvPairRE.FindAllStringSubmatch(kvPairs, -1)
 }
 
 type FlowEntries struct {
@@ -285,4 +293,24 @@ func FormatDuplicateKeyResult(parsedLog ParsedLog, dupKeys ...DuplicateKeyResult
 		fmt.Fprintf(&sb, "\nline=[%s] duplicated keys=<%s>", rawLine, strings.Join(dupKey.Duplicates, ","))
 	}
 	return sb.String()
+}
+
+const opaqueValue = "@OPAQUE@"
+
+// RedactQuotedValue replaces the value of a key="..." pair from s with a well known generic opaque value.
+// Use this function to remove nested response which confuse the log parser.
+func RedactQuotedValue(s, key string) string {
+	result := ""
+	for {
+		before, after, found := strings.Cut(s, key+`=`)
+		if !found {
+			return result + s
+		}
+		quoted, err := strconv.QuotedPrefix(after)
+		if err != nil {
+			return result + s
+		}
+		result += before + key + `="` + opaqueValue + `"`
+		s = after[len(quoted):]
+	}
 }
