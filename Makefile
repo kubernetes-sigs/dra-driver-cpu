@@ -102,9 +102,11 @@ DRACPU_E2E_RESERVED_CPUS ?= 0
 # For example, set GOLANGCI_LINT_EXTRA_ARGS=--fix to auto-fix issues.
 GOLANGCI_LINT_EXTRA_ARGS ?=
 
-# shortcut
-CI_MANIFEST_FILE := hack/ci/install-ci-$(DRACPU_E2E_CPU_DEVICE_MODE)-mode.yaml
-# we need this because manifest processing always needs a nonempty value
+HELM_CHART := deployment/helm/dra-driver-cpu
+HELM_COMMON_ARGS := \
+	--namespace kube-system \
+	--set fullnameOverride=dracpu \
+	--set podLabels.app=dracpu
 
 # required to enable buildx
 export DOCKER_CLI_EXPERIMENTAL=enabled
@@ -153,31 +155,6 @@ kind-install-cpu-dra: kind-uninstall-cpu-dra build-image kind-load-image ## inst
 delete-kind-cluster: ## delete kind cluster
 	kind delete cluster --name ${CLUSTER_NAME}
 
-define kind_setup
-	kind create cluster --name ${CLUSTER_NAME} --image=kindest/node:$(KIND_K8S_VERSION) --config hack/ci/kind-ci.yaml
-	kubectl label node ${CLUSTER_NAME}-worker node-role.kubernetes.io/worker=''
-	kind load docker-image --name ${CLUSTER_NAME} ${IMAGE_CI} ${IMAGE_TEST}
-	kubectl create -f $(1)
-	hack/ci/wait-resourcelices.sh
-endef
-
-define generate_ci_manifest
-	@cd hack/ci && cp -a ../../manifests/base/*.part.yaml .
-	@# need to make kind load docker-image working as expected: see https://kind.sigs.k8s.io/docs/user/quick-start/#loading-an-image-into-your-cluster
-	@$(YQ) -i '.spec.template.spec.containers[0].imagePullPolicy = "IfNotPresent"' hack/ci/daemonset-dracpu.part.yaml
-	@$(YQ) -i '.spec.template.spec.containers[0].image = "${IMAGE_CI}"' hack/ci/daemonset-dracpu.part.yaml
-	$(if $(2),@$(YQ) -i '$(2)' hack/ci/daemonset-dracpu.part.yaml,)
-	@$(YQ) -i '.spec.template.metadata.labels["build"] = "${GIT_VERSION}"' hack/ci/daemonset-dracpu.part.yaml
-	@$(YQ) '.' \
-		hack/ci/clusterrole-dracpu.part.yaml \
-		hack/ci/serviceaccount-dracpu.part.yaml \
-		hack/ci/clusterrolebinding-dracpu.part.yaml \
-		hack/ci/daemonset-dracpu.part.yaml \
-		hack/ci/deviceclass-dracpu.part.yaml \
-		> $(1)
-	@rm hack/ci/*.part.yaml
-endef
-
 dist:
 	@mkdir -p dist
 
@@ -199,34 +176,31 @@ endif
 
 manifests: dist ensure-helm ## create the install manifest
 ifeq ($(OVERRIDE_IMAGE),true)
-	helm template dra-driver-cpu deployment/helm/dra-driver-cpu \
-		--namespace kube-system \
-		--set fullnameOverride=dracpu \
-		--set podLabels.app=dracpu \
+	helm template dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
 		--set podLabels.build=${GIT_VERSION} \
 		--set image.repository=${STAGING_IMAGE_NAME} \
 		--set image.tag=${TAG} \
 		--set image.pullPolicy=IfNotPresent \
 		> dist/install.yaml
 else
-	helm template dra-driver-cpu deployment/helm/dra-driver-cpu \
-		--namespace kube-system \
-		--set fullnameOverride=dracpu \
-		--set podLabels.app=dracpu \
+	helm template dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
 		> dist/install.yaml
 endif
 
-ci-manifests: install-yq ## create the CI install manifests
-ifneq ($(DRACPU_E2E_VERBOSE),)
-	@echo "setting up manifests for mode=$(DRACPU_E2E_CPU_DEVICE_MODE)"
-endif
-	$(call generate_ci_manifest,$(CI_MANIFEST_FILE),.spec.template.spec.containers[0].args |= (del(.[] | select(. == "--cpu-device-mode=*")) | . + ["--cpu-device-mode=$(DRACPU_E2E_CPU_DEVICE_MODE)", "--reserved-cpus=$(DRACPU_E2E_RESERVED_CPUS)"]))
-
-ci-kind-setup: ensure-kind-node-image ci-manifests build-image build-test-image ## setup a CI cluster from scratch using reserved CPUs
+ci-kind-setup: ensure-kind-node-image ensure-helm build-image build-test-image ## setup a CI cluster from scratch using reserved CPUs
 ifneq ($(DRACPU_E2E_VERBOSE),)
 	@echo "creating a kind cluster for mode=$(DRACPU_E2E_CPU_DEVICE_MODE)"
 endif
-	$(call kind_setup,$(CI_MANIFEST_FILE))
+	kind create cluster --name ${CLUSTER_NAME} --image=kindest/node:$(KIND_K8S_VERSION) --config hack/ci/kind-ci.yaml
+	kubectl label node ${CLUSTER_NAME}-worker node-role.kubernetes.io/worker=''
+	kind load docker-image --name ${CLUSTER_NAME} ${IMAGE_CI} ${IMAGE_TEST}
+	helm install dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
+		--set image.repository=${REGISTRY_CI}/${IMAGE_NAME} \
+		--set image.tag=${TAG} \
+		--set image.pullPolicy=IfNotPresent \
+		--set args.cpuDeviceMode=${DRACPU_E2E_CPU_DEVICE_MODE} \
+		--set-string args.reservedCPUs=${DRACPU_E2E_RESERVED_CPUS}
+	hack/ci/wait-resourcelices.sh
 
 build-test-image: ## build tests image
 	docker buildx build . \
