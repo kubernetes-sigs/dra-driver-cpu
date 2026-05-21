@@ -107,6 +107,9 @@ type Config struct {
 
 // Start creates and starts a new CPUDriver.
 func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) (*CPUDriver, <-chan error, error) {
+	var logger logr.Logger
+	ctx, logger = ctxlog.WithValues(ctx, "driver", config.DriverName)
+
 	asyncErr := make(chan error, 1)
 	plugin := &CPUDriver{
 		driverName:             config.DriverName,
@@ -120,7 +123,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		cpuDeviceGroupBy:       config.CPUDeviceGroupBy,
 		claimTracker:           store.NewClaimTracker(),
 	}
-	logger := ctxlog.FromContext(ctx)
+
 	cpuInfoProvider := cpuinfo.NewSystemCPUInfo()
 	topo, err := cpuInfoProvider.GetCPUTopology(logger)
 	if err != nil {
@@ -158,8 +161,6 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 	if err != nil {
 		return nil, asyncErr, err
 	}
-
-	ctx, logger = ctxlog.WithValues(ctx, "driver", config.DriverName)
 
 	cdiMgr, err := NewCdiManager(logger, config.DriverName)
 	if err != nil {
