@@ -240,7 +240,7 @@ install-golangci-lint: $(OUT_DIR) ## make sure the golangci-lint tool is availab
 	@hack/fetch-golangci-lint.sh $(OUT_DIR) $(GOLANGCI_LINT_VERSION)
 
 helm-lint: ## lint helm chart with strict mode
-	helm lint --strict deployment/helm/dra-driver-cpu
+	helm lint --strict ${HELM_CHART}
 
 .PHONY: helm-docs
 helm-docs: ## regenerate helm chart README from values.yaml annotations and README.md.gotmpl
@@ -254,14 +254,14 @@ helm-docs-check: helm-docs ## verify helm chart README is up to date; fails if r
 .PHONY: helm-schema
 helm-schema: ## regenerate values.schema.json from values.yaml @schema annotations
 	go run github.com/losisin/helm-values-schema-json/v2@v$(HELM_SCHEMA_VERSION) \
-		-f deployment/helm/dra-driver-cpu/values.yaml \
-		-o deployment/helm/dra-driver-cpu/values.schema.json \
+		-f ${HELM_CHART}/values.yaml \
+		-o ${HELM_CHART}/values.schema.json \
 		--use-helm-docs \
 		--indent 2
 
 .PHONY: helm-schema-check
 helm-schema-check: helm-schema ## verify values.schema.json is up to date; fails if regeneration produces a diff
-	@git diff --exit-code deployment/helm/dra-driver-cpu/values.schema.json || \
+	@git diff --exit-code ${HELM_CHART}/values.schema.json || \
 		(echo "ERROR: values.schema.json is out of date. Run 'make helm-schema' to update it." && exit 1)
 CHART_REGISTRY?=$(REGISTRY)/$(STAGING_REPO_NAME)/charts
 HELM_VERSION_SHA?=a2369ca71c0ef633bf6e4fccd66d634eb379b371 # v3.20.1
@@ -275,7 +275,7 @@ ensure-helm:
 
 .PHONY: helm-package
 helm-package: ensure-helm ## package helm chart for release
-	helm package deployment/helm/dra-driver-cpu \
+	helm package ${HELM_CHART} \
 		--version "$(CHART_VERSION)" \
 		--app-version "$(TAG)" \
 		--destination $(OUT_DIR)
