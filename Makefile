@@ -73,13 +73,13 @@ $(OUT_DIR):  ## creates the output directory (used internally)
 
 # get image name from directory we're building
 CLUSTER_NAME=dra-driver-cpu
-STAGING_REPO_NAME=dra-driver-cpu
 IMAGE_NAME=dra-driver-cpu
 # docker image registry, default to upstream
 REGISTRY ?= us-central1-docker.pkg.dev/k8s-staging-images
 # this is an intentionally non-existent registry to be used only by local CI using the local image loading
 REGISTRY_CI := dev.kind.local/ci
-STAGING_IMAGE_NAME := ${REGISTRY}/${STAGING_REPO_NAME}/${IMAGE_NAME}
+IMAGE_REPO := ${REGISTRY}/${IMAGE_NAME}/${IMAGE_NAME}
+IMAGE_REPO_CI := ${REGISTRY_CI}/${IMAGE_NAME}
 # tag based on date-sha
 GIT_VERSION := $(shell date +v%Y%m%d)-$(shell git rev-parse --short HEAD)
 ifneq ($(shell git status --porcelain),)
@@ -87,10 +87,10 @@ ifneq ($(shell git status --porcelain),)
 endif
 TAG ?= $(GIT_VERSION)
 # the full image tag
-IMAGE_LATEST?=$(STAGING_IMAGE_NAME):latest
-IMAGE := ${STAGING_IMAGE_NAME}:${TAG}
-IMAGE_CI := ${REGISTRY_CI}/${IMAGE_NAME}:${TAG}
-IMAGE_TEST := ${REGISTRY_CI}/${IMAGE_NAME}-test:${TAG}
+IMAGE_LATEST?=$(IMAGE_REPO):latest
+IMAGE := ${IMAGE_REPO}:${TAG}
+IMAGE_CI := ${IMAGE_REPO_CI}:${TAG}
+IMAGE_TEST := ${IMAGE_REPO_CI}-test:${TAG}
 # target platform(s)
 PLATFORMS?=linux/amd64,linux/arm64
 LOCAL_PLATFORM?=linux/$(ARCH)
@@ -111,7 +111,7 @@ HELM_COMMON_ARGS := \
 # required to enable buildx
 export DOCKER_CLI_EXPERIMENTAL=enabled
 image: ## docker build load
-	docker build . -t ${STAGING_IMAGE_NAME} --load
+	docker build . -t ${IMAGE_REPO} --load
 
 build-image: ## build image
 	docker buildx build . \
@@ -151,7 +151,7 @@ kind-uninstall-cpu-dra: ## remove cpu dra from kind cluster
 
 kind-install-cpu-dra: kind-uninstall-cpu-dra build-image kind-load-image ## install on cluster mimicking production settings
 	helm install dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
-		--set image.repository=${REGISTRY}/${STAGING_REPO_NAME}/${IMAGE_NAME} \
+		--set image.repository=${IMAGE_REPO} \
 		--set image.tag=${TAG} \
 		--set image.pullPolicy=IfNotPresent
 
@@ -181,7 +181,7 @@ manifests: dist ensure-helm ## create the install manifest
 ifeq ($(OVERRIDE_IMAGE),true)
 	helm template dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
 		--set podLabels.build=${GIT_VERSION} \
-		--set image.repository=${STAGING_IMAGE_NAME} \
+		--set image.repository=${IMAGE_REPO} \
 		--set image.tag=${TAG} \
 		--set image.pullPolicy=IfNotPresent \
 		> dist/install.yaml
@@ -198,7 +198,7 @@ endif
 	kubectl label node ${CLUSTER_NAME}-worker node-role.kubernetes.io/worker=''
 	kind load docker-image --name ${CLUSTER_NAME} ${IMAGE_CI} ${IMAGE_TEST}
 	helm install dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
-		--set image.repository=${REGISTRY_CI}/${IMAGE_NAME} \
+		--set image.repository=${IMAGE_REPO_CI} \
 		--set image.tag=${TAG} \
 		--set image.pullPolicy=IfNotPresent \
 		--set args.cpuDeviceMode=${DRACPU_E2E_CPU_DEVICE_MODE} \
@@ -263,7 +263,7 @@ helm-schema: ## regenerate values.schema.json from values.yaml @schema annotatio
 helm-schema-check: helm-schema ## verify values.schema.json is up to date; fails if regeneration produces a diff
 	@git diff --exit-code ${HELM_CHART}/values.schema.json || \
 		(echo "ERROR: values.schema.json is out of date. Run 'make helm-schema' to update it." && exit 1)
-CHART_REGISTRY?=$(REGISTRY)/$(STAGING_REPO_NAME)/charts
+CHART_REGISTRY?=$(REGISTRY)/$(IMAGE_NAME)/charts
 HELM_VERSION_SHA?=a2369ca71c0ef633bf6e4fccd66d634eb379b371 # v3.20.1
 
 .PHONY: ensure-helm
