@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/utils/cpuset"
@@ -87,6 +88,7 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 				"dra.cpu/numCPUs":    {IntValue: ptr.To(availableCPUsInSocket)},
 				"dra.cpu/smtEnabled": {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
 			}
+			cp.setGroupedPCIeRootAttribute(deviceAttrs, topo.CPUDetails.CPUsInSockets(socketID))
 
 			devices = append(devices, resourceapi.Device{
 				Name:                     deviceName,
@@ -124,6 +126,7 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 				"dra.cpu/numCPUs":    {IntValue: ptr.To(availableCPUsInNUMANode)},
 			}
 			device.SetCompatibilityAttributes(deviceAttrs, int64(numaID))
+			cp.setGroupedPCIeRootAttribute(deviceAttrs, topo.CPUDetails.CPUsInNUMANodes(numaID))
 
 			devices = append(devices, resourceapi.Device{
 				Name:                     deviceName,
@@ -538,4 +541,19 @@ func (cp *CPUDriver) HandleError(ctx context.Context, err error, msg string) {
 		ctxlog.Flush()
 		os.Exit(1)
 	}
+}
+
+func (cp *CPUDriver) setGroupedPCIeRootAttribute(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, cpuIDs cpuset.CPUSet) {
+	pcieRoots := sets.New[string]()
+	for _, cpuID := range cpuIDs.UnsortedList() {
+		dom := cp.cpuIDToPCIeDomain[cpuID]
+		if dom == nil {
+			continue
+		}
+		pcieRoots.Insert(dom.Root())
+	}
+	if pcieRoots.Len() == 0 {
+		return
+	}
+	attrs["dra.cpu/pcieRoots"] = resourceapi.DeviceAttribute{StringValues: sets.List(pcieRoots)}
 }

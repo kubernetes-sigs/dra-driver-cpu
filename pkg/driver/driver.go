@@ -167,7 +167,10 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 
 	extraCPUs := device.FindOrphanedCPUs(plugin.pcieDomains, onlineCPUs)
 	if !extraCPUs.IsEmpty() {
-		return nil, asyncErr, fmt.Errorf("found cpus not local to any detected PCIe Root: %s", extraCPUs.String())
+		if plugin.cpuDeviceGroupBy == GROUP_BY_PCIE_ROOT {
+			return nil, asyncErr, fmt.Errorf("found cpus not local to any PCIe Root: %s", extraCPUs.String())
+		}
+		logger.V(2).Info("found cpus not local to any PCIe root", "cpus", extraCPUs.String())
 	}
 
 	plugin.cpuIDToPCIeDomain = device.MapCPUsToPCIeDomain(plugin.pcieDomains, onlineCPUs)
