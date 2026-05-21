@@ -147,10 +147,13 @@ kind-load-image: build-image  ## load the current container image into kind
 	kind load docker-image ${IMAGE} ${IMAGE_LATEST} --name ${CLUSTER_NAME}
 
 kind-uninstall-cpu-dra: ## remove cpu dra from kind cluster
-	kubectl delete -f dist/install.yaml || true
+	helm uninstall dra-driver-cpu --namespace kube-system || true
 
-kind-install-cpu-dra: kind-uninstall-cpu-dra build-image kind-load-image ## install on cluster
-	kubectl apply -f dist/install.yaml
+kind-install-cpu-dra: kind-uninstall-cpu-dra build-image kind-load-image ## install on cluster mimicking production settings
+	helm install dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
+		--set image.repository=${REGISTRY}/${STAGING_REPO_NAME}/${IMAGE_NAME} \
+		--set image.tag=${TAG} \
+		--set image.pullPolicy=IfNotPresent
 
 delete-kind-cluster: ## delete kind cluster
 	kind delete cluster --name ${CLUSTER_NAME}
