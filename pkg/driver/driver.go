@@ -26,13 +26,13 @@ import (
 
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/go-logr/logr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
-	"k8s.io/klog/v2"
 	"k8s.io/utils/cpuset"
 )
 
@@ -72,8 +72,8 @@ type cdiManager interface {
 // CPUInfoProvider is an interface for getting CPU information.
 // TODO(pravk03): This interface can be simplified. We can export only GetCPUTopology() and remove GetCPUInfos().
 type CPUInfoProvider interface {
-	GetCPUInfos() ([]cpuinfo.CPUInfo, error)
-	GetCPUTopology() (*cpuinfo.CPUTopology, error)
+	GetCPUInfos(logger logr.Logger) ([]cpuinfo.CPUInfo, error)
+	GetCPUTopology(logger logr.Logger) (*cpuinfo.CPUTopology, error)
 }
 
 // CPUDriver is the structure that holds all the driver runtime information.
@@ -120,8 +120,9 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		cpuDeviceGroupBy:       config.CPUDeviceGroupBy,
 		claimTracker:           store.NewClaimTracker(),
 	}
+	logger := ctxlog.FromContext(ctx)
 	cpuInfoProvider := cpuinfo.NewSystemCPUInfo()
-	topo, err := cpuInfoProvider.GetCPUTopology()
+	topo, err := cpuInfoProvider.GetCPUTopology(logger)
 	if err != nil {
 		return nil, asyncErr, fmt.Errorf("failed to get CPU topology: %w", err)
 	}
@@ -158,9 +159,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		return nil, asyncErr, err
 	}
 
-	logger := klog.FromContext(ctx)
-	logger = logger.WithValues("driver", config.DriverName)
-	ctx = klog.NewContext(ctx, logger)
+	ctx, logger = ctxlog.WithValues(ctx, "driver", config.DriverName)
 
 	cdiMgr, err := NewCdiManager(logger, config.DriverName)
 	if err != nil {
@@ -205,7 +204,7 @@ func (cp *CPUDriver) Stop() {
 
 // Shutdown is called when the runtime is shutting down.
 func (cp *CPUDriver) Shutdown(ctx context.Context) {
-	logger := klog.FromContext(ctx)
+	logger := ctxlog.FromContext(ctx)
 	logger.Info("runtime shutting down")
 }
 
@@ -214,7 +213,7 @@ type nriRunner interface {
 }
 
 func runNRIPluginWithRetry(ctx context.Context, plugin nriRunner, maxAttempts int) error {
-	logger := klog.FromContext(ctx)
+	logger := ctxlog.FromContext(ctx)
 	for i := 0; i < maxAttempts; i++ {
 		err := plugin.Run(ctx)
 		if ctx.Err() != nil {

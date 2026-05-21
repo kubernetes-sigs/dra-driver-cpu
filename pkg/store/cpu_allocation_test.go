@@ -28,17 +28,18 @@ import (
 	"k8s.io/utils/cpuset"
 )
 
-func newTestCPUAllocation(allCPUs, reserved cpuset.CPUSet) *CPUAllocation {
+func newTestCPUAllocation(logger logr.Logger, allCPUs, reserved cpuset.CPUSet) *CPUAllocation {
 	var infos []cpuinfo.CPUInfo
 	for _, cpuID := range allCPUs.UnsortedList() {
 		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
 	}
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
-	topo, _ := mockProvider.GetCPUTopology()
+	topo, _ := mockProvider.GetCPUTopology(logger)
 	return NewCPUAllocation(topo, reserved)
 }
 
 func TestNewCPUAllocation(t *testing.T) {
+	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	testCases := []struct {
 		name               string
@@ -64,7 +65,7 @@ func TestNewCPUAllocation(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			store := newTestCPUAllocation(tc.allCPUs, tc.reservedCPUs)
+			store := newTestCPUAllocation(logger, tc.allCPUs, tc.reservedCPUs)
 			require.NotNil(t, store)
 			require.True(t, store.availableCPUs.Equals(tc.expectedAvailable))
 			require.True(t, store.GetSharedCPUs().Equals(tc.expectedSharedCPUs))
@@ -75,7 +76,7 @@ func TestNewCPUAllocation(t *testing.T) {
 func TestCPUAllocationResourceClaimAllocation(t *testing.T) {
 	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
-	store := newTestCPUAllocation(allCPUs, cpuset.New())
+	store := newTestCPUAllocation(logger, allCPUs, cpuset.New())
 	claimUID := types.UID("claim-uid-1")
 	cpus := cpuset.New(0, 1)
 
@@ -98,7 +99,7 @@ func TestCPUAllocationGetSharedCPUs(t *testing.T) {
 	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	reserved := cpuset.New(0)
-	store := newTestCPUAllocation(allCPUs, reserved)
+	store := newTestCPUAllocation(logger, allCPUs, reserved)
 	available := allCPUs.Difference(reserved)
 
 	// No allocations
@@ -119,6 +120,7 @@ func TestCPUAllocationGetSharedCPUs(t *testing.T) {
 }
 
 func TestAddResourceClaimAllocationRepeatedCalls(t *testing.T) {
+	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	testCases := []struct {
 		name           string
@@ -151,8 +153,7 @@ func TestAddResourceClaimAllocationRepeatedCalls(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			logger := testr.New(t)
-			store := newTestCPUAllocation(allCPUs, cpuset.New())
+			store := newTestCPUAllocation(logger, allCPUs, cpuset.New())
 			claimUID := types.UID("claim-uid-1")
 
 			store.AddResourceClaimAllocation(logger, claimUID, tc.firstCPUs)
@@ -169,7 +170,7 @@ func TestAddResourceClaimAllocationRepeatedCalls(t *testing.T) {
 func TestCPUAllocationStoreCacheConsistency(t *testing.T) {
 	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
-	store := newTestCPUAllocation(allCPUs, cpuset.New())
+	store := newTestCPUAllocation(logger, allCPUs, cpuset.New())
 
 	store.AddResourceClaimAllocation(logger, "claim-1", cpuset.New(0, 1))
 	store.AddResourceClaimAllocation(logger, "claim-2", cpuset.New(2, 3))
@@ -215,7 +216,7 @@ func BenchmarkGetSharedCPUs(b *testing.B) {
 			infos = append(infos, cpuinfo.CPUInfo{CpuID: i, CoreID: i, SocketID: 0, NUMANodeID: 0})
 		}
 		mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
-		topo, _ := mockProvider.GetCPUTopology()
+		topo, _ := mockProvider.GetCPUTopology(logr.Discard())
 
 		allocations := make(map[types.UID]cpuset.CPUSet)
 		for i := 0; i < tc.numAllocations && i*2+1 < tc.numCPUs; i++ {

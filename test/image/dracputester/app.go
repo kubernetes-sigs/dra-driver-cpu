@@ -19,11 +19,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
+	"github.com/go-logr/stdr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"golang.org/x/sys/unix"
@@ -82,27 +85,28 @@ func affinityScanBoundFromTopology(topo *cpuinfo.CPUTopology) int {
 	return list[len(list)-1] + 1
 }
 
-func getAffinity() (cpuset.CPUSet, error) {
+func getAffinity(logger logr.Logger) (cpuset.CPUSet, error) {
 	var unixCS unix.CPUSet
 	err := unix.SchedGetaffinity(os.Getpid(), &unixCS)
 	if err != nil {
 		return cpuset.New(), err
 	}
 	maxCPUID := 0
-	if topo, err := cpuinfo.NewSystemCPUInfo().GetCPUTopology(); err == nil {
+	if topo, err := cpuinfo.NewSystemCPUInfo().GetCPUTopology(logger); err == nil {
 		maxCPUID = affinityScanBoundFromTopology(topo)
 	}
 	return affinityFromMask(&unixCS, maxCPUID), nil
 }
 
 func main() {
+	logger := stdr.New(log.Default())
 	for {
 		cpus, err := cpuSet("/sys")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error determining allocated cpus: %v\n", err)
 			os.Exit(1)
 		}
-		cpuAff, err := getAffinity()
+		cpuAff, err := getAffinity(logger)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error determining CPU affinity: %v\n", err)
 			os.Exit(2)

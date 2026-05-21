@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sys/unix"
@@ -36,8 +37,6 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	nodeutil "k8s.io/component-helpers/node/util"
-	"k8s.io/klog/v2"
-	"k8s.io/klog/v2/textlogger"
 	"k8s.io/utils/cpuset"
 )
 
@@ -113,22 +112,10 @@ func init() {
 }
 
 func main() {
-	config := textlogger.NewConfig()
-	config.AddFlags(flag.CommandLine)
+	ctxlog.AddFlags(flag.CommandLine)
 	flag.Parse()
 
-	logger := textlogger.NewLogger(config)
-	// some key deps still call klog directly, so we need this integration.
-	// TODO: check every time we bump kube libs to a new major version,
-	// as the contextual logging transition to kube libs is still ongoing
-	// k8s.io/client-go
-	// k8s.io/apimachinery
-	// k8s.io/dynamic-resource-allocation
-	// k8s.io/kube-openapi
-	// k8s.io/utils
-	// k8s.io/component-helpers
-	// k8s.io/kubelet
-	klog.SetLoggerWithOptions(logger, klog.ContextualLogger(true))
+	logger := ctxlog.Setup()
 
 	if err := run(logger); err != nil {
 		logger.Error(err, "failed to run")
@@ -201,7 +188,7 @@ func run(logger logr.Logger) error {
 	}
 
 	// trap Ctrl+C and call cancel on the context
-	ctx := klog.NewContext(context.Background(), logger)
+	ctx := ctxlog.NewContext(context.Background(), logger)
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Enable signal handler

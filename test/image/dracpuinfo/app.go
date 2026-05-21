@@ -19,15 +19,18 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 
+	"github.com/go-logr/stdr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 )
 
 func main() {
+	logger := stdr.New(log.Default())
 	cpuInfoProvider := cpuinfo.NewSystemCPUInfo()
-	cpus, err := cpuInfoProvider.GetCPUInfos()
+	cpus, err := cpuInfoProvider.GetCPUInfos(logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error getting cpu info: %v\n", err)
 		os.Exit(1)

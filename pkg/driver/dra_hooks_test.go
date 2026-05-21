@@ -169,6 +169,7 @@ var (
 )
 
 func TestPublishResources(t *testing.T) {
+	logger := testr.New(t)
 	testCases := []struct {
 		name                       string
 		cpuInfos                   []cpuinfo.CPUInfo
@@ -297,7 +298,7 @@ func TestPublishResources(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockPlugin := &mockKubeletPlugin{publishError: tc.publishError}
 			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: tc.cpuInfos, Err: tc.cpuInfoErr}
-			topo, _ := mockProvider.GetCPUTopology()
+			topo, _ := mockProvider.GetCPUTopology(logger)
 			cp := &CPUDriver{
 				nodeName:          testNodeName,
 				draPlugin:         mockPlugin,
@@ -411,8 +412,9 @@ func TestPublishResources(t *testing.T) {
 }
 
 func TestPrepareResourceClaims(t *testing.T) {
+	logger := testr.New(t)
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
-	topo, _ := mockProvider.GetCPUTopology()
+	topo, _ := mockProvider.GetCPUTopology(logger)
 	baseCPUDriver := func() *CPUDriver {
 		return &CPUDriver{
 			driverName: testDriverName,
@@ -576,7 +578,7 @@ func TestPrepareResourceClaims(t *testing.T) {
 			driver: func() *CPUDriver {
 				d := baseCPUDriver()
 				// Pre-allocate cpudev0 to an existing claim
-				d.cpuAllocationStore.AddResourceClaimAllocation(testr.New(t), "claim0", cpuset.New(0))
+				d.cpuAllocationStore.AddResourceClaimAllocation(logger, "claim0", cpuset.New(0))
 				return d
 			}(),
 			claims: []*resourceapi.ResourceClaim{
@@ -641,13 +643,13 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 		driver.deviceNameToSocketID = make(map[string]int)
 		driver.deviceNameToNUMANodeID = make(map[string]int)
 		mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
-		driver.cpuTopology, _ = mockProvider.GetCPUTopology()
+		driver.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
 		driver.cpuAllocationStore = store.NewCPUAllocation(driver.cpuTopology, reservedCPUs)
 		for claimUID, cpus := range initialAllocations {
 			driver.cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, cpus)
 		}
 
-		topo, err := mockProvider.GetCPUTopology()
+		topo, err := mockProvider.GetCPUTopology(logger)
 		require.NoError(t, err) // We don't expect errors in test setup
 
 		switch driver.cpuDeviceGroupBy {
@@ -938,6 +940,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 }
 
 func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
+	logger := testr.New(t)
 	claimUID := types.UID("claim-1")
 	cdiDeviceName := getCDIDeviceName(claimUID)
 
@@ -967,7 +970,7 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
-			topo, _ := mockProvider.GetCPUTopology()
+			topo, _ := mockProvider.GetCPUTopology(logger)
 			driver := &CPUDriver{
 				driverName: testDriverName,
 				deviceNameToCPUID: map[string]int{
@@ -1019,6 +1022,7 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 }
 
 func TestUnprepareResourceClaims(t *testing.T) {
+	logger := testr.New(t)
 	claimUID := types.UID("test-claim-uid")
 
 	testCases := []struct {
@@ -1052,7 +1056,7 @@ func TestUnprepareResourceClaims(t *testing.T) {
 			mockCdiMgr := newMockCdiMgr()
 			mockCdiMgr.removeError = tc.cdiRemoveError
 			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
-			topo, _ := mockProvider.GetCPUTopology()
+			topo, _ := mockProvider.GetCPUTopology(logger)
 			cp := &CPUDriver{
 				cdiMgr:             mockCdiMgr,
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
