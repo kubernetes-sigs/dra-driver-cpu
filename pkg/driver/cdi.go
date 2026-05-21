@@ -17,9 +17,6 @@ package driver
 
 import (
 	"fmt"
-	"path/filepath"
-	"sort"
-	"sync"
 
 	"github.com/go-logr/logr"
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
@@ -31,152 +28,76 @@ const (
 	cdiVendor       = "dra.k8s.io"
 	cdiClass        = "cpu"
 	cdiEnvVarPrefix = "DRA_CPUSET"
-)
-
-var (
-	cdiSpecDir = "/var/run/cdi"
+	cdiSpecDir      = "/var/run/cdi"
 )
 
 // CdiManager handles the lifecycle of CDI allocations for the driver.
 type CdiManager struct {
-	mu            sync.Mutex
-	cache         *cdiapi.Cache
-	cdiKind       string
-	driverName    string
-	specName      string
-	activeDevices map[string]cdiSpec.Device
+	cache      *cdiapi.Cache
+	cdiKind    string
+	driverName string
 }
 
-// NewCdiManager creates a manager for the driver's CDI spec file.
-func NewCdiManager(logger logr.Logger, driverName string) (*CdiManager, error) {
+// NewCdiManager creates a manager for the driver's CDI allocations.
+func NewCdiManager(logger logr.Logger, driverName string, cdiDir string) (*CdiManager, error) {
 	cache, err := cdiapi.NewCache(
-		cdiapi.WithSpecDirs(cdiSpecDir),
-		cdiapi.WithAutoRefresh(false), // Disabled because we manually push our internal state to disk via syncToCache().
+		cdiapi.WithSpecDirs(cdiDir),
+		// Disabled because we manage state entirely via the filesystem
+		// and write individual stateless files per device.
+		cdiapi.WithAutoRefresh(false),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CDI cache: %w", err)
 	}
 
 	c := &CdiManager{
-		cache:         cache,
-		cdiKind:       fmt.Sprintf("%s/%s", cdiVendor, cdiClass),
-		driverName:    driverName,
-		specName:      fmt.Sprintf("%s.json", driverName),
-		activeDevices: make(map[string]cdiSpec.Device),
+		cache:      cache,
+		cdiKind:    fmt.Sprintf("%s/%s", cdiVendor, cdiClass),
+		driverName: driverName,
 	}
 
-	// Recovery logic in case of restart.
-	// We log errors but always attempt recovery because another driver's
-	// malformed CDI file should not prevent us from recovering our own valid state.
-	if err := c.cache.Refresh(); err != nil {
-		logger.Info("Encountered errors refreshing CDI cache (attempting recovery anyway)", "error", err)
-	}
-
-	// Always check the cache, even if Refresh() returned errors.
-	specs := c.cache.GetVendorSpecs(cdiVendor)
-
-	for _, spec := range specs {
-		if spec.GetClass() == cdiClass && filepath.Base(spec.GetPath()) == c.specName {
-			for _, device := range spec.Devices {
-				c.activeDevices[device.Name] = device
-			}
-
-			logger.Info("Successfully recovered state", "devices", len(c.activeDevices))
-			break
-		}
-	}
-
-	logger.Info("Initialized CDI manager with cache", "specName", c.specName)
+	logger.Info("Initialized CDI manager", "driverName", driverName, "cdiDir", cdiDir)
 	return c, nil
 }
 
-// AddDevice adds a device to the internal state and syncs to the CDI spec file.
+// getSpecName generates a unique, sanitized filename for a specific device allocation.
+func (c *CdiManager) getSpecName(deviceName string) string {
+	return cdiapi.GenerateTransientSpecName(cdiVendor, cdiClass, deviceName) + ".json"
+}
+
+// AddDevice writes a dedicated CDI spec file for a single device allocation.
 func (c *CdiManager) AddDevice(logger logr.Logger, deviceName string, envVar string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	specName := c.getSpecName(deviceName)
 
-	// Save previous state in case this is an overwrite (rare, but good for safety)
-	oldDevice, existed := c.activeDevices[deviceName]
-
-	// Update internal state
-	c.activeDevices[deviceName] = cdiSpec.Device{
-		Name: deviceName,
-		ContainerEdits: cdiSpec.ContainerEdits{
-			Env: []string{envVar},
-		},
-	}
-
-	// Push the updated state to the cache
-	if err := c.syncToCache(); err != nil {
-		// Rollback memory state on failure to stay consistent with disk
-		if existed {
-			c.activeDevices[deviceName] = oldDevice
-		} else {
-			delete(c.activeDevices, deviceName)
-		}
-		return fmt.Errorf("failed to sync cache during addition (state rolled back): %w", err)
-	}
-
-	logger.V(4).Info("Added CDI device", "deviceName", deviceName, "env", envVar)
-	return nil
-}
-
-// RemoveDevice removes a device from the internal state and syncs to the CDI spec file.
-func (c *CdiManager) RemoveDevice(logger logr.Logger, deviceName string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	device, exists := c.activeDevices[deviceName]
-	if !exists {
-		// Device not found, nothing to do
-		return nil
-	}
-
-	// Remove from internal state temporarily
-	delete(c.activeDevices, deviceName)
-
-	// Push the updated state to the cache
-	if err := c.syncToCache(); err != nil {
-		// Rollback memory state on failure so subsequent Kubelet retries
-		// will actually re-attempt the disk write
-		c.activeDevices[deviceName] = device
-		return fmt.Errorf("failed to sync cache during removal (state rolled back): %w", err)
-	}
-
-	logger.V(4).Info("Removed CDI device", "deviceName", deviceName)
-	return nil
-}
-
-// syncToCache generates a fresh CDI spec from the activeDevices map and writes it.
-func (c *CdiManager) syncToCache() error {
-	// If no devices are active, clean up the file entirely
-	if len(c.activeDevices) == 0 {
-		if err := c.cache.RemoveSpec(c.specName); err != nil {
-			return fmt.Errorf("failed to remove empty CDI spec: %w", err)
-		}
-		return nil
-	}
-
-	// Build a brand new spec from scratch
 	spec := &cdiSpec.Spec{
 		Version: cdiSpecVersion,
 		Kind:    c.cdiKind,
-		Devices: make([]cdiSpec.Device, 0, len(c.activeDevices)),
+		Devices: []cdiSpec.Device{
+			{
+				Name: deviceName,
+				ContainerEdits: cdiSpec.ContainerEdits{
+					Env: []string{envVar},
+				},
+			},
+		},
 	}
 
-	// Populate the new spec's devices
-	for _, device := range c.activeDevices {
-		spec.Devices = append(spec.Devices, device)
+	if err := c.cache.WriteSpec(spec, specName); err != nil {
+		return fmt.Errorf("failed to write CDI spec %q: %w", specName, err)
 	}
 
-	// Sort devices by name to ensure deterministic order
-	sort.Slice(spec.Devices, func(i, j int) bool {
-		return spec.Devices[i].Name < spec.Devices[j].Name
-	})
+	logger.V(4).Info("Added CDI device", "deviceName", deviceName, "specName", specName, "env", envVar)
+	return nil
+}
 
-	if err := c.cache.WriteSpec(spec, c.specName); err != nil {
-		return fmt.Errorf("failed to write CDI spec: %w", err)
+// RemoveDevice deletes the dedicated CDI spec file for a single device allocation.
+func (c *CdiManager) RemoveDevice(logger logr.Logger, deviceName string) error {
+	specName := c.getSpecName(deviceName)
+
+	if err := c.cache.RemoveSpec(specName); err != nil {
+		return fmt.Errorf("failed to remove CDI spec %q: %w", specName, err)
 	}
 
+	logger.V(4).Info("Removed CDI device", "deviceName", deviceName, "specName", specName)
 	return nil
 }

@@ -162,7 +162,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		return nil, asyncErr, err
 	}
 
-	cdiMgr, err := NewCdiManager(logger, config.DriverName)
+	cdiMgr, err := NewCdiManager(logger, config.DriverName, cdiSpecDir)
 	if err != nil {
 		return nil, asyncErr, fmt.Errorf("failed to create CDI manager: %w", err)
 	}
