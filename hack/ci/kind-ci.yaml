@@ -44,3 +44,11 @@ nodes:
     nodeRegistration:
       kubeletExtraArgs:
         v: "5"
+- role: worker
+  image: kindest/node:v1.36.0
+  kubeadmConfigPatches:
+  - |
+    kind: JoinConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        v: "5"

@@ -11,4 +11,8 @@ for try in $(seq 1 120); do
 	sleep 1s
 done
 
+echo "TIMEOUT: no resourceslice found after ${try} tries"
+kubectl get pods -A -l "app=dracpu" -o wide
+kubectl logs -n kube-system -l app=dracpu
+kubectl describe daemonset -n kube-system -l app=dracpu || true
 exit 1
