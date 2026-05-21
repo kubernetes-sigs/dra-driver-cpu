@@ -101,7 +101,7 @@ type Config struct {
 	DriverName       string
 	NodeName         string
 	ReservedCPUs     cpuset.CPUSet
-	CpuDeviceMode    string
+	CPUDeviceMode    string
 	CPUDeviceGroupBy string
 }
 
@@ -116,7 +116,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		deviceNameToSocketID:   make(map[string]int),
 		deviceNameToNUMANodeID: make(map[string]int),
 		reservedCPUs:           config.ReservedCPUs,
-		cpuDeviceMode:          config.CpuDeviceMode,
+		cpuDeviceMode:          config.CPUDeviceMode,
 		cpuDeviceGroupBy:       config.CPUDeviceGroupBy,
 		claimTracker:           store.NewClaimTracker(),
 	}
