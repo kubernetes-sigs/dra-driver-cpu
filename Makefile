@@ -30,6 +30,7 @@ KIND_K8S_VERSION ?= v1.36.0
 # paths
 YQ = $(OUT_DIR)/yq
 GOLANGCI_LINT = $(OUT_DIR)/golangci-lint
+HELM = $(OUT_DIR)/helm
 
 # disable CGO by default for static binaries
 CGO_ENABLED=0
@@ -147,10 +148,10 @@ kind-load-image: build-image  ## load the current container image into kind
 	kind load docker-image ${IMAGE} ${IMAGE_LATEST} --name ${CLUSTER_NAME}
 
 kind-uninstall-cpu-dra: ## remove cpu dra from kind cluster
-	helm uninstall dra-driver-cpu --namespace kube-system || true
+	$(HELM) uninstall dra-driver-cpu --namespace kube-system || true
 
 kind-install-cpu-dra: kind-uninstall-cpu-dra build-image kind-load-image ## install on cluster mimicking production settings
-	helm install dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
+	$(HELM) install dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
 		--set image.repository=${IMAGE_REPO} \
 		--set image.tag=${TAG} \
 		--set image.pullPolicy=IfNotPresent
@@ -177,27 +178,27 @@ endif
 		> dist/install.yaml
 	@rm dist/*.part.yaml
 
-manifests: dist ensure-helm ## create the install manifest
+manifests: dist install-helm ## create the install manifest
 ifeq ($(OVERRIDE_IMAGE),true)
-	helm template dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
+	$(HELM) template dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
 		--set podLabels.build=${GIT_VERSION} \
 		--set image.repository=${IMAGE_REPO} \
 		--set image.tag=${TAG} \
 		--set image.pullPolicy=IfNotPresent \
 		> dist/install.yaml
 else
-	helm template dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
+	$(HELM) template dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
 		> dist/install.yaml
 endif
 
-ci-kind-setup: ensure-kind-node-image ensure-helm build-image build-test-image ## setup a CI cluster from scratch using reserved CPUs
+ci-kind-setup: ensure-kind-node-image install-helm build-image build-test-image ## setup a CI cluster from scratch using reserved CPUs
 ifneq ($(DRACPU_E2E_VERBOSE),)
 	@echo "creating a kind cluster for mode=$(DRACPU_E2E_CPU_DEVICE_MODE)"
 endif
 	kind create cluster --name ${CLUSTER_NAME} --image=kindest/node:$(KIND_K8S_VERSION) --config hack/ci/kind-ci.yaml
 	kubectl label node ${CLUSTER_NAME}-worker node-role.kubernetes.io/worker=''
 	kind load docker-image --name ${CLUSTER_NAME} ${IMAGE_CI} ${IMAGE_TEST}
-	helm install dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
+	$(HELM) install dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
 		--set image.repository=${IMAGE_REPO_CI} \
 		--set image.tag=${TAG} \
 		--set image.pullPolicy=IfNotPresent \
@@ -241,7 +242,7 @@ install-golangci-lint: $(OUT_DIR) ## make sure the golangci-lint tool is availab
 	@hack/fetch-golangci-lint.sh $(OUT_DIR) $(GOLANGCI_LINT_VERSION)
 
 helm-lint: ## lint helm chart with strict mode
-	helm lint --strict ${HELM_CHART}
+	$(HELM) lint --strict ${HELM_CHART}
 
 .PHONY: helm-docs
 helm-docs: ## regenerate helm chart README from values.yaml annotations and README.md.gotmpl
@@ -267,20 +268,20 @@ helm-schema-check: helm-schema ## verify values.schema.json is up to date; fails
 CHART_REGISTRY?=$(REGISTRY)/$(IMAGE_NAME)/charts
 HELM_VERSION_SHA?=a2369ca71c0ef633bf6e4fccd66d634eb379b371 # v3.20.1
 
-.PHONY: ensure-helm
-ensure-helm:
-	@if ! helm version >/dev/null 2>&1; then \
+.PHONY: install-helm
+install-helm: $(OUT_DIR)
+	@if ! $(HELM) version >/dev/null 2>&1; then \
 		echo "Helm not found, installing helm@$(HELM_VERSION_SHA) ..."; \
-		go install helm.sh/helm/v3/cmd/helm@$(HELM_VERSION_SHA); \
+		GOBIN=$(OUT_DIR) go install helm.sh/helm/v3/cmd/helm@$(HELM_VERSION_SHA); \
 	fi
 
 .PHONY: helm-package
-helm-package: ensure-helm ## package helm chart for release
-	helm package ${HELM_CHART} \
+helm-package: install-helm ## package helm chart for release
+	$(HELM) package ${HELM_CHART} \
 		--version "$(CHART_VERSION)" \
 		--app-version "$(TAG)" \
 		--destination $(OUT_DIR)
 
 .PHONY: helm-push
 helm-push: helm-package ## push helm chart to OCI registry
-	helm push $(OUT_DIR)/dra-driver-cpu-$(CHART_VERSION).tgz oci://$(CHART_REGISTRY)
+	$(HELM) push $(OUT_DIR)/dra-driver-cpu-$(CHART_VERSION).tgz oci://$(CHART_REGISTRY)
