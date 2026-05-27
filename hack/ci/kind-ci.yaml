@@ -13,10 +13,6 @@
 # limitations under the License.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
-featureGates:
-  DynamicResourceAllocation: true
-  DRAResourceClaimDeviceStatus: true
-  DRAConsumableCapacity: true
 nodes:
 - role: control-plane
   image: kindest/node:v1.36.0
@@ -32,6 +28,14 @@ nodes:
           v: "5"
   - |
     kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        v: "5"
+- role: worker
+  image: kindest/node:v1.36.0
+  kubeadmConfigPatches:
+  - |
+    kind: JoinConfiguration
     nodeRegistration:
       kubeletExtraArgs:
         v: "5"
