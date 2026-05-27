@@ -30,7 +30,7 @@ KIND_K8S_VERSION ?= v1.36.0
 # paths
 YQ = $(OUT_DIR)/yq
 GOLANGCI_LINT = $(OUT_DIR)/golangci-lint
-HELM = $(OUT_DIR)/helm
+HELM := $(or $(shell command -v helm 2>/dev/null),$(OUT_DIR)/helm)
 
 # disable CGO by default for static binaries
 CGO_ENABLED=0
@@ -241,7 +241,7 @@ install-yq: $(OUT_DIR)  ## make sure the yq tool is available locally
 install-golangci-lint: $(OUT_DIR) ## make sure the golangci-lint tool is available locally
 	@hack/fetch-golangci-lint.sh $(OUT_DIR) $(GOLANGCI_LINT_VERSION)
 
-helm-lint: ## lint helm chart with strict mode
+helm-lint: install-helm ## lint helm chart with strict mode
 	$(HELM) lint --strict ${HELM_CHART}
 
 .PHONY: helm-docs
