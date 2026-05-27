@@ -82,9 +82,9 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 			cp.deviceNameToSocketID[deviceName] = socketID
 
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				"dra.cpu/socketID":   {IntValue: ptr.To(int64(socketID))},
-				"dra.cpu/numCPUs":    {IntValue: ptr.To(availableCPUsInSocket)},
-				"dra.cpu/smtEnabled": {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
+				AttributeSocketID:   {IntValue: ptr.To(int64(socketID))},
+				AttributeNumCPUs:    {IntValue: ptr.To(availableCPUsInSocket)},
+				AttributeSMTEnabled: {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
 			}
 
 			devices = append(devices, resourceapi.Device{
@@ -117,10 +117,10 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 			cp.deviceNameToNUMANodeID[deviceName] = numaID
 
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				"dra.cpu/numaNodeID": {IntValue: ptr.To(int64(numaID))},
-				"dra.cpu/socketID":   {IntValue: ptr.To(socketID)},
-				"dra.cpu/smtEnabled": {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
-				"dra.cpu/numCPUs":    {IntValue: ptr.To(availableCPUsInNUMANode)},
+				AttributeNUMANodeID: {IntValue: ptr.To(int64(numaID))},
+				AttributeSocketID:   {IntValue: ptr.To(socketID)},
+				AttributeSMTEnabled: {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
+				AttributeNumCPUs:    {IntValue: ptr.To(availableCPUsInNUMANode)},
 			}
 			device.SetCompatibilityAttributes(deviceAttrs, int64(numaID))
 
@@ -192,13 +192,13 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 	for _, group := range coreGroups {
 		for _, cpu := range group {
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				"dra.cpu/numaNodeID": {IntValue: ptr.To(int64(cpu.NUMANodeID))},
-				"dra.cpu/socketID":   {IntValue: ptr.To(int64(cpu.SocketID))},
-				"dra.cpu/smtEnabled": {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
-				"dra.cpu/cacheL3ID":  {IntValue: ptr.To(int64(cpu.UncoreCacheID))},
-				"dra.cpu/coreType":   {StringValue: ptr.To(cpu.CoreType.String())},
-				"dra.cpu/coreID":     {IntValue: ptr.To(int64(cpu.CoreID))},
-				"dra.cpu/cpuID":      {IntValue: ptr.To(int64(cpu.CpuID))},
+				AttributeNUMANodeID: {IntValue: ptr.To(int64(cpu.NUMANodeID))},
+				AttributeSocketID:   {IntValue: ptr.To(int64(cpu.SocketID))},
+				AttributeSMTEnabled: {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
+				AttributeCacheL3ID:  {IntValue: ptr.To(int64(cpu.UncoreCacheID))},
+				AttributeCoreType:   {StringValue: ptr.To(cpu.CoreType.String())},
+				AttributeCoreID:     {IntValue: ptr.To(int64(cpu.CoreID))},
+				AttributeCPUID:      {IntValue: ptr.To(int64(cpu.CpuID))},
 			}
 			device.SetCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID))
 

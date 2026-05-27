@@ -368,10 +368,10 @@ func TestPublishResources(t *testing.T) {
 					coreType := cpuInfo.CoreType.String()
 					socketID := int64(cpuInfo.SocketID)
 
-					require.Equal(t, numaNode, *device.Attributes["dra.cpu/numaNodeID"].IntValue)
-					require.Equal(t, CacheL3ID, *device.Attributes["dra.cpu/cacheL3ID"].IntValue)
-					require.Equal(t, coreType, *device.Attributes["dra.cpu/coreType"].StringValue)
-					require.Equal(t, socketID, *device.Attributes["dra.cpu/socketID"].IntValue)
+					require.Equal(t, numaNode, *device.Attributes[AttributeNUMANodeID].IntValue)
+					require.Equal(t, CacheL3ID, *device.Attributes[AttributeCacheL3ID].IntValue)
+					require.Equal(t, coreType, *device.Attributes[AttributeCoreType].StringValue)
+					require.Equal(t, socketID, *device.Attributes[AttributeSocketID].IntValue)
 					devicesPerNumaInSlices[cpuInfo.NUMANodeID]++
 				}
 			}
