@@ -203,7 +203,7 @@ func run(logger logr.Logger) error {
 		DriverName:       driverName,
 		NodeName:         nodeName,
 		ReservedCPUs:     reservedCPUSet,
-		CpuDeviceMode:    cpuDeviceMode,
+		CPUDeviceMode:    cpuDeviceMode,
 		CPUDeviceGroupBy: groupBy,
 	}
 	dracpu, asyncErr, err := driver.Start(ctx, clientset, driverConfig)
