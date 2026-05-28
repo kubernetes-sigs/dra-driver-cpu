@@ -231,7 +231,7 @@ func TestPublishResources(t *testing.T) {
 			cpuInfos:                   mockCPUInfos_DualSocket_120CPUsPerSocket_HT,
 			reservedCPUs:               cpuset.New(),
 			expectPublish:              true,
-			expectedNumSlices:          2, // We should create 2 slices as number of CPUs on the machine exceeds 128.
+			expectedNumSlices:          4, // 240 CPUs / 64 per slice = 4 slices
 			expectedDevices:            len(mockCPUInfos_DualSocket_120CPUsPerSocket_HT),
 			expectedDevicesPerNUMANode: map[int]int{0: 120, 1: 120},
 		},
