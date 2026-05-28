@@ -1,0 +1,78 @@
+name: helm e2e
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'deployment/helm/**'
+      - '.github/workflows/helm-e2e.yaml'
+
+env:
+  TAG: ci-${{ github.sha }}
+  # Matches REGISTRY_CI/IMAGE_NAME in the Makefile
+  IMAGE: dev.kind.local/ci/dra-driver-cpu
+
+jobs:
+  helm-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.25'
+
+      - name: Build the image
+        run: make build-image
+
+      # Try to parse KIND_K8S_VERSION from the Makefile and use it to build the node image and create the cluster.
+      - name: Create kind cluster
+        run: |
+          KIND_K8S_VERSION=$(grep -E '^KIND_K8S_VERSION \?=' Makefile | awk '{print $3}')
+          KIND_K8S_VERSION=${KIND_K8S_VERSION:-v1.36.0}
+          kind delete cluster --name dra-driver-cpu || true
+          kind build node-image --image=kindest/node:${KIND_K8S_VERSION} ${KIND_K8S_VERSION}
+          kind create cluster --name dra-driver-cpu --image=kindest/node:${KIND_K8S_VERSION} --config hack/ci/kind-ci.yaml
+          kind get kubeconfig --name dra-driver-cpu > /tmp/kubeconfig-dra-driver-cpu
+          kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
+            label node dra-driver-cpu-worker node-role.kubernetes.io/worker=''
+
+      - name: Load driver image into kind
+        run: |
+          kind load docker-image --name dra-driver-cpu \
+            "${IMAGE}:${TAG}"
+
+      - name: Install driver via Helm
+        run: |
+          helm install dra-driver-cpu deployment/helm/dra-driver-cpu \
+            --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
+            --namespace kube-system \
+            --set fullnameOverride=dracpu \
+            --set podLabels.app=dracpu \
+            --set image.repository="${IMAGE}" \
+            --set image.tag="${TAG}" \
+            --set image.pullPolicy=Never
+
+      - name: Wait for resourceSlices
+        run: KUBECONFIG=/tmp/kubeconfig-dra-driver-cpu hack/ci/wait-resourcelices.sh
+
+      - name: Check daemonSet pods are Running & Ready
+        run: |
+          kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
+            rollout status daemonset/dracpu -n kube-system --timeout=120s
+
+      - name: Final check
+        if: failure()
+        continue-on-error: true
+        run: |
+          kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu get pods -A -o wide || true
+          kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu describe daemonset dracpu -n kube-system || true
+          kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu logs -n kube-system -l app=dracpu --tail=100 || true
+          kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu get resourceslice -o yaml || true
+
+      - name: Delete kind cluster
+        if: always()
+        run: kind delete cluster --name dra-driver-cpu

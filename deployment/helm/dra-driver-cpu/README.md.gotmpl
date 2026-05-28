@@ -1,0 +1,34 @@
+# {{ .Name }} Helm Chart
+
+{{ template "chart.description" . }}
+
+## Installation
+
+From a local checkout:
+
+```bash
+helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system
+```
+
+To override values at install time:
+
+```bash
+helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system \
+  --set args.cpuDeviceMode=individual \
+  --set args.reservedCPUs="0-1"
+```
+
+Parameters can be set at install time using `--set` or a custom values file:
+
+```bash
+helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system --set args.logLevel=4
+helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system -f my-values.yaml
+```
+
+{{ template "chart.valuesSection" . }}
+
+## Uninstallation
+
+```bash
+helm uninstall dra-driver-cpu -n kube-system
+```

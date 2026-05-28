@@ -1,0 +1,142 @@
+/*
+Copyright 2025 The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package store
+
+import (
+	"sync"
+
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
+)
+
+// ContainerState holds the allocation type and all claim assignments for a container.
+type ContainerState struct {
+	// containerName is used as the primary key for efficient lookups within the PodConfig.
+	containerName string
+	// containerUID is used by the container runtime to apply updates to a container.
+	containerUID types.UID
+	// resourceClaimUIDs is a list of resource claims associated with this container.
+	resourceClaimUIDs []types.UID
+}
+
+// NewContainerState creates a new ContainerState.
+func NewContainerState(containerName string, containerUID types.UID, claimUIDs ...types.UID) *ContainerState {
+	return &ContainerState{
+		containerName:     containerName,
+		containerUID:      containerUID,
+		resourceClaimUIDs: claimUIDs,
+	}
+}
+
+// PodCPUAssignments maps a container name to its state.
+type PodCPUAssignments map[string]*ContainerState
+
+// PodConfig maps a Pod's UID directly to its container-level assignments.
+type PodConfig struct {
+	mu                  sync.RWMutex
+	configs             map[types.UID]PodCPUAssignments
+	sharedCPUContainers sets.Set[types.UID]
+}
+
+// NewPodConfig creates a new PodConfig.
+func NewPodConfig() *PodConfig {
+	return &PodConfig{
+		configs:             make(map[types.UID]PodCPUAssignments),
+		sharedCPUContainers: sets.New[types.UID](),
+	}
+}
+
+// SetContainerState records or updates a container's allocation using a state object.
+func (s *PodConfig) SetContainerState(podUID types.UID, state *ContainerState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	podAssignments, ok := s.configs[podUID]
+	if !ok {
+		podAssignments = make(PodCPUAssignments)
+		s.configs[podUID] = podAssignments
+	}
+
+	if oldState, exists := podAssignments[state.containerName]; exists {
+		s.sharedCPUContainers.Delete(oldState.containerUID)
+	}
+
+	podAssignments[state.containerName] = state
+
+	if !state.HasExclusiveCPUAllocation() {
+		s.sharedCPUContainers.Insert(state.containerUID)
+	}
+}
+
+// GetContainerState retrieves a container's state.
+func (s *PodConfig) GetContainerState(podUID types.UID, containerName string) *ContainerState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if podAssignments, ok := s.configs[podUID]; ok {
+		return podAssignments[containerName]
+	}
+	return nil
+}
+
+// RemoveContainerState removes a container's state from the store.
+func (s *PodConfig) RemoveContainerState(podUID types.UID, containerName string) []types.UID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	podAssignments, ok := s.configs[podUID]
+	if !ok {
+		return []types.UID{}
+	}
+
+	cs, ok := podAssignments[containerName]
+	if !ok {
+		return []types.UID{}
+	}
+
+	claimUIDs := cs.resourceClaimUIDs
+	if claimUIDs == nil {
+		claimUIDs = []types.UID{}
+	}
+
+	// Remove from sharedCPUContainers cache.
+	s.sharedCPUContainers.Delete(cs.containerUID)
+
+	delete(podAssignments, containerName)
+	if len(podAssignments) == 0 {
+		delete(s.configs, podUID)
+	}
+
+	return claimUIDs
+}
+
+// GetContainersWithSharedCPUs returns a list of container UIDs that have shared CPU allocation.
+func (s *PodConfig) GetContainersWithSharedCPUs() []types.UID {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sharedCPUContainers.UnsortedList()
+}
+
+func (s *PodConfig) Len() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.configs)
+}
+
+// HasExclusiveCPUAllocation returns true if the container has associated resource claims.
+func (cs *ContainerState) HasExclusiveCPUAllocation() bool {
+	return len(cs.resourceClaimUIDs) > 0
+}

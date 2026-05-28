@@ -1,0 +1,90 @@
+/*
+Copyright 2025 The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package store
+
+import (
+	"sync"
+
+	"github.com/go-logr/logr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/cpuset"
+)
+
+// CPUAllocation is the single source of truth for CPU allocations.
+type CPUAllocation struct {
+	mu                       sync.RWMutex
+	availableCPUs            cpuset.CPUSet
+	reservedCPUs             cpuset.CPUSet
+	resourceClaimAllocations map[types.UID]cpuset.CPUSet
+	allocatedCPUs            cpuset.CPUSet
+}
+
+// NewCPUAllocation creates a new CPUAllocation.
+func NewCPUAllocation(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUSet) *CPUAllocation {
+	cpuIDs := []int{}
+	for cpuID := range cpuTopology.CPUDetails {
+		cpuIDs = append(cpuIDs, cpuID)
+	}
+	allCPUsSet := cpuset.New(cpuIDs...)
+	availableCPUs := allCPUsSet.Difference(reservedCPUs)
+
+	return &CPUAllocation{
+		availableCPUs:            availableCPUs,
+		reservedCPUs:             reservedCPUs,
+		resourceClaimAllocations: make(map[types.UID]cpuset.CPUSet),
+		allocatedCPUs:            cpuset.New(),
+	}
+}
+
+// AddResourceClaimAllocation adds a new resource claim allocation to the store.
+func (s *CPUAllocation) AddResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if old, ok := s.resourceClaimAllocations[claimUID]; ok {
+		s.allocatedCPUs = s.allocatedCPUs.Difference(old)
+	}
+	s.resourceClaimAllocations[claimUID] = cpus
+	s.allocatedCPUs = s.allocatedCPUs.Union(cpus)
+	logger.Info("added allocation for resource claim", "cpus", cpus.String())
+}
+
+// RemoveResourceClaimAllocation removes a resource claim allocation from the store.
+func (s *CPUAllocation) RemoveResourceClaimAllocation(logger logr.Logger, claimUID types.UID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cpus, ok := s.resourceClaimAllocations[claimUID]; ok {
+		delete(s.resourceClaimAllocations, claimUID)
+		s.allocatedCPUs = s.allocatedCPUs.Difference(cpus)
+		logger.Info("removed allocation for resource claim")
+	}
+}
+
+// GetSharedCPUs returns the set of CPUs not reserved by any resource claim.
+func (s *CPUAllocation) GetSharedCPUs() cpuset.CPUSet {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.availableCPUs.Difference(s.allocatedCPUs)
+}
+
+// GetResourceClaimAllocation returns the cpuset for a given resource claim.
+func (s *CPUAllocation) GetResourceClaimAllocation(claimUID types.UID) (cpuset.CPUSet, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cpus, ok := s.resourceClaimAllocations[claimUID]
+	return cpus, ok
+}
