@@ -42,9 +42,10 @@ import (
 
 const (
 	// maxDevicesPerResourceSlice is the maximum number of devices that can be packed into a single
-	// ResourceSlice object. This is a hard limit defined in the Kubernetes API at
-	// https://github.com/kubernetes/kubernetes/blob/8e6d788887034b799f6c2a86991a68a080bb0576/pkg/apis/resource/types.go#L245
-	maxDevicesPerResourceSlice = 128
+	// ResourceSlice object.
+	// We use the lower "advanced features" limit because the driver
+	// may set list-type attributes (StringValues) such as PCIe roots.
+	maxDevicesPerResourceSlice = resourceapi.ResourceSliceMaxDevicesWithAdvancedFeatures
 	cpuDevicePrefix            = "cpudev"
 
 	// Grouped Mode
