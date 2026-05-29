@@ -1,0 +1,85 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package device
+
+import (
+	"io/fs"
+	"path/filepath"
+	"strings"
+
+	"github.com/go-logr/logr"
+	"k8s.io/utils/cpuset"
+)
+
+func PCIeDomainsFromFS(logger logr.Logger, sysfs SysFS) ([]PCIeDomain, error) {
+	logger.V(6).Info("begin: processing PCIe domains")
+	defer logger.V(6).Info("end: processing PCIe domains")
+
+	entries, err := fs.ReadDir(sysfs, "devices")
+	if err != nil {
+		return nil, err
+	}
+
+	roots := []PCIeDomain{}
+	for _, entry := range entries {
+		entryName := entry.Name()
+		if !IsPCIeRootName(entryName) {
+			continue
+		}
+
+		busID := strings.TrimPrefix(entryName, "pci")
+
+		busAffinityData, err := fs.ReadFile(sysfs, filepath.Join("devices", entryName, "pci_bus", busID, "cpulistaffinity"))
+		if err != nil {
+			return nil, err
+		}
+
+		busAffinity, err := cpuset.Parse(strings.TrimSpace(string(busAffinityData)))
+		if err != nil {
+			return nil, err
+		}
+
+		dom := PCIeDomain{
+			RootName:  entryName,
+			LocalCPUs: busAffinity,
+		}
+		roots = append(roots, dom)
+
+		logger.V(6).Info("found PCIe root", "domain", dom.String())
+	}
+
+	return roots, nil
+}
+
+// IsPCIeRootName matches the constructions of the pcie roots in the linux kernel.
+// The kernel format string is "pci%04x:%02x" (linux 7.0.9: drivers/pci/probe.c:1028).
+func IsPCIeRootName(name string) bool {
+	// entry: pciXXXX:YY
+	// index: 0123456789
+	//           ^^^^
+	//                ^^
+	if len(name) != 10 || name[:3] != "pci" || name[7] != ':' {
+		return false
+	}
+	for _, i := range []int{3, 4, 5, 6, 8, 9} {
+		c := name[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}

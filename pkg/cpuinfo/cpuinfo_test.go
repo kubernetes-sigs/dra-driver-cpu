@@ -24,10 +24,58 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/go-logr/logr/testr"
 	"k8s.io/utils/cpuset"
 )
+
+func TestOnlineCPUs(t *testing.T) {
+	logger := testr.New(t)
+	tests := []struct {
+		name    string
+		fs      fstest.MapFS
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "missing cpu online file",
+			fs:      fstest.MapFS{},
+			wantErr: true,
+		},
+		{
+			name: "single range",
+			fs: fstest.MapFS{
+				filepath.Join("devices", "system", "cpu", "online"): &fstest.MapFile{
+					Data: []byte("0-255"),
+				},
+			},
+			want: "0-255",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := OnlineCPUs(logger, tt.fs)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			want, err := cpuset.Parse(tt.want)
+			if err != nil {
+				t.Fatalf("parsing want cpuset %q: %v", tt.want, err)
+			}
+			if !got.Equals(want) {
+				t.Errorf("got %v, want %v", got, want)
+			}
+		})
+	}
+}
 
 func TestPopulateCpuSiblings(t *testing.T) {
 	testCases := []struct {
