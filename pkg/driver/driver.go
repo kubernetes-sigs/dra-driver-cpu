@@ -28,6 +28,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -87,6 +88,7 @@ type CPUDriver struct {
 	cpuAllocationStore     *store.CPUAllocation
 	cdiMgr                 cdiManager
 	cpuTopology            *cpuinfo.CPUTopology
+	pcieDomains            []device.PCIeDomain
 	deviceNameToCPUID      map[string]int
 	deviceNameToSocketID   map[string]int
 	deviceNameToNUMANodeID map[string]int
@@ -123,6 +125,13 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		cpuDeviceGroupBy:       config.CPUDeviceGroupBy,
 		claimTracker:           store.NewClaimTracker(),
 	}
+	sysfs := os.DirFS(device.SysfsRoot).(device.SysFS)
+
+	onlineCPUs, err := cpuinfo.OnlineCPUs(logger, sysfs)
+	if err != nil {
+		return nil, asyncErr, fmt.Errorf("failed to get online CPUs: %w", err)
+	}
+	logger.V(2).Info("detected online CPUs", "cpus", onlineCPUs.String())
 
 	cpuInfoProvider := cpuinfo.NewSystemCPUInfo()
 	topo, err := cpuInfoProvider.GetCPUTopology(logger)
@@ -133,6 +142,23 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		return nil, asyncErr, fmt.Errorf("failed to get CPU topology: topology is nil")
 	}
 	plugin.cpuTopology = topo
+
+	plugin.pcieDomains, err = device.PCIeDomainsFromFS(logger, sysfs)
+	if err != nil {
+		return nil, asyncErr, fmt.Errorf("failed to list PCIe domains: %w", err)
+	}
+	if len(plugin.pcieDomains) > 0 {
+		for idx, dom := range plugin.pcieDomains {
+			logger.V(2).Info("PCIe domains", "index", idx, "total", len(plugin.pcieDomains), "domain", dom.String())
+		}
+	} else {
+		logger.Info("PCIe domains: none detected, device attributes will not be available")
+	}
+	extraCPUs := device.FindOrphanedCPUs(plugin.pcieDomains, onlineCPUs)
+	if !extraCPUs.IsEmpty() {
+		logger.Info("PCIe domains: detected cpus not local to any detected PCIe Root", "CPUs", extraCPUs.String())
+	}
+
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.cpuTopology, config.ReservedCPUs)
 	plugin.podConfigStore = store.NewPodConfig()
 

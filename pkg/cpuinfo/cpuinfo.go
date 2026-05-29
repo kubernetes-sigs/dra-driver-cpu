@@ -19,6 +19,7 @@ package cpuinfo
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -28,6 +29,18 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/cpuset"
 )
+
+func OnlineCPUs(logger logr.Logger, sysfs fs.ReadLinkFS) (cpuset.CPUSet, error) {
+	cpuData, err := fs.ReadFile(sysfs, filepath.Join("devices", "system", "cpu", "online"))
+	if err != nil {
+		return cpuset.New(), err
+	}
+	allCPUs, err := cpuset.Parse(strings.TrimSpace(string(cpuData)))
+	if err != nil {
+		return cpuset.New(), err
+	}
+	return allCPUs, nil
+}
 
 // CoreType is an enum for the type of CPU core.
 type CoreType int
@@ -207,16 +220,10 @@ func (s *SystemCPUInfo) IsSMTEnabled() (bool, error) {
 
 // GetCPUInfos returns a slice of CPUInfo structs, one for each logical CPU.
 func (s *SystemCPUInfo) GetCPUInfos(logger logr.Logger) ([]CPUInfo, error) {
-	// Discover online CPUs from sysfs
-	onlineFilename := hostSys("devices/system/cpu/online")
-	onlineContent, err := ReadFile(onlineFilename)
+	sysfs := os.DirFS(hostSys()).(fs.ReadLinkFS)
+	onlineCPUs, err := OnlineCPUs(logger, sysfs)
 	if err != nil {
-		return []CPUInfo{}, fmt.Errorf("could not read online CPUs from %s: %w", onlineFilename, err)
-	}
-
-	onlineCPUs, err := cpuset.Parse(strings.TrimSpace(onlineContent))
-	if err != nil {
-		return []CPUInfo{}, fmt.Errorf("could not parse online CPUs '%s': %w", onlineContent, err)
+		return []CPUInfo{}, fmt.Errorf("could not get online CPUs: %w", err)
 	}
 
 	// Intel-specific hybrid detection (P-cores vs E-cores)
