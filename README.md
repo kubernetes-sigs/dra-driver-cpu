@@ -436,13 +436,29 @@ can be deployed as follows:
 make kind-cluster
 ```
 
-The recommended way to install the driver is via the provided Helm chart:
+The recommended way to install the driver is via the provided Helm chart.
+
+If you have the repository cloned locally:
 
 ```bash
 helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system
 ```
 
 See the [Helm chart README](deployment/helm/dra-driver-cpu/README.md) for the full list of configuration options.
+
+If you want to install it directly without cloning the repository (using the OCI registry):
+
+```bash
+# Deploy the latest staging chart using the mutable 0.0.0-latest tag
+VERSION=0.0.0-latest
+helm install dra-driver-cpu oci://us-central1-docker.pkg.dev/k8s-staging-images/dra-driver-cpu/charts/dra-driver-cpu --version ${VERSION} -n kube-system
+```
+
+If you need to pin to a specific commit instead (e.g. for reproducible developer testing), you can discover version tags (formatted as `YYYYMMDD-gitsha`) by running `skopeo` or checking [Google Cloud Artifact Registry Console](https://console.cloud.google.com/artifacts/docker/k8s-staging-images/us-central1/dra-driver-cpu/charts%2Fdra-driver-cpu).
+
+```bash
+skopeo list-tags docker://us-central1-docker.pkg.dev/k8s-staging-images/dra-driver-cpu/charts/dra-driver-cpu
+```
 
 #### Installation via install.yaml (deprecated)
 
@@ -452,6 +468,13 @@ See the [Helm chart README](deployment/helm/dra-driver-cpu/README.md) for the fu
 ```bash
 make manifests
 kubectl apply -f dist/install.yaml
+```
+
+If you want to install the driver directly without cloning the repository, you can fetch the compiled manifest from the GitHub Releases page. Specify the desired version tag in the `VERSION` environment variable (e.g., `v0.1.0`):
+
+```bash
+VERSION=v0.1.0
+kubectl apply -f https://github.com/kubernetes-sigs/dra-driver-cpu/releases/download/${VERSION}/install.yaml
 ```
 
 ### Migrating from install.yaml to Helm

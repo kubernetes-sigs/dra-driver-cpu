@@ -45,7 +45,14 @@ make push-image \
 	TAG="${IMG_TAG}" \
 	PLATFORMS="linux/amd64,linux/arm64"
 
+# Push the commit-specific versioned chart tag
 make helm-push \
 	CHART_REGISTRY="${IMG_PREFIX}/charts" \
 	CHART_VERSION="${CHART_VERSION}" \
+	TAG="${IMG_TAG}"
+
+# Push a mutable 0.0.0-latest versioned chart tag for easier staging deployments without cloning the repo
+make helm-push \
+	CHART_REGISTRY="${IMG_PREFIX}/charts" \
+	CHART_VERSION="0.0.0-latest" \
 	TAG="${IMG_TAG}"
