@@ -128,13 +128,15 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 		// Defer restoration of DaemonSet
 		ginkgo.DeferCleanup(func(ctx context.Context) {
 			ginkgo.By("Restoring NRI plugin DaemonSet")
-			ds, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Get(ctx, "dracpu", metav1.GetOptions{})
-			if err != nil {
-				return
-			}
-			ds.Spec = orgDaemonSet.Spec
-			_, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Update(ctx, ds, metav1.UpdateOptions{})
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Eventually(func(g gomega.Gomega) {
+				ds, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Get(ctx, "dracpu", metav1.GetOptions{})
+				if err != nil {
+					return
+				}
+				ds.Spec = orgDaemonSet.Spec
+				_, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Update(ctx, ds, metav1.UpdateOptions{})
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+			}, pollTimeoutRule, pollIntervalRule).Should(gomega.Succeed())
 		})
 
 		gomega.Eventually(func(g gomega.Gomega) {
@@ -204,12 +206,13 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 		gomega.Expect(alloc2.CPUAffinity).To(gomega.Equal(allocatableCPUs), "Pod 2 CPU mask not equal to all CPUs")
 
 		ginkgo.By("Bringing up the cpu dra driver on target node")
-		// Restore original DaemonSet
-		ds, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Get(ctx, "dracpu", metav1.GetOptions{})
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		ds.Spec = orgDaemonSet.Spec
-		_, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Update(ctx, ds, metav1.UpdateOptions{})
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		gomega.Eventually(func(g gomega.Gomega) {
+			ds, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Get(ctx, "dracpu", metav1.GetOptions{})
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			ds.Spec = orgDaemonSet.Spec
+			_, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Update(ctx, ds, metav1.UpdateOptions{})
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+		}, pollTimeoutRule, pollIntervalRule).Should(gomega.Succeed(), "failed to restore DaemonSet spec")
 
 		ginkgo.By("Waiting for NRI plugin pod to become ready on target node")
 		gomega.Eventually(func(g gomega.Gomega) {
