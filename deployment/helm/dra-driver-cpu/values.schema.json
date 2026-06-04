@@ -23,11 +23,12 @@
           "type": "boolean"
         },
         "groupBy": {
-          "description": "Grouping criteria when `cpuDeviceMode=grouped`: `numanode` or `socket`",
+          "description": "Grouping criteria when `cpuDeviceMode=grouped`: `numanode`, `socket` or `machine`",
           "type": "string",
           "enum": [
             "numanode",
-            "socket"
+            "socket",
+            "machine"
           ]
         },
         "hostnameOverride": {
