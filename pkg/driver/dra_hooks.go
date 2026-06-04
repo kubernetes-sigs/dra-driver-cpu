@@ -41,12 +41,7 @@ import (
 )
 
 const (
-	// maxDevicesPerResourceSlice is the maximum number of devices that can be packed into a single
-	// ResourceSlice object.
-	// We use the lower "advanced features" limit because the driver
-	// may set list-type attributes (StringValues) such as PCIe roots.
-	maxDevicesPerResourceSlice = resourceapi.ResourceSliceMaxDevicesWithAdvancedFeatures
-	cpuDevicePrefix            = "cpudev"
+	cpuDevicePrefix = "cpudev"
 
 	// Grouped Mode
 	// cpuResourceQualifiedName is the qualified name for the CPU resource capacity.
@@ -222,8 +217,8 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 		return nil
 	}
 
-	// Chunk devices into slices of at most maxDevicesPerResourceSlice
-	return slices.Collect(slices.Chunk(allDevices, maxDevicesPerResourceSlice))
+	// Chunk devices into slices of at most devicesPerResourceSlice
+	return slices.Collect(slices.Chunk(allDevices, cp.devicesPerResourceSlice))
 }
 
 // PublishResources publishes ResourceSlice for CPU resources.
