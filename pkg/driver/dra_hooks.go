@@ -25,6 +25,7 @@ import (
 	"sort"
 
 	"github.com/go-logr/logr"
+	opaqueapi "github.com/kubernetes-sigs/dra-driver-cpu/api"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpumanager"
@@ -50,6 +51,7 @@ const (
 
 	cpuDeviceSocketGroupedPrefix = "cpudevsocket"
 	cpuDeviceNUMAGroupedPrefix   = "cpudevnuma"
+	cpuDeviceMachineGrouped      = "cpudevmachine"
 )
 
 type groupedCPUDeviceInfo struct {
@@ -99,6 +101,13 @@ func (cp *CPUDriver) groupedCPUDeviceInfos() []groupedCPUDeviceInfo {
 				numaNodeID: numaID,
 			})
 		}
+	case GROUP_BY_MACHINE:
+		allCPUs := topo.CPUDetails.CPUs()
+		allocatableCPUs := allCPUs.Difference(cp.reservedCPUs)
+		devices = append(devices, groupedCPUDeviceInfo{
+			name: cpuDeviceMachineGrouped,
+			cpus: allocatableCPUs,
+		})
 	}
 	return devices
 }
@@ -226,6 +235,18 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 			device.SetCompatibilityAttributes(deviceAttrs, int64(deviceInfo.numaNodeID))
 			cp.setPCIeRootsAttribute(deviceAttrs, deviceInfo.cpus.UnsortedList()...)
 
+			devices = append(devices, resourceapi.Device{
+				Name:                     deviceInfo.name,
+				Attributes:               deviceAttrs,
+				Capacity:                 deviceCapacity,
+				AllowMultipleAllocations: ptr.To(true),
+			})
+		case GROUP_BY_MACHINE:
+			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+				AttributeSMTEnabled: {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
+				AttributeNumCPUs:    {IntValue: ptr.To(availableCPUs)},
+			}
+			cp.setPCIeRootsAttribute(deviceAttrs, deviceInfo.cpus.UnsortedList()...)
 			devices = append(devices, resourceapi.Device{
 				Name:                     deviceInfo.name,
 				Attributes:               deviceAttrs,
@@ -376,26 +397,40 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 
 		topo := cp.cpuTopology
 
-		var availableCPUsForDevice cpuset.CPUSet
-		if cp.cpuDeviceGroupBy == GROUP_BY_SOCKET {
+		var cur cpuset.CPUSet
+		var err error
+
+		switch cp.cpuDeviceGroupBy {
+		case GROUP_BY_SOCKET:
 			socketID, ok := cp.deviceNameToSocketID[alloc.Device]
 			if !ok {
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid socket ID found for device %s", alloc.Device)}
 			}
 			socketCPUs := topo.CPUDetails.CPUsInSockets(socketID)
-			availableCPUsForDevice = sharedCPUs.Difference(cpuAssignment).Intersection(socketCPUs)
+			availableCPUsForDevice := sharedCPUs.Difference(cpuAssignment).Intersection(socketCPUs)
 			logger.V(4).Info("socket CPU availability", "socketID", socketID, "socketCPUs", socketCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
-		} else { // numanode
+			cur, err = cpumanager.TakeByTopologyNUMAPacked(logger, topo, availableCPUsForDevice, int(claimCPUCount), cpumanager.CPUSortingStrategyPacked, true)
+		case GROUP_BY_NUMA_NODE:
 			numaNodeID, ok := cp.deviceNameToNUMANodeID[alloc.Device]
 			if !ok {
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid NUMA node ID found for device %s", alloc.Device)}
 			}
 			numaCPUs := topo.CPUDetails.CPUsInNUMANodes(numaNodeID)
-			availableCPUsForDevice = sharedCPUs.Difference(cpuAssignment).Intersection(numaCPUs)
+			availableCPUsForDevice := sharedCPUs.Difference(cpuAssignment).Intersection(numaCPUs)
 			logger.V(4).Info("NUMA node CPU availability", "numaNodeID", numaNodeID, "numaCPUs", numaCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
+			cur, err = cpumanager.TakeByTopologyNUMAPacked(logger, topo, availableCPUsForDevice, int(claimCPUCount), cpumanager.CPUSortingStrategyPacked, true)
+		case GROUP_BY_MACHINE:
+			cpusetOverride, ok, err := cp.getOpaqueCPUSet(logger, claim.Status.Allocation, alloc)
+			if err != nil {
+				return kubeletplugin.PrepareResult{Err: err}
+			}
+			if !ok {
+				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no opaque cpuset configuration found for allocation request %q", alloc.Request)}
+			}
+			cur = cpusetOverride
+			logger.V(2).Info("using opaque config CPU assignment", "device", alloc.Device, "assigned", cur.String())
 		}
 
-		cur, err := cpumanager.TakeByTopologyNUMAPacked(logger, topo, availableCPUsForDevice, int(claimCPUCount), cpumanager.CPUSortingStrategyPacked, true)
 		if err != nil {
 			return kubeletplugin.PrepareResult{Err: err}
 		}
@@ -570,4 +605,48 @@ func (cp *CPUDriver) setPCIeRootsAttribute(attrs map[resourceapi.QualifiedName]r
 		return
 	}
 	attrs[deviceattribute.StandardDeviceAttributePCIeRoot] = resourceapi.DeviceAttribute{StringValues: pcieRoots}
+}
+
+func (cp *CPUDriver) getOpaqueCPUSet(logger logr.Logger, allocation *resourceapi.AllocationResult, alloc resourceapi.DeviceRequestAllocationResult) (cpuset.CPUSet, bool, error) {
+	if allocation == nil {
+		return cpuset.CPUSet{}, false, nil
+	}
+
+	var matchedConfig *resourceapi.DeviceAllocationConfiguration
+	matchCount := 0
+
+	for _, config := range allocation.Devices.Config {
+		if config.Opaque == nil || config.Opaque.Driver != cp.driverName {
+			continue
+		}
+		if config.Source != resourceapi.AllocationConfigSourceClaim {
+			logger.V(2).Info("ignoring opaque config from DeviceClass, only ResourceClaim overrides are supported for custom CPU sets", "request", alloc.Request)
+			continue
+		}
+		// Each parameter block must target exactly 1 request using the 'requests' field
+		if len(config.Requests) != 1 {
+			return cpuset.CPUSet{}, false, fmt.Errorf("opaque config: parameters block must target exactly 1 request using the 'requests' field, found %d", len(config.Requests))
+		}
+
+		if config.Requests[0] == alloc.Request {
+			matchedConfig = &config
+			matchCount++
+		}
+	}
+
+	if matchCount != 1 {
+		return cpuset.CPUSet{}, false, fmt.Errorf("opaque config: request %q is targeted by %d configurations, must be targeted by exactly 1", alloc.Request, matchCount)
+	}
+
+	// Return the matched config if found
+	if matchedConfig != nil && len(matchedConfig.Opaque.Parameters.Raw) > 0 {
+		parsedCPUSet, err := opaqueapi.ParseOpaqueConfig(matchedConfig.Opaque.Parameters.Raw)
+		if err != nil {
+			return cpuset.CPUSet{}, false, err
+		}
+		logger.V(4).Info("found cpuset override in opaque config", "request", alloc.Request, "cpuset", parsedCPUSet.String())
+		return parsedCPUSet, true, nil
+	}
+
+	return cpuset.CPUSet{}, false, nil
 }

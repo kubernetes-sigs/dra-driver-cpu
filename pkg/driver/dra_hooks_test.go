@@ -26,10 +26,12 @@ import (
 	"github.com/go-logr/logr/testr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
@@ -1182,6 +1184,20 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			claims:        []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 5})},
 			expectedError: true,
 		},
+		{
+			name:          "MachineGrouped_MissingOpaqueError",
+			cpuInfos:      mockCPUInfos_SingleSocket_4CPUS_HT,
+			groupBy:       GROUP_BY_MACHINE,
+			claims:        []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2})},
+			expectedError: true,
+		},
+		{
+			name:           "MachineGrouped_DualSocketHT_OpaqueOverrideSuccess",
+			cpuInfos:       mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			groupBy:        GROUP_BY_MACHINE,
+			claims:         []*resourceapi.ResourceClaim{testClaimWithOpaqueConfig(claimUID, testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "2-3")},
+			expectedCPUSet: cpuset.New(2, 3),
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1603,4 +1619,255 @@ func testClaim(claimUID types.UID, driverName, poolName string, consumedCapacity
 			},
 		},
 	}
+}
+
+func testClaimWithOpaqueConfig(claimUID types.UID, driverName, poolName string, consumedCapacity map[string]int64, cpusetVal string) *resourceapi.ResourceClaim {
+	claim := testClaim(claimUID, driverName, poolName, consumedCapacity)
+	claim.Status.Allocation.Devices.Config = []resourceapi.DeviceAllocationConfiguration{
+		{
+			Source:   resourceapi.AllocationConfigSourceClaim,
+			Requests: []string{string(claimUID)},
+			DeviceConfiguration: resourceapi.DeviceConfiguration{
+				Opaque: &resourceapi.OpaqueDeviceConfiguration{
+					Driver: driverName,
+					Parameters: runtime.RawExtension{
+						Raw: []byte(fmt.Sprintf(`{"apiVersion": "v1alpha1", "cpuConfig": {"cpuset": "%s"}}`, cpusetVal)),
+					},
+				},
+			},
+		},
+	}
+	return claim
+}
+
+func TestOpaqueConfigAllocation(t *testing.T) {
+	// A mock CPU topology: 2 sockets, 2 cores per socket, 2 threads per core = 8 CPUs
+	cpuInfos := mockCPUInfos_DualSocket_4CPUsPerSocket_HT
+	reservedCPUs := cpuset.New()
+
+	testCases := []struct {
+		name                string
+		claims              []*resourceapi.ResourceClaim
+		expectedErrorMsg    string
+		expectedAllocations map[string]cpuset.CPUSet
+	}{
+		{
+			name: "Multiple CPU DRA claims - no conflicts",
+			claims: []*resourceapi.ResourceClaim{
+				testClaimWithOpaqueConfig("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "0,4"),
+				testClaimWithOpaqueConfig("claim-2", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "1,5"),
+			},
+			expectedAllocations: map[string]cpuset.CPUSet{
+				"claim-1": cpuset.New(0, 4),
+				"claim-2": cpuset.New(1, 5),
+			},
+		},
+		{
+			name: "CPU allocation with other device claim configurations inside the same slice",
+			claims: []*resourceapi.ResourceClaim{
+				func() *resourceapi.ResourceClaim {
+					claim := testClaim("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2})
+					claim.Status.Allocation.Devices.Config = []resourceapi.DeviceAllocationConfiguration{
+						{
+							Source: resourceapi.AllocationConfigSourceClaim,
+							DeviceConfiguration: resourceapi.DeviceConfiguration{
+								Opaque: &resourceapi.OpaqueDeviceConfiguration{
+									Driver: "dra.gpu",
+									Parameters: runtime.RawExtension{
+										Raw: []byte(`"gpuId": "gpu-0"}`),
+									},
+								},
+							},
+						},
+						{
+							Source:   resourceapi.AllocationConfigSourceClaim,
+							Requests: []string{"claim-1"},
+							DeviceConfiguration: resourceapi.DeviceConfiguration{
+								Opaque: &resourceapi.OpaqueDeviceConfiguration{
+									Driver: testDriverName,
+									Parameters: runtime.RawExtension{
+										Raw: []byte(`{"apiVersion": "v1alpha1", "cpuConfig": {"cpuset": "2,6"}}`),
+									},
+								},
+							},
+						},
+					}
+					return claim
+				}(),
+			},
+			expectedAllocations: map[string]cpuset.CPUSet{
+				"claim-1": cpuset.New(2, 6),
+			},
+		},
+		{
+			name: "CPU allocation with incorrect fields in raw data",
+			claims: []*resourceapi.ResourceClaim{
+				func() *resourceapi.ResourceClaim {
+					claim := testClaim("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2})
+					claim.Status.Allocation.Devices.Config = []resourceapi.DeviceAllocationConfiguration{
+						{
+							Source:   resourceapi.AllocationConfigSourceClaim,
+							Requests: []string{"claim-1"},
+							DeviceConfiguration: resourceapi.DeviceConfiguration{
+								Opaque: &resourceapi.OpaqueDeviceConfiguration{
+									Driver: testDriverName,
+									Parameters: runtime.RawExtension{
+										Raw: []byte(`{"apiVersion": "v1beta1", "cpuConfig": {"cpuset": "0,4"}}`),
+									},
+								},
+							},
+						},
+					}
+					return claim
+				}(),
+			},
+			expectedErrorMsg: "unsupported opaque config apiVersion",
+		},
+		{
+			name: "Incorrect source",
+			claims: []*resourceapi.ResourceClaim{
+				func() *resourceapi.ResourceClaim {
+					claim := testClaim("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2})
+					claim.Status.Allocation.Devices.Config = []resourceapi.DeviceAllocationConfiguration{
+						{
+							Source:   resourceapi.AllocationConfigSourceClass,
+							Requests: []string{"claim-1"},
+							DeviceConfiguration: resourceapi.DeviceConfiguration{
+								Opaque: &resourceapi.OpaqueDeviceConfiguration{
+									Driver: testDriverName,
+									Parameters: runtime.RawExtension{
+										Raw: []byte(`{"apiVersion": "v1alpha1", "cpuConfig": {"cpuset": "2,6"}}`),
+									},
+								},
+							},
+						},
+					}
+					return claim
+				}(),
+			},
+			expectedErrorMsg: "is targeted by 0 configurations, must be targeted by exactly 1",
+		},
+		{
+			name: "CPU config block with non-matching request name is ignored",
+			claims: []*resourceapi.ResourceClaim{
+				func() *resourceapi.ResourceClaim {
+					claim := testClaim("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2})
+					claim.Status.Allocation.Devices.Config = []resourceapi.DeviceAllocationConfiguration{
+						{
+							Source:   resourceapi.AllocationConfigSourceClaim,
+							Requests: []string{"different-request-name"},
+							DeviceConfiguration: resourceapi.DeviceConfiguration{
+								Opaque: &resourceapi.OpaqueDeviceConfiguration{
+									Driver: testDriverName,
+									Parameters: runtime.RawExtension{
+										Raw: []byte(`{"apiVersion": "v1alpha1", "cpuConfig": {"cpuset": "2,6"}}`),
+									},
+								},
+							},
+						},
+					}
+					return claim
+				}(),
+			},
+			expectedErrorMsg: "is targeted by 0 configurations, must be targeted by exactly 1",
+		},
+		{
+			name: "CPU config block with empty requests list is rejected",
+			claims: []*resourceapi.ResourceClaim{
+				func() *resourceapi.ResourceClaim {
+					claim := testClaim("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2})
+					claim.Status.Allocation.Devices.Config = []resourceapi.DeviceAllocationConfiguration{
+						{
+							Source:   resourceapi.AllocationConfigSourceClaim,
+							Requests: []string{},
+							DeviceConfiguration: resourceapi.DeviceConfiguration{
+								Opaque: &resourceapi.OpaqueDeviceConfiguration{
+									Driver: testDriverName,
+									Parameters: runtime.RawExtension{
+										Raw: []byte(`{"apiVersion": "v1alpha1", "cpuConfig": {"cpuset": "2,6"}}`),
+									},
+								},
+							},
+						},
+					}
+					return claim
+				}(),
+			},
+			expectedErrorMsg: "opaque config: parameters block must target exactly 1 request using the 'requests' field",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			driver := createCPUDriverForTest(t, GROUP_BY_MACHINE, cpuInfos, nil, reservedCPUs)
+			driver.cdiMgr = newMockCdiMgr()
+
+			prepared, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
+			require.NoError(t, err)
+
+			if tc.expectedErrorMsg != "" {
+				var foundErr bool
+				var actualErrors []string
+				for _, claim := range tc.claims {
+					result, exists := prepared[claim.UID]
+					require.True(t, exists, "Claim result missing for UID: %s", claim.UID)
+					if result.Err != nil {
+						actualErrors = append(actualErrors, result.Err.Error())
+						if strings.Contains(result.Err.Error(), tc.expectedErrorMsg) {
+							foundErr = true
+						}
+					}
+				}
+				assert.True(t, foundErr, "Expected at least one claim to fail with error containing %q, got errors: %v", tc.expectedErrorMsg, actualErrors)
+			} else {
+				for _, claim := range tc.claims {
+					result, exists := prepared[claim.UID]
+					require.True(t, exists, "Claim result missing for UID: %s", claim.UID)
+					assert.NoError(t, result.Err, "Unexpected error for claim %s", claim.UID)
+					if expectedSet, ok := tc.expectedAllocations[string(claim.UID)]; ok {
+						alloc, found := driver.cpuAllocationStore.GetResourceClaimAllocation(claim.UID)
+						assert.True(t, found, "Allocation not stored for claim %s", claim.UID)
+						assert.Equal(t, expectedSet, alloc)
+
+						mockCdi := driver.cdiMgr.(*mockCdiMgr)
+						cdiDeviceName := fmt.Sprintf("claim-%s", claim.UID)
+						expectedEnvVar := fmt.Sprintf("DRA_CPUSET_%s=%s", claim.UID, expectedSet.String())
+						assert.Equal(t, expectedEnvVar, mockCdi.devices[cdiDeviceName])
+					}
+				}
+			}
+		})
+	}
+}
+
+func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet) *CPUDriver {
+	t.Helper()
+	logger := testr.New(t)
+	driver := &CPUDriver{}
+	driver.driverName = testDriverName
+	driver.cpuDeviceMode = CPU_DEVICE_MODE_GROUPED
+	driver.cpuDeviceGroupBy = groupBy
+	driver.deviceNameToSocketID = make(map[string]int)
+	driver.deviceNameToNUMANodeID = make(map[string]int)
+	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
+	driver.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
+	driver.cpuAllocationStore = store.NewCPUAllocation(driver.cpuTopology, reservedCPUs)
+	for claimUID, cpus := range initialAllocations {
+		driver.cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, cpus)
+	}
+
+	topo, err := mockProvider.GetCPUTopology(logger)
+	require.NoError(t, err)
+
+	switch driver.cpuDeviceGroupBy {
+	case GROUP_BY_SOCKET:
+		for i := 0; i < topo.NumSockets; i++ {
+			driver.deviceNameToSocketID[fmt.Sprintf("%s%d", cpuDeviceSocketGroupedPrefix, i)] = i
+		}
+	case GROUP_BY_NUMA_NODE:
+		for i := 0; i < topo.NumNUMANodes; i++ {
+			driver.deviceNameToNUMANodeID[fmt.Sprintf("%snuma%d", cpuDevicePrefix, i)] = i
+		}
+	}
+	return driver
 }
