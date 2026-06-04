@@ -30,6 +30,7 @@ type Config struct {
 	ReservedCPUs     string `json:"reservedCPUs,omitempty"`
 	CPUDeviceMode    string `json:"cpuDeviceMode"`
 	GroupBy          string `json:"groupBy,omitempty"`
+	ExposePCIeRoots  bool   `json:"exposePCIeRoots,omitempty"`
 }
 
 func Default() Config {
@@ -49,6 +50,7 @@ func (c *Config) AddFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.ReservedCPUs, "reserved-cpus", c.ReservedCPUs, "cpuset of CPUs to be excluded from ResourceSlice.")
 	fs.Var(newCPUDeviceModeValue(&c.CPUDeviceMode, c.CPUDeviceMode), "cpu-device-mode", "Sets the mode for exposing CPU devices. 'grouped' exposes a single device per socket or numa node (based on --group-by). 'individual' exposes each CPU as a separate device.")
 	fs.Var(newGroupByValue(&c.GroupBy, c.GroupBy), "group-by", "When --cpu-device-mode=grouped, sets the criteria for grouping CPUs. Can be set to 'socket' or 'numanode'.")
+	fs.BoolVar(&c.ExposePCIeRoots, "expose-pcie-roots", c.ExposePCIeRoots, "Discover and expose PCIe roots as device attributes. Requires the DRAListTypeAttributes=true Feature Gate in the cluster.")
 }
 
 func (c *Config) applyDefaults() {

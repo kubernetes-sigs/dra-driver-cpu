@@ -88,7 +88,6 @@ type CPUDriver struct {
 	cpuAllocationStore     *store.CPUAllocation
 	cdiMgr                 cdiManager
 	cpuTopology            *cpuinfo.CPUTopology
-	pcieDomains            []device.PCIeDomain
 	deviceNameToCPUID      map[string]int
 	deviceNameToSocketID   map[string]int
 	deviceNameToNUMANodeID map[string]int
@@ -96,7 +95,7 @@ type CPUDriver struct {
 	cpuDeviceMode          string
 	cpuDeviceGroupBy       string
 	claimTracker           *store.ClaimTracker
-	cpuIDToPCIeDomain      map[int][]*device.PCIeDomain
+	pcieRootMapper         *store.PCIeRootMapper
 }
 
 // Config is the configuration for the CPUDriver.
@@ -106,6 +105,7 @@ type Config struct {
 	ReservedCPUs     cpuset.CPUSet
 	CPUDeviceMode    string
 	CPUDeviceGroupBy string
+	ExposePCIeRoots  bool
 }
 
 // Start creates and starts a new CPUDriver.
@@ -121,11 +121,11 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		deviceNameToCPUID:      make(map[string]int),
 		deviceNameToSocketID:   make(map[string]int),
 		deviceNameToNUMANodeID: make(map[string]int),
-		cpuIDToPCIeDomain:      make(map[int][]*device.PCIeDomain),
 		reservedCPUs:           config.ReservedCPUs,
 		cpuDeviceMode:          config.CPUDeviceMode,
 		cpuDeviceGroupBy:       config.CPUDeviceGroupBy,
 		claimTracker:           store.NewClaimTracker(),
+		pcieRootMapper:         store.NewPCIeRootMapper(),
 	}
 	sysfs := os.DirFS(device.SysfsRoot).(device.SysFS)
 
@@ -145,25 +145,11 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 	}
 	plugin.cpuTopology = topo
 
-	plugin.pcieDomains, err = device.PCIeDomainsFromFS(logger, sysfs)
-	if err != nil {
-		return nil, asyncErr, fmt.Errorf("failed to list PCIe domains: %w", err)
-	}
-	if len(plugin.pcieDomains) > 0 {
-		logger.V(2).Info("PCIe domains detected", "count", len(plugin.pcieDomains))
-		for idx, dom := range plugin.pcieDomains {
-			logger.V(4).Info("PCIe domain", "index", idx, "domain", dom.String())
+	if config.ExposePCIeRoots {
+		if err := plugin.pcieRootMapper.Probe(logger, sysfs, onlineCPUs); err != nil {
+			return nil, asyncErr, fmt.Errorf("failed to list PCIe domains: %w", err)
 		}
-	} else {
-		logger.Info("PCIe domains: none detected, device attributes will not be available")
 	}
-	extraCPUs := device.FindOrphanedCPUs(plugin.pcieDomains, onlineCPUs)
-	if !extraCPUs.IsEmpty() {
-		logger.Info("PCIe domains: detected cpus not local to any detected PCIe Root", "CPUs", extraCPUs.String())
-	}
-
-	plugin.cpuIDToPCIeDomain = device.MapCPUsToPCIeDomain(plugin.pcieDomains, onlineCPUs)
-	logger.V(4).Info("mapped CPUs to PCIe domains", "count", len(plugin.cpuIDToPCIeDomain))
 
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.cpuTopology, config.ReservedCPUs)
 	plugin.podConfigStore = store.NewPodConfig()

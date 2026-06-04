@@ -33,7 +33,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/utils/cpuset"
@@ -498,14 +497,9 @@ func (cp *CPUDriver) HandleError(ctx context.Context, err error, msg string) {
 }
 
 func (cp *CPUDriver) setPCIeRootsAttribute(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, cpuIDs ...int) {
-	pcieRoots := sets.New[string]()
-	for _, cpuID := range cpuIDs {
-		for _, dom := range cp.cpuIDToPCIeDomain[cpuID] {
-			pcieRoots.Insert(dom.RootName)
-		}
-	}
-	if pcieRoots.Len() == 0 {
+	pcieRoots := cp.pcieRootMapper.GetPCIeRootsForCPU(cpuIDs...)
+	if len(pcieRoots) == 0 {
 		return
 	}
-	attrs[AttributePCIeRoots] = resourceapi.DeviceAttribute{StringValues: sets.List(pcieRoots)}
+	attrs[AttributePCIeRoots] = resourceapi.DeviceAttribute{StringValues: pcieRoots}
 }

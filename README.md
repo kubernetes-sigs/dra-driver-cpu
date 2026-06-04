@@ -150,6 +150,15 @@ the claim would need to be updated or recreated manually.
 ### Exposing PCIe roots
 
 The DRA CPU Driver can expose the PCIe root locality of CPU devices via the driver-specific `dra.cpu/pcieRoots` attribute.
+This feature is opt-in, and requires _both_ the `DRAListTypeAttributes` Feature Gate (see KEP-5491) enabled in the cluster and the `--expose-pcie-roots` command line
+flag in the driver. The driver has no way to introspect the cluster feature gate states, so care must be taken to keep the configuration consistent.
+
+**IMPORTANT NOTE**: it is recommended to consume the pcieRoots list attributes using the `matchAttribute` or [the derived attributes](https://github.com/kubernetes/enhancements/issues/6080).
+Care must be taken to consume the attribute using the CEL expressions selector, because the backward compatibility path is not yet clear
+(see: https://github.com/kubernetes/enhancements/pull/6081#issuecomment-4606653735 and following)
+
+#### Implementation details
+
 While devices don't expose the PCIe root locality, the reverse is true: the linux kernel does report the CPUs local to PCIe buses and devices; the driver scans the PCIe
 buses and tracks the PCIe host bridges CPU locality; from there, we can reconstruct the CPU to PCIe root mapping and then populate the attributes.
 

@@ -168,6 +168,7 @@ func run(logger logr.Logger) error {
 		ReservedCPUs:     reservedCPUSet,
 		CPUDeviceMode:    driverFlags.CPUDeviceMode,
 		CPUDeviceGroupBy: driverFlags.GroupBy,
+		ExposePCIeRoots:  driverFlags.ExposePCIeRoots,
 	}
 	dracpu, asyncErr, err := driver.Start(ctx, clientset, driverConfig)
 	if err != nil {

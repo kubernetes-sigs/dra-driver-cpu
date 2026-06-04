@@ -305,6 +305,7 @@ func TestPublishResources(t *testing.T) {
 				deviceNameToCPUID: make(map[string]int),
 				cpuTopology:       topo,
 				reservedCPUs:      tc.reservedCPUs,
+				pcieRootMapper:    store.NewPCIeRootMapper(),
 			}
 
 			cp.PublishResources(context.Background())
