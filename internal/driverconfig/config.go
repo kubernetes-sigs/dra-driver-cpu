@@ -49,7 +49,7 @@ func (c *Config) AddFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.BindAddress, "bind-address", c.BindAddress, "The address to bind the HTTP server for /healthz and /metrics endpoints")
 	fs.StringVar(&c.ReservedCPUs, "reserved-cpus", c.ReservedCPUs, "cpuset of CPUs to be excluded from ResourceSlice.")
 	fs.Var(newCPUDeviceModeValue(&c.CPUDeviceMode, c.CPUDeviceMode), "cpu-device-mode", "Sets the mode for exposing CPU devices. 'grouped' exposes a single device per socket or numa node (based on --group-by). 'individual' exposes each CPU as a separate device.")
-	fs.Var(newGroupByValue(&c.GroupBy, c.GroupBy), "group-by", "When --cpu-device-mode=grouped, sets the criteria for grouping CPUs. Can be set to 'socket' or 'numanode'.")
+	fs.Var(newGroupByValue(&c.GroupBy, c.GroupBy), "group-by", "When --cpu-device-mode=grouped, sets the criteria for grouping CPUs. Can be set to 'socket', 'numanode', or 'machine' (machine mode requires an external scheduler to include cpuset configuration in claim allocation results).")
 	fs.BoolVar(&c.ExposePCIeRoots, "expose-pcie-roots", c.ExposePCIeRoots, "Discover and expose PCIe roots as device attributes. Requires the DRAListTypeAttributes=true Feature Gate in the cluster.")
 }
 
@@ -107,8 +107,8 @@ func (v *groupByValue) String() string {
 }
 
 func (v *groupByValue) Set(s string) error {
-	if s != driver.GROUP_BY_SOCKET && s != driver.GROUP_BY_NUMA_NODE {
-		return fmt.Errorf("invalid value: %q, must be %s or %s", s, driver.GROUP_BY_SOCKET, driver.GROUP_BY_NUMA_NODE)
+	if s != driver.GROUP_BY_SOCKET && s != driver.GROUP_BY_NUMA_NODE && s != driver.GROUP_BY_MACHINE {
+		return fmt.Errorf("invalid value: %q, must be %s, %s or %s", s, driver.GROUP_BY_SOCKET, driver.GROUP_BY_NUMA_NODE, driver.GROUP_BY_MACHINE)
 	}
 	*v.value = s
 	return nil

@@ -50,6 +50,8 @@ const (
 	GROUP_BY_SOCKET = "socket"
 	// GROUP_BY_NUMA_NODE groups CPUs by NUMA node.
 	GROUP_BY_NUMA_NODE = "numanode"
+	// GROUP_BY_MACHINE groups CPUs by the entire machine.
+	GROUP_BY_MACHINE = "machine"
 )
 
 const (
