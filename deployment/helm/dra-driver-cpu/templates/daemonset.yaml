@@ -64,6 +64,9 @@ spec:
           {{- if .Values.args.hostnameOverride }}
           - --hostname-override={{ .Values.args.hostnameOverride }}
           {{- end }}
+          {{- if .Values.args.exposePCIeRoots }}
+          - --expose-pcie-roots
+          {{- end }}
         image: {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         ports:

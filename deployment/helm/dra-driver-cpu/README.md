@@ -30,6 +30,7 @@ helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system -f m
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | args.cpuDeviceMode | string | `"grouped"` | CPU exposure mode: `grouped` (expose NUMA nodes or sockets as devices) or `individual` (expose each CPU as a device) |
+| args.exposePCIeRoots | bool | `false` | Discover and expose PCIe roots as device attributes. Requires the `DRAListTypeAttributes=true` feature gate in the cluster |
 | args.groupBy | string | `"numanode"` | Grouping criteria when `cpuDeviceMode=grouped`: `numanode` or `socket` |
 | args.hostnameOverride | string | `""` | Override the node name the driver registers under; omitted when empty |
 | args.logLevel | int | `4` | Log verbosity level passed as `--v` |

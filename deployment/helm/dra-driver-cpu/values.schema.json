@@ -18,6 +18,10 @@
             "individual"
           ]
         },
+        "exposePCIeRoots": {
+          "description": "Discover and expose PCIe roots as device attributes. Requires the `DRAListTypeAttributes=true` feature gate in the cluster",
+          "type": "boolean"
+        },
         "groupBy": {
           "description": "Grouping criteria when `cpuDeviceMode=grouped`: `numanode` or `socket`",
           "type": "string",

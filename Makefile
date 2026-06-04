@@ -207,7 +207,8 @@ endif
 		--set image.pullPolicy=IfNotPresent \
 		--set args.logLevel=6 \
 		--set args.cpuDeviceMode=${DRACPU_E2E_CPU_DEVICE_MODE} \
-		--set-string args.reservedCPUs=${DRACPU_E2E_RESERVED_CPUS}
+		--set-string args.reservedCPUs=${DRACPU_E2E_RESERVED_CPUS} \
+		--set args.exposePCIeRoots=true
 	hack/ci/wait-resourcelices.sh
 
 build-test-image: ## build tests image
