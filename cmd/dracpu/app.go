@@ -24,12 +24,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime/debug"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
+	driverconfig "github.com/kubernetes-sigs/dra-driver-cpu/cmd/dracpu/config"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/buildinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/gatherinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sys/unix"
@@ -45,82 +48,43 @@ const (
 )
 
 var (
-	hostnameOverride string
-	kubeconfig       string
-	bindAddress      string
-	reservedCPUs     string
-	ready            atomic.Bool
-	cpuDeviceMode    string
-	groupBy          string
+	driverFlags = driverconfig.Default()
+	ready       atomic.Bool
 )
 
-type cpuDeviceModeValue struct {
-	value *string
-}
-
-func newCPUDeviceModeValue(val *string, def string) *cpuDeviceModeValue {
-	*val = def
-	return &cpuDeviceModeValue{value: val}
-}
-
-func (v *cpuDeviceModeValue) String() string {
-	if v == nil || v.value == nil {
-		return ""
-	}
-	return *v.value
-}
-
-func (v *cpuDeviceModeValue) Set(s string) error {
-	if s != driver.CPU_DEVICE_MODE_GROUPED && s != driver.CPU_DEVICE_MODE_INDIVIDUAL {
-		return fmt.Errorf("invalid value: %q, must be %s or %s", s, driver.CPU_DEVICE_MODE_GROUPED, driver.CPU_DEVICE_MODE_INDIVIDUAL)
-	}
-	*v.value = s
-	return nil
-}
-
-type groupByValue struct {
-	value *string
-}
-
-func newGroupByValue(val *string, def string) *groupByValue {
-	*val = def
-	return &groupByValue{value: val}
-}
-
-func (v *groupByValue) String() string {
-	if v == nil || v.value == nil {
-		return ""
-	}
-	return *v.value
-}
-
-func (v *groupByValue) Set(s string) error {
-	if s != driver.GROUP_BY_SOCKET && s != driver.GROUP_BY_NUMA_NODE {
-		return fmt.Errorf("invalid value: %q, must be %s or %s", s, driver.GROUP_BY_SOCKET, driver.GROUP_BY_NUMA_NODE)
-	}
-	*v.value = s
-	return nil
-}
-
 func init() {
-	flag.StringVar(&kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
-	flag.StringVar(&hostnameOverride, "hostname-override", "", "If non-empty, will be used as the name of the Node that kube-network-policies is running on. If unset, the node name is assumed to be the same as the node's hostname.")
-	flag.StringVar(&bindAddress, "bind-address", ":8080", "The address to bind the HTTP server for /healthz and /metrics endpoints")
-	flag.StringVar(&reservedCPUs, "reserved-cpus", "", "cpuset of CPUs to be excluded from ResourceSlice.")
-	flag.Var(newCPUDeviceModeValue(&cpuDeviceMode, driver.CPU_DEVICE_MODE_GROUPED), "cpu-device-mode", "Sets the mode for exposing CPU devices. 'grouped' exposes a single device per socket or numa node (based on --group-by). 'individual' exposes each CPU as a separate device.")
-	flag.Var(newGroupByValue(&groupBy, driver.GROUP_BY_NUMA_NODE), "group-by", "When --cpu-device-mode=grouped, sets the criteria for grouping CPUs. Can be set to 'socket' or 'numanode'.")
+	driverFlags.AddFlags(flag.CommandLine)
 }
 
 func main() {
+	if filepath.Base(os.Args[0]) == "dracpu-gatherinfo" {
+		logger := ctxlog.Setup()
+		if err := gatherinfo.Run(os.Args[1:], gatherinfo.Options{
+			Logger:       logger,
+			DriverConfig: driverFlags,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "dracpu-gatherinfo: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	ctxlog.AddFlags(flag.CommandLine)
 	flag.Parse()
 
 	logger := ctxlog.Setup()
 
-	if err := run(logger); err != nil {
-		logger.Error(err, "failed to run")
+	if err := runDriver(logger); err != nil {
 		os.Exit(1)
 	}
+}
+
+func runDriver(logger logr.Logger) error {
+	if err := run(logger); err != nil {
+		logger.Error(err, "failed to run")
+		return err
+	}
+	return nil
 }
 
 func run(logger logr.Logger) error {
@@ -129,7 +93,7 @@ func run(logger logr.Logger) error {
 		logger.Info("FLAG", "name", f.Name, "value", f.Value.String())
 	})
 
-	reservedCPUSet, err := cpuset.Parse(reservedCPUs)
+	reservedCPUSet, err := cpuset.Parse(driverFlags.ReservedCPUs)
 	if err != nil {
 		return fmt.Errorf("failed to parse reserved CPUs: %w", err)
 	}
@@ -146,7 +110,7 @@ func run(logger logr.Logger) error {
 	// Add metrics handler
 	mux.Handle("/metrics", promhttp.Handler())
 	server := &http.Server{
-		Addr:              bindAddress,
+		Addr:              driverFlags.BindAddress,
 		Handler:           mux,
 		IdleTimeout:       120 * time.Second,
 		ReadTimeout:       10 * time.Second,
@@ -161,8 +125,8 @@ func run(logger logr.Logger) error {
 	}()
 
 	var restConfig *rest.Config
-	if kubeconfig != "" {
-		restConfig, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if driverFlags.Kubeconfig != "" {
+		restConfig, err = clientcmd.BuildConfigFromFlags("", driverFlags.Kubeconfig)
 	} else {
 		// creates the in-cluster config
 		restConfig, err = rest.InClusterConfig()
@@ -182,7 +146,7 @@ func run(logger logr.Logger) error {
 		return fmt.Errorf("can not create client-go client: %w", err)
 	}
 
-	nodeName, err := nodeutil.GetHostname(hostnameOverride)
+	nodeName, err := nodeutil.GetHostname(driverFlags.HostnameOverride)
 	if err != nil {
 		return fmt.Errorf("can not obtain the node name, use the hostname-override flag if you want to set it to a specific value: %w", err)
 	}
@@ -203,8 +167,8 @@ func run(logger logr.Logger) error {
 		DriverName:       driverName,
 		NodeName:         nodeName,
 		ReservedCPUs:     reservedCPUSet,
-		CPUDeviceMode:    cpuDeviceMode,
-		CPUDeviceGroupBy: groupBy,
+		CPUDeviceMode:    driverFlags.CPUDeviceMode,
+		CPUDeviceGroupBy: driverFlags.GroupBy,
 	}
 	dracpu, asyncErr, err := driver.Start(ctx, clientset, driverConfig)
 	if err != nil {
@@ -237,18 +201,9 @@ func run(logger logr.Logger) error {
 }
 
 func printVersion(logger logr.Logger) {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
+	info := buildinfo.Read()
+	if info == (buildinfo.Info{}) {
 		return
 	}
-	var vcsRevision, vcsTime string
-	for _, f := range info.Settings {
-		switch f.Key {
-		case "vcs.revision":
-			vcsRevision = f.Value
-		case "vcs.time":
-			vcsTime = f.Value
-		}
-	}
-	logger.Info("dracpu", "goVersion", info.GoVersion, "build", vcsRevision, "time", vcsTime)
+	logger.Info("dracpu", "goVersion", info.GoVersion, "build", info.VCSRevision, "time", info.VCSTime)
 }

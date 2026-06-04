@@ -30,4 +30,5 @@ RUN go build -ldflags "${LDFLAGS}" -o /go/bin/dracpu ./cmd/dracpu
 # copy binary onto base image
 FROM gcr.io/distroless/base-debian12
 COPY --from=builder --chown=root:root /go/bin/dracpu /dracpu
+COPY --from=builder --chown=root:root /go/bin/dracpu /dracpu-gatherinfo
 CMD ["/dracpu"]

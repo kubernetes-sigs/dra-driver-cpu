@@ -17,8 +17,7 @@ limitations under the License.
 package discovery
 
 import (
-	"runtime/debug"
-
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/buildinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 )
 
@@ -48,19 +47,10 @@ type DRACPUTester struct {
 }
 
 func NewBuildinfo() DRACPUBuildinfo {
-	ret := DRACPUBuildinfo{}
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return ret
+	info := buildinfo.Read()
+	return DRACPUBuildinfo{
+		GoVersion:   info.GoVersion,
+		VCSRevision: info.VCSRevision,
+		VCSTime:     info.VCSTime,
 	}
-	for _, f := range info.Settings {
-		switch f.Key {
-		case "vcs.revision":
-			ret.VCSRevision = f.Value
-		case "vcs.time":
-			ret.VCSTime = f.Value
-		}
-	}
-	ret.GoVersion = info.GoVersion
-	return ret
 }
