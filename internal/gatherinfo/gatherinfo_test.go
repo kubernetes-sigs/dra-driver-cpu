@@ -25,7 +25,8 @@ import (
 	"testing"
 	"time"
 
-	driverconfig "github.com/kubernetes-sigs/dra-driver-cpu/cmd/dracpu/config"
+	"github.com/go-logr/logr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
 	"k8s.io/utils/cpuset"
@@ -132,6 +133,21 @@ func TestDetectDriverConfig(t *testing.T) {
 				t.Fatalf("cfg = %+v, want %+v", cfg, tt.want)
 			}
 		})
+	}
+}
+
+func TestDefaultDriverCmdlinePathFindsDriverProcess(t *testing.T) {
+	hostRoot := t.TempDir()
+	t.Setenv("HOST_ROOT", hostRoot)
+
+	writeTestFile(t, filepath.Join(hostRoot, "proc", "1", "comm"), []byte("pause\n"))
+	writeTestFile(t, filepath.Join(hostRoot, "proc", "1", "cmdline"), []byte("/pause\x00"))
+	writeTestFile(t, filepath.Join(hostRoot, "proc", "42", "comm"), []byte("dracpu\n"))
+	writeTestFile(t, filepath.Join(hostRoot, "proc", "42", "cmdline"), []byte("/dracpu\x00--group-by=socket\x00"))
+
+	path := defaultDriverCmdlinePath()
+	if !strings.HasSuffix(path, filepath.Join("proc", "42", "cmdline")) {
+		t.Fatalf("driverCmdlinePath = %q, want proc/42/cmdline suffix", path)
 	}
 }
 
@@ -399,8 +415,19 @@ func TestWriteReportFileCleansUpOnFailure(t *testing.T) {
 }
 
 func TestRunRejectsStdoutWithOutputDir(t *testing.T) {
-	err := Run([]string{"--stdout", "--output-dir=/tmp"}, Options{})
+	err := Run([]string{"--stdout", "--output-dir=/tmp"}, Options{}, logr.Discard())
 	if err == nil {
 		t.Fatal("Run succeeded, want error")
+	}
+}
+
+func writeTestFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("failed to create parent dir for %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("failed to write %s: %v", path, err)
 	}
 }

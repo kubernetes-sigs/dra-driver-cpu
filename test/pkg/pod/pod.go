@@ -17,8 +17,10 @@ limitations under the License.
 package pod
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +30,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
 )
 
 const (
@@ -133,6 +138,37 @@ func GetLogsForContainer(ctx context.Context, cs kubernetes.Interface, podNamesp
 		return "", fmt.Errorf("fetched log contains \"Internal Error\": %q", string(logs))
 	}
 	return string(logs), err
+}
+
+func Exec(ctx context.Context, config *rest.Config, cs kubernetes.Interface, pod *v1.Pod, command ...string) (string, string, error) {
+	return ExecForContainer(ctx, config, cs, pod.Namespace, pod.Name, pod.Spec.Containers[0].Name, command...)
+}
+
+func ExecForContainer(ctx context.Context, config *rest.Config, cs kubernetes.Interface, podNamespace, podName, containerName string, command ...string) (string, string, error) {
+	request := cs.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Namespace(podNamespace).
+		Name(podName).
+		SubResource("exec").
+		VersionedParams(&v1.PodExecOptions{
+			Container: containerName,
+			Command:   command,
+			Stdout:    true,
+			Stderr:    true,
+		}, scheme.ParameterCodec)
+
+	executor, err := remotecommand.NewSPDYExecutor(config, http.MethodPost, request.URL())
+	if err != nil {
+		return "", "", err
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+	return stdout.String(), stderr.String(), err
 }
 
 func PinToNode(pod *v1.Pod, nodeName string) *v1.Pod {

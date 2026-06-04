@@ -23,17 +23,19 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
-	driverconfig "github.com/kubernetes-sigs/dra-driver-cpu/cmd/dracpu/config"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/buildinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"sigs.k8s.io/yaml"
 )
 
 const LayoutVersion = "v1"
+const driverProcessName = "dracpu"
 
 type Report struct {
 	ToolVersion   ToolVersion         `json:"toolVersion"`
@@ -78,10 +80,9 @@ type Options struct {
 	OutputParentDir   string
 	DriverConfig      driverconfig.Config
 	DriverCmdlinePath string
-	Logger            logr.Logger
 }
 
-func Run(args []string, opts Options) error {
+func Run(args []string, opts Options, logger logr.Logger) error {
 	fs := flag.NewFlagSet("dracpu-gatherinfo", flag.ExitOnError)
 	outputDir := fs.String("output-dir", opts.OutputParentDir, "Parent directory for debug artifacts (default: temporary directory)")
 	emitStdout := fs.Bool("stdout", false, "Write the YAML report to stdout instead of a file")
@@ -91,11 +92,6 @@ func Run(args []string, opts Options) error {
 	}
 	if *emitStdout && *outputDir != "" {
 		return fmt.Errorf("--stdout and --output-dir cannot be used together")
-	}
-
-	logger := opts.Logger
-	if !logger.Enabled() {
-		logger = logr.Discard()
 	}
 
 	report, err := collectReport(logger, opts.DriverConfig, opts.driverCmdlinePath())
@@ -115,7 +111,7 @@ func Run(args []string, opts Options) error {
 		return err
 	}
 
-	fmt.Printf("Debug info collected: %s\n", outputPath)
+	logger.Info("debug info collected", "path", outputPath)
 	return nil
 }
 
@@ -127,7 +123,39 @@ func (o Options) driverCmdlinePath() string {
 }
 
 func defaultDriverCmdlinePath() string {
-	return cpuinfo.GetEnv("HOST_ROOT", "/", "proc/1/cmdline")
+	procRoot := cpuinfo.GetEnv("HOST_ROOT", "/", "proc")
+	cmdlinePath, err := findDriverCmdlinePath(procRoot, driverProcessName)
+	if err != nil {
+		return filepath.Join(procRoot, "1", "cmdline")
+	}
+	return cmdlinePath
+}
+
+func findDriverCmdlinePath(procRoot, processName string) (string, error) {
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		return "", err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if _, err := strconv.Atoi(entry.Name()); err != nil {
+			continue
+		}
+
+		processRoot := filepath.Join(procRoot, entry.Name())
+		comm, err := os.ReadFile(filepath.Join(processRoot, "comm"))
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(string(comm)) == processName {
+			return filepath.Join(processRoot, "cmdline"), nil
+		}
+	}
+
+	return "", fmt.Errorf("process %q not found under %s", processName, procRoot)
 }
 
 func prepareOutputPath(parentDir string, now time.Time, pid int) (string, error) {

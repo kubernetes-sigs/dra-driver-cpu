@@ -29,9 +29,9 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	driverconfig "github.com/kubernetes-sigs/dra-driver-cpu/cmd/dracpu/config"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/buildinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/gatherinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -60,9 +60,8 @@ func main() {
 	if filepath.Base(os.Args[0]) == "dracpu-gatherinfo" {
 		logger := ctxlog.Setup()
 		if err := gatherinfo.Run(os.Args[1:], gatherinfo.Options{
-			Logger:       logger,
 			DriverConfig: driverFlags,
-		}); err != nil {
+		}, logger); err != nil {
 			fmt.Fprintf(os.Stderr, "dracpu-gatherinfo: %v\n", err)
 			os.Exit(1)
 		}
