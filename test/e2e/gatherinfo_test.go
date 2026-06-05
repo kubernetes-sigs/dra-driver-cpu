@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/gatherinfo"
 	e2eclient "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/client"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	e2epod "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/pod"
@@ -56,14 +57,14 @@ var _ = ginkgo.Describe("dracpu-gatherinfo", ginkgo.Ordered, func() {
 					"dracpu-gatherinfo failed in pod %q on node %q; stdout: %s; stderr: %s",
 					pod.Name, pod.Spec.NodeName, stdout, stderr)
 
-				var report map[string]any
+				var report gatherinfo.Report
 				gomega.Expect(yaml.Unmarshal([]byte(stdout), &report)).To(gomega.Succeed(),
 					"dracpu-gatherinfo output from pod %q should be valid YAML", pod.Name)
-				gomega.Expect(report).To(gomega.HaveKeyWithValue("layoutVersion", "v1"),
+				gomega.Expect(report.LayoutVersion).To(gomega.Equal(gatherinfo.LayoutVersion),
 					"dracpu-gatherinfo output from pod %q should include the report layout version", pod.Name)
-				gomega.Expect(report).To(gomega.HaveKey("cpuDetails"),
+				gomega.Expect(report.CPUDetails.CPUs).NotTo(gomega.BeEmpty(),
 					"dracpu-gatherinfo output from pod %q should include CPU details", pod.Name)
-				gomega.Expect(report).To(gomega.HaveKey("driverConfig"),
+				gomega.Expect(report.DriverConfig.CPUDeviceMode).NotTo(gomega.BeEmpty(),
 					"dracpu-gatherinfo output from pod %q should include detected driver config", pod.Name)
 			}
 		})
