@@ -20,8 +20,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
@@ -52,7 +54,44 @@ const (
 	reasonCreateContainerError = "CreateContainerError"
 	argReservedCPUs            = "--reserved-cpus="
 	argCPUDeviceMode           = "--cpu-device-mode="
+	daemonSetNamespace         = "kube-system"
+	daemonSetLabel             = "app=dracpu"
+	driverPodPollInterval      = 2 * time.Second
+	driverPodPollTimeout       = 2 * time.Minute
 )
+
+func listDriverPods(ctx context.Context, client kubernetes.Interface) ([]v1.Pod, error) {
+	podList, err := client.CoreV1().Pods(daemonSetNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: daemonSetLabel,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing pods with selector %q in %q: %w",
+			daemonSetLabel, daemonSetNamespace, err)
+	}
+	return podList.Items, nil
+}
+
+func waitForRunningDriverPods(ctx context.Context, client kubernetes.Interface) []v1.Pod {
+	ginkgo.GinkgoHelper()
+
+	var pods []v1.Pod
+	gomega.Eventually(func(g gomega.Gomega) {
+		var err error
+		pods, err = listDriverPods(ctx, client)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		g.Expect(pods).NotTo(gomega.BeEmpty(),
+			"no dra-driver-cpu pods found with selector %q in namespace %q",
+			daemonSetLabel, daemonSetNamespace)
+		for _, pod := range pods {
+			g.Expect(pod.Status.Phase).To(gomega.Equal(v1.PodRunning),
+				"pod %q on node %q is not Running (phase=%s)",
+				pod.Name, pod.Spec.NodeName, pod.Status.Phase)
+		}
+	}, driverPodPollTimeout, driverPodPollInterval).Should(gomega.Succeed(),
+		"timed out waiting for dra-driver-cpu pods to reach Running phase")
+
+	return pods
+}
 
 func BeFailedToCreate(fxt *fixture.Fixture) types.GomegaMatcher {
 	return gcustom.MakeMatcher(func(actual *v1.Pod) (bool, error) {

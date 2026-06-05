@@ -26,6 +26,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/yaml"
 )
 
 var _ = ginkgo.Describe("dracpu-gatherinfo", ginkgo.Ordered, func() {
@@ -54,11 +55,15 @@ var _ = ginkgo.Describe("dracpu-gatherinfo", ginkgo.Ordered, func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(),
 					"dracpu-gatherinfo failed in pod %q on node %q; stdout: %s; stderr: %s",
 					pod.Name, pod.Spec.NodeName, stdout, stderr)
-				gomega.Expect(stdout).To(gomega.ContainSubstring("layoutVersion: v1"),
+
+				var report map[string]any
+				gomega.Expect(yaml.Unmarshal([]byte(stdout), &report)).To(gomega.Succeed(),
+					"dracpu-gatherinfo output from pod %q should be valid YAML", pod.Name)
+				gomega.Expect(report).To(gomega.HaveKeyWithValue("layoutVersion", "v1"),
 					"dracpu-gatherinfo output from pod %q should include the report layout version", pod.Name)
-				gomega.Expect(stdout).To(gomega.ContainSubstring("cpuDetails:"),
+				gomega.Expect(report).To(gomega.HaveKey("cpuDetails"),
 					"dracpu-gatherinfo output from pod %q should include CPU details", pod.Name)
-				gomega.Expect(stdout).To(gomega.ContainSubstring("driverConfig:"),
+				gomega.Expect(report).To(gomega.HaveKey("driverConfig"),
 					"dracpu-gatherinfo output from pod %q should include detected driver config", pod.Name)
 			}
 		})

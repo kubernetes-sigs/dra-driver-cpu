@@ -94,7 +94,12 @@ func Run(args []string, opts Options, logger logr.Logger) error {
 		return fmt.Errorf("--stdout and --output-dir cannot be used together")
 	}
 
-	report, err := collectReport(logger, opts.DriverConfig, opts.driverCmdlinePath())
+	driverCmdlinePath, err := opts.driverCmdlinePath()
+	if err != nil {
+		return err
+	}
+
+	report, err := collectReport(logger, opts.DriverConfig, driverCmdlinePath)
 	if err != nil {
 		return err
 	}
@@ -103,11 +108,11 @@ func Run(args []string, opts Options, logger logr.Logger) error {
 		return writeYAML(os.Stdout, report)
 	}
 
-	outputPath, err := prepareOutputPath(*outputDir, time.Now(), os.Getpid())
+	outputFile, outputPath, err := createOutputFile(*outputDir, time.Now(), os.Getpid())
 	if err != nil {
 		return err
 	}
-	if err := writeReportFile(outputPath, report); err != nil {
+	if err := writeReportFile(outputFile, outputPath, report); err != nil {
 		return err
 	}
 
@@ -115,20 +120,20 @@ func Run(args []string, opts Options, logger logr.Logger) error {
 	return nil
 }
 
-func (o Options) driverCmdlinePath() string {
+func (o Options) driverCmdlinePath() (string, error) {
 	if o.DriverCmdlinePath != "" {
-		return o.DriverCmdlinePath
+		return o.DriverCmdlinePath, nil
 	}
 	return defaultDriverCmdlinePath()
 }
 
-func defaultDriverCmdlinePath() string {
+func defaultDriverCmdlinePath() (string, error) {
 	procRoot := cpuinfo.GetEnv("HOST_ROOT", "/", "proc")
 	cmdlinePath, err := findDriverCmdlinePath(procRoot, driverProcessName)
 	if err != nil {
-		return filepath.Join(procRoot, "1", "cmdline")
+		return "", fmt.Errorf("failed to find running %q process: %w", driverProcessName, err)
 	}
-	return cmdlinePath
+	return cmdlinePath, nil
 }
 
 func findDriverCmdlinePath(procRoot, processName string) (string, error) {
@@ -158,32 +163,30 @@ func findDriverCmdlinePath(procRoot, processName string) (string, error) {
 	return "", fmt.Errorf("process %q not found under %s", processName, procRoot)
 }
 
-func prepareOutputPath(parentDir string, now time.Time, pid int) (string, error) {
+func createOutputFile(parentDir string, now time.Time, pid int) (*os.File, string, error) {
 	fileName := fmt.Sprintf("dracpu-gatherinfo-%s-%d.yaml", now.Format("20060102-150405"), pid)
 	if parentDir == "" {
 		f, err := os.CreateTemp("", "dracpu-gatherinfo-*.yaml")
 		if err != nil {
-			return "", fmt.Errorf("failed to create temp file: %w", err)
+			return nil, "", fmt.Errorf("failed to create temp file: %w", err)
 		}
-		if err := f.Close(); err != nil {
-			return "", fmt.Errorf("failed to close temp file %s: %w", f.Name(), err)
-		}
-		return f.Name(), nil
+		return f, f.Name(), nil
 	}
 
 	parentDir = filepath.Clean(parentDir)
 	if err := os.MkdirAll(parentDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create output dir: %w", err)
+		return nil, "", fmt.Errorf("failed to create output dir: %w", err)
 	}
 
 	outputPath := filepath.Join(parentDir, fileName)
-	if _, err := os.Stat(outputPath); err == nil {
-		return "", fmt.Errorf("output file already exists: %s", outputPath)
-	} else if !os.IsNotExist(err) {
-		return "", fmt.Errorf("failed to stat output file %s: %w", outputPath, err)
+	f, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return nil, "", fmt.Errorf("output file already exists: %s", outputPath)
+		}
+		return nil, "", fmt.Errorf("failed to open %s: %w", outputPath, err)
 	}
-
-	return outputPath, nil
+	return f, outputPath, nil
 }
 
 func collectReport(logger logr.Logger, defaults driverconfig.Config, driverCmdlinePath string) (Report, error) {
@@ -333,13 +336,8 @@ func readToolVersion() ToolVersion {
 	}
 }
 
-func writeReportFile(path string, v any) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return fmt.Errorf("failed to open %s: %w", path, err)
-	}
-
-	err = writeYAML(f, v)
+func writeReportFile(f *os.File, path string, v any) error {
+	err := writeYAML(f, v)
 	if closeErr := f.Close(); err == nil && closeErr != nil {
 		err = fmt.Errorf("failed to close %s: %w", path, closeErr)
 	}

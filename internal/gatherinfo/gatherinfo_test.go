@@ -81,13 +81,6 @@ func TestDetectDriverConfig(t *testing.T) {
 		t.Fatalf("GroupBy = %q, want %q", defaults.GroupBy, driver.GROUP_BY_NUMA_NODE)
 	}
 
-	t.Run("host root path", func(t *testing.T) {
-		path := defaultDriverCmdlinePath()
-		if !strings.Contains(path, "proc/1/cmdline") {
-			t.Fatalf("driverCmdlinePath = %q, want proc/1/cmdline suffix", path)
-		}
-	})
-
 	tests := []struct {
 		name    string
 		content []byte
@@ -145,65 +138,90 @@ func TestDefaultDriverCmdlinePathFindsDriverProcess(t *testing.T) {
 	writeTestFile(t, filepath.Join(hostRoot, "proc", "42", "comm"), []byte("dracpu\n"))
 	writeTestFile(t, filepath.Join(hostRoot, "proc", "42", "cmdline"), []byte("/dracpu\x00--group-by=socket\x00"))
 
-	path := defaultDriverCmdlinePath()
+	path, err := defaultDriverCmdlinePath()
+	if err != nil {
+		t.Fatalf("defaultDriverCmdlinePath failed: %v", err)
+	}
 	if !strings.HasSuffix(path, filepath.Join("proc", "42", "cmdline")) {
 		t.Fatalf("driverCmdlinePath = %q, want proc/42/cmdline suffix", path)
 	}
 }
 
-func TestPrepareOutputPath(t *testing.T) {
-	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+func TestDefaultDriverCmdlinePathFailsWhenDriverProcessIsMissing(t *testing.T) {
+	hostRoot := t.TempDir()
+	t.Setenv("HOST_ROOT", hostRoot)
 
-	t.Run("temp file", func(t *testing.T) {
-		outputPath, err := prepareOutputPath("", now, 42)
-		if err != nil {
-			t.Fatalf("prepareOutputPath failed: %v", err)
-		}
-		t.Cleanup(func() {
-			os.Remove(outputPath)
-		})
+	writeTestFile(t, filepath.Join(hostRoot, "proc", "1", "comm"), []byte("pause\n"))
+	writeTestFile(t, filepath.Join(hostRoot, "proc", "1", "cmdline"), []byte("/pause\x00"))
 
-		info, err := os.Stat(outputPath)
-		if err != nil {
-			t.Fatalf("output file missing: %v", err)
-		}
-		if info.Size() != 0 {
-			t.Fatalf("temp file size = %d, want 0", info.Size())
-		}
-		if filepath.Ext(outputPath) != ".yaml" {
-			t.Fatalf("output path = %q, want .yaml suffix", outputPath)
-		}
-	})
-
-	t.Run("parent dir", func(t *testing.T) {
-		parentDir := t.TempDir()
-		outputPath, err := prepareOutputPath(parentDir, now, 42)
-		if err != nil {
-			t.Fatalf("prepareOutputPath failed: %v", err)
-		}
-
-		if filepath.Dir(outputPath) != parentDir {
-			t.Fatalf("output parent = %q, want %q", filepath.Dir(outputPath), parentDir)
-		}
-		if filepath.Base(outputPath) != "dracpu-gatherinfo-20260529-120000-42.yaml" {
-			t.Fatalf("output name = %q", filepath.Base(outputPath))
-		}
-	})
-
-	t.Run("parent dir is cleaned", func(t *testing.T) {
-		parentDir := filepath.Join(t.TempDir(), "nested", "..", "out")
-		outputPath, err := prepareOutputPath(parentDir, now, 42)
-		if err != nil {
-			t.Fatalf("prepareOutputPath failed: %v", err)
-		}
-
-		if filepath.Dir(outputPath) != filepath.Clean(parentDir) {
-			t.Fatalf("output parent = %q, want %q", filepath.Dir(outputPath), filepath.Clean(parentDir))
-		}
-	})
+	_, err := defaultDriverCmdlinePath()
+	if err == nil {
+		t.Fatal("defaultDriverCmdlinePath succeeded, want error")
+	}
 }
 
-func TestPrepareOutputPathFailsWhenFileExists(t *testing.T) {
+func TestCreateOutputFileTempFile(t *testing.T) {
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+
+	f, outputPath, err := createOutputFile("", now, 42)
+	if err != nil {
+		t.Fatalf("createOutputFile failed: %v", err)
+	}
+	t.Cleanup(func() {
+		f.Close()
+		os.Remove(outputPath)
+	})
+
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		t.Fatalf("output file missing: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("temp file size = %d, want 0", info.Size())
+	}
+	if filepath.Ext(outputPath) != ".yaml" {
+		t.Fatalf("output path = %q, want .yaml suffix", outputPath)
+	}
+}
+
+func TestCreateOutputFileParentDir(t *testing.T) {
+	parentDir := t.TempDir()
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+
+	f, outputPath, err := createOutputFile(parentDir, now, 42)
+	if err != nil {
+		t.Fatalf("createOutputFile failed: %v", err)
+	}
+	t.Cleanup(func() {
+		f.Close()
+	})
+
+	if filepath.Dir(outputPath) != parentDir {
+		t.Fatalf("output parent = %q, want %q", filepath.Dir(outputPath), parentDir)
+	}
+	if filepath.Base(outputPath) != "dracpu-gatherinfo-20260529-120000-42.yaml" {
+		t.Fatalf("output name = %q", filepath.Base(outputPath))
+	}
+}
+
+func TestCreateOutputFileCleansParentDir(t *testing.T) {
+	parentDir := filepath.Join(t.TempDir(), "nested", "..", "out")
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+
+	f, outputPath, err := createOutputFile(parentDir, now, 42)
+	if err != nil {
+		t.Fatalf("createOutputFile failed: %v", err)
+	}
+	t.Cleanup(func() {
+		f.Close()
+	})
+
+	if filepath.Dir(outputPath) != filepath.Clean(parentDir) {
+		t.Fatalf("output parent = %q, want %q", filepath.Dir(outputPath), filepath.Clean(parentDir))
+	}
+}
+
+func TestCreateOutputFileFailsWhenFileExists(t *testing.T) {
 	parentDir := t.TempDir()
 	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
 	outputPath := filepath.Join(parentDir, "dracpu-gatherinfo-20260529-120000-42.yaml")
@@ -211,9 +229,9 @@ func TestPrepareOutputPathFailsWhenFileExists(t *testing.T) {
 		t.Fatalf("failed to seed output file: %v", err)
 	}
 
-	_, err := prepareOutputPath(parentDir, now, 42)
+	_, _, err := createOutputFile(parentDir, now, 42)
 	if err == nil {
-		t.Fatal("prepareOutputPath succeeded, want error")
+		t.Fatal("createOutputFile succeeded, want error")
 	}
 }
 
@@ -227,7 +245,11 @@ func TestWriteReportFile(t *testing.T) {
 		"key3": []string{"a", "b", "c"},
 	}
 
-	if err := writeReportFile(testFile, testData); err != nil {
+	f, err := os.OpenFile(testFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatalf("failed to create output file: %v", err)
+	}
+	if err := writeReportFile(f, testFile, testData); err != nil {
 		t.Fatalf("writeReportFile failed: %v", err)
 	}
 
@@ -365,24 +387,18 @@ func TestMarshalYAMLErrors(t *testing.T) {
 func TestWriteReportFileErrors(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) (path string, data any)
+		setup   func(t *testing.T) (file *os.File, path string, data any)
 		wantErr bool
 	}{
 		{
-			name: "write to read-only directory",
-			setup: func(t *testing.T) (string, any) {
-				dir := filepath.Join(t.TempDir(), "readonly")
-				if err := os.Mkdir(dir, 0444); err != nil {
-					t.Fatalf("failed to create readonly dir: %v", err)
-				}
-				return filepath.Join(dir, "test.yaml"), map[string]any{"key": "value"}
-			},
-			wantErr: true,
-		},
-		{
 			name: "marshal error with invalid data",
-			setup: func(t *testing.T) (string, any) {
-				return filepath.Join(t.TempDir(), "test.yaml"), make(chan int)
+			setup: func(t *testing.T) (*os.File, string, any) {
+				path := filepath.Join(t.TempDir(), "test.yaml")
+				file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+				if err != nil {
+					t.Fatalf("failed to create output file: %v", err)
+				}
+				return file, path, make(chan int)
 			},
 			wantErr: true,
 		},
@@ -390,8 +406,8 @@ func TestWriteReportFileErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path, data := tt.setup(t)
-			err := writeReportFile(path, data)
+			file, path, data := tt.setup(t)
+			err := writeReportFile(file, path, data)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("writeReportFile() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -401,11 +417,12 @@ func TestWriteReportFileErrors(t *testing.T) {
 
 func TestWriteReportFileCleansUpOnFailure(t *testing.T) {
 	outputPath := filepath.Join(t.TempDir(), "report.yaml")
-	if err := os.WriteFile(outputPath, nil, 0600); err != nil {
-		t.Fatalf("failed to seed output file: %v", err)
+	file, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatalf("failed to create output file: %v", err)
 	}
 
-	err := writeReportFile(outputPath, make(chan int))
+	err = writeReportFile(file, outputPath, make(chan int))
 	if err == nil {
 		t.Fatal("writeReportFile succeeded, want error")
 	}
