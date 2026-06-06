@@ -22,10 +22,11 @@ import (
 	"os"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-func NewK8SClientset() (kubernetes.Interface, error) {
+func NewK8SConfig() (*rest.Config, error) {
 	kubeconfig, ok := os.LookupEnv("KUBECONFIG")
 	if !ok {
 		return nil, errors.New("missing environment variable KUBECONFIG")
@@ -34,6 +35,13 @@ func NewK8SClientset() (kubernetes.Interface, error) {
 	if err != nil {
 		return nil, fmt.Errorf("can not create client-go configuration: %w", err)
 	}
+	return config, nil
+}
 
+func NewK8SClientset() (kubernetes.Interface, error) {
+	config, err := NewK8SConfig()
+	if err != nil {
+		return nil, err
+	}
 	return kubernetes.NewForConfig(config)
 }
