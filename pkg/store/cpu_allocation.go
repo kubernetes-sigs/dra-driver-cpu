@@ -88,3 +88,17 @@ func (s *CPUAllocation) GetResourceClaimAllocation(claimUID types.UID) (cpuset.C
 	cpus, ok := s.resourceClaimAllocations[claimUID]
 	return cpus, ok
 }
+
+// GetReservedCPUs returns the set of reserved CPUs.
+func (s *CPUAllocation) GetReservedCPUs() cpuset.CPUSet {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.reservedCPUs
+}
+
+// GetAllocatedCPUs returns the set of allocated CPUs.
+func (s *CPUAllocation) GetAllocatedCPUs() cpuset.CPUSet {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.allocatedCPUs
+}

@@ -1198,6 +1198,21 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			claims:         []*resourceapi.ResourceClaim{testClaimWithOpaqueConfig(claimUID, testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "2-3")},
 			expectedCPUSet: cpuset.New(2, 3),
 		},
+		{
+			name:          "MachineGrouped_DualSocketHT_OpaqueOverrideUnavailableError",
+			cpuInfos:      mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			groupBy:       GROUP_BY_MACHINE,
+			reservedCPUs:  cpuset.New(0, 4),
+			claims:        []*resourceapi.ResourceClaim{testClaimWithOpaqueConfig(claimUID, testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "0-1")},
+			expectedError: true,
+		},
+		{
+			name:          "MachineGrouped_DualSocketHT_OpaqueOverrideSizeMismatchError",
+			cpuInfos:      mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			groupBy:       GROUP_BY_MACHINE,
+			claims:        []*resourceapi.ResourceClaim{testClaimWithOpaqueConfig(claimUID, testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "0-2")},
+			expectedError: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1650,6 +1665,8 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 		claims              []*resourceapi.ResourceClaim
 		expectedErrorMsg    string
 		expectedAllocations map[string]cpuset.CPUSet
+		reservedCPUs        cpuset.CPUSet
+		initialAllocations  map[types.UID]cpuset.CPUSet
 	}{
 		{
 			name: "Multiple CPU DRA claims - no conflicts",
@@ -1661,6 +1678,15 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 				"claim-1": cpuset.New(0, 4),
 				"claim-2": cpuset.New(1, 5),
 			},
+		},
+		{
+			name: "Multiple CPU DRA claims with overlapping cores conflict",
+			claims: []*resourceapi.ResourceClaim{
+				testClaimWithOpaqueConfig("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "0,4"),
+				testClaimWithOpaqueConfig("claim-2", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "4,5"),
+			},
+			expectedErrorMsg:    "conflict with already allocated claims",
+			expectedAllocations: map[string]cpuset.CPUSet{},
 		},
 		{
 			name: "CPU allocation with other device claim configurations inside the same slice",
@@ -1745,7 +1771,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 					return claim
 				}(),
 			},
-			expectedErrorMsg: "is targeted by 0 configurations, must be targeted by exactly 1",
+			expectedErrorMsg: "opaque config: configuration from DeviceClass is not supported by this driver, custom cpusets must be defined per ResourceClaim request",
 		},
 		{
 			name: "CPU config block with non-matching request name is ignored",
@@ -1795,11 +1821,88 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 			},
 			expectedErrorMsg: "opaque config: parameters block must target exactly 1 request using the 'requests' field",
 		},
+		{
+			name: "CPU config block targeting multiple requests is rejected",
+			claims: []*resourceapi.ResourceClaim{
+				func() *resourceapi.ResourceClaim {
+					claim := testClaim("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2})
+					claim.Status.Allocation.Devices.Config = []resourceapi.DeviceAllocationConfiguration{
+						{
+							Source:   resourceapi.AllocationConfigSourceClaim,
+							Requests: []string{"req-1", "req-2"},
+							DeviceConfiguration: resourceapi.DeviceConfiguration{
+								Opaque: &resourceapi.OpaqueDeviceConfiguration{
+									Driver: testDriverName,
+									Parameters: runtime.RawExtension{
+										Raw: []byte(`{"apiVersion": "v1alpha1", "cpuConfig": {"cpuset": "2,6"}}`),
+									},
+								},
+							},
+						},
+					}
+					return claim
+				}(),
+			},
+			expectedErrorMsg: "opaque config: parameters block must target exactly 1 request using the 'requests' field",
+		},
+		{
+			name: "CPU allocation with offline cores",
+			claims: []*resourceapi.ResourceClaim{
+				testClaimWithOpaqueConfig("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "99,100"),
+			},
+			expectedErrorMsg: "contain offline cores: 99-100",
+		},
+		{
+			name: "CPU allocation with reserved cores",
+			claims: []*resourceapi.ResourceClaim{
+				testClaimWithOpaqueConfig("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "0,4"),
+			},
+			reservedCPUs:     cpuset.New(0, 1),
+			expectedErrorMsg: "contain reserved cores: 0",
+		},
+		{
+			name: "CPU allocation with already allocated claims conflict",
+			claims: []*resourceapi.ResourceClaim{
+				testClaimWithOpaqueConfig("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "0,4"),
+			},
+			initialAllocations: map[types.UID]cpuset.CPUSet{
+				"other-claim": cpuset.New(4, 5),
+			},
+			expectedErrorMsg: "conflict with already allocated claims",
+		},
+		{
+			name: "CPU allocation with overlapping cores inside the same claim",
+			claims: []*resourceapi.ResourceClaim{
+				func() *resourceapi.ResourceClaim {
+					claim := testClaim("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2, cpuDeviceMachineGrouped + "-1": 2})
+					claim.Status.Allocation.Devices.Config = []resourceapi.DeviceAllocationConfiguration{
+						{
+							Source:   resourceapi.AllocationConfigSourceClaim,
+							Requests: []string{"claim-1"},
+							DeviceConfiguration: resourceapi.DeviceConfiguration{
+								Opaque: &resourceapi.OpaqueDeviceConfiguration{
+									Driver: testDriverName,
+									Parameters: runtime.RawExtension{
+										Raw: []byte(`{"apiVersion": "v1alpha1", "cpuConfig": {"cpuset": "0,4"}}`),
+									},
+								},
+							},
+						},
+					}
+					return claim
+				}(),
+			},
+			expectedErrorMsg: "are already assigned to another device in this claim",
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			driver := createCPUDriverForTest(t, GROUP_BY_MACHINE, cpuInfos, nil, reservedCPUs)
+			testReserved := reservedCPUs
+			if tc.reservedCPUs.Size() > 0 {
+				testReserved = tc.reservedCPUs
+			}
+			driver := createCPUDriverForTest(t, GROUP_BY_MACHINE, cpuInfos, tc.initialAllocations, testReserved)
 			driver.cdiMgr = newMockCdiMgr()
 
 			prepared, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
