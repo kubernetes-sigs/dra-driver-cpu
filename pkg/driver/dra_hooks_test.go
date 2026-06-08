@@ -537,6 +537,67 @@ func TestPublishResourcesDoesNotInitializeGroupedLookupMaps(t *testing.T) {
 	}
 }
 
+func TestPrepareResourceClaimsSucceedsBeforePublishResources(t *testing.T) {
+	logger := testr.New(t)
+	claimUID := types.UID("claim-prepare-before-publish")
+
+	testCases := []struct {
+		name             string
+		cpuDeviceMode    string
+		cpuDeviceGroupBy string
+		claim            *resourceapi.ResourceClaim
+	}{
+		{
+			name:          "individual mode",
+			cpuDeviceMode: CPU_DEVICE_MODE_INDIVIDUAL,
+			claim: testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{
+				{Driver: testDriverName, Pool: testNodeName, Device: "cpudev000"},
+				{Driver: testDriverName, Pool: testNodeName, Device: "cpudev001"},
+			}),
+		},
+		{
+			name:             "socket grouped",
+			cpuDeviceMode:    CPU_DEVICE_MODE_GROUPED,
+			cpuDeviceGroupBy: GROUP_BY_SOCKET,
+			claim:            testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket000": 2}),
+		},
+		{
+			name:             "numa grouped",
+			cpuDeviceMode:    CPU_DEVICE_MODE_GROUPED,
+			cpuDeviceGroupBy: GROUP_BY_NUMA_NODE,
+			claim:            testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma000": 2}),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT}
+			topo, err := mockProvider.GetCPUTopology(logger)
+			require.NoError(t, err)
+
+			driver := &CPUDriver{
+				driverName:         testDriverName,
+				cpuTopology:        topo,
+				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+				cdiMgr:             newMockCdiMgr(),
+				cpuDeviceMode:      tc.cpuDeviceMode,
+				cpuDeviceGroupBy:   tc.cpuDeviceGroupBy,
+				reservedCPUs:       cpuset.New(),
+			}
+			driver.initializeDeviceLookupMaps()
+
+			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{tc.claim})
+			require.NoError(t, err)
+			require.NoError(t, preparedClaims[claimUID].Err)
+			require.NotEmpty(t, preparedClaims[claimUID].Devices)
+			require.Len(t, driver.cdiMgr.(*mockCdiMgr).devices, 1)
+
+			_, ok := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
+			require.True(t, ok)
+		})
+	}
+}
+
 func TestPrepareResourceClaims(t *testing.T) {
 	logger := testr.New(t)
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
