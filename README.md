@@ -98,8 +98,8 @@ any resource claim sharing.
 
 ### Matching CPU Manager functionality
 
-The kubelet cpumanager support [options](https://kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/#cpu-policy-static--options) to fine-tune the CPU allocation behavior.
-This DRA driver aims to implement feature parity with the kubelet cpumanager. The following table summarize how you can achieve a cpumananger functionality controlled by a cpumanager policy option.
+The kubelet cpumanager supports [options](https://kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/#cpu-policy-static--options) to fine-tune the CPU allocation behavior.
+This DRA driver aims to implement feature parity with the kubelet cpumanager. The following table summarizes how you can achieve a cpumanager functionality controlled by a cpumanager policy option.
 Reference: [kubernetes 1.35.0](https://github.com/kubernetes/kubernetes/blob/v1.35.0/pkg/kubelet/cm/cpumanager/policy_options.go).
 
 | CPU Manager Option        | Maturity | Kubelet development status | Driver equivalent functionality                                        | notes                 |
@@ -113,7 +113,7 @@ Reference: [kubernetes 1.35.0](https://github.com/kubernetes/kubernetes/blob/v1.
 
 ### Distributing CPUs across NUMA nodes
 
-It is currently possible to do encode a split of CPUs in such a way the allocator picks them from different NUMA nodes. Example:
+It is currently possible to encode a split of CPUs in such a way the allocator picks them from different NUMA nodes. Example:
 
 ```
 apiVersion: resource.k8s.io/v1
@@ -469,10 +469,10 @@ In some cases, you may need to set explicitly the KUBECONFIG path:
 KUBECONFIG=${HOME}/.kube/config DRACPU_E2E_VERBOSE=1 make test-e2e-kind
 ```
 
-The `test-e2e-kind` will exercises the same flows which are run on the project CI.
+The `test-e2e-kind` will exercise the same flows which are run on the project CI.
 The full documentation for all the supported environment variables is found in the [tests README](test/e2e/README.md).
 
-**NOTE** the custom-setup kind cluster is _not_ automatically tear down once the tests terminate
+**NOTE** the custom-setup kind cluster is _not_ automatically torn down once the tests terminate
 **NOTE** if you want to run again the tests, just use `make test-e2e`. Please see `make help` for more details.
 
 ## Developer Notes
