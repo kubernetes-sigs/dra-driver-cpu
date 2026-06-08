@@ -351,7 +351,7 @@ func TestPublishResources(t *testing.T) {
 				totalDevices += len(s.Devices)
 			}
 			require.Equal(t, tc.expectedDevices, totalDevices)
-			require.Equal(t, tc.expectedDevices, len(cp.deviceNameToCPUID))
+			require.Empty(t, cp.deviceNameToCPUID)
 
 			// Verify device attributes
 			cpuInfosMap := make(map[int]cpuinfo.CPUInfo)
@@ -362,19 +362,12 @@ func TestPublishResources(t *testing.T) {
 			seenCPUIDs := make(map[int]bool)
 			for _, slice := range pool.Slices {
 				for _, device := range slice.Devices {
-					cpuID, ok := cp.deviceNameToCPUID[device.Name]
-					require.True(t, ok)
+					cpuID := int(*device.Attributes[AttributeCPUID].IntValue)
 					require.False(t, seenCPUIDs[cpuID], "duplicate cpuID found in slices: %d", cpuID)
 					seenCPUIDs[cpuID] = true
 
-					var cpuInfo *cpuinfo.CPUInfo
-					for i := range tc.cpuInfos {
-						if tc.cpuInfos[i].CpuID == cpuID {
-							cpuInfo = &tc.cpuInfos[i]
-							break
-						}
-					}
-					require.NotNil(t, cpuInfo, "could not find matching cpuInfo for device %s", device.Name)
+					cpuInfo, ok := cpuInfosMap[cpuID]
+					require.True(t, ok, "could not find matching cpuInfo for device %s", device.Name)
 
 					numaNode := int64(cpuInfo.NUMANodeID)
 					CacheL3ID := int64(cpuInfo.UncoreCacheID)
@@ -395,8 +388,11 @@ func TestPublishResources(t *testing.T) {
 
 			// Test if hyperthreads are given successive device names
 			cpuIDToDeviceName := make(map[int]string)
-			for devName, cpuID := range cp.deviceNameToCPUID {
-				cpuIDToDeviceName[cpuID] = devName
+			for _, slice := range pool.Slices {
+				for _, device := range slice.Devices {
+					cpuID := int(*device.Attributes[AttributeCPUID].IntValue)
+					cpuIDToDeviceName[cpuID] = device.Name
+				}
 			}
 			for _, info := range tc.cpuInfos {
 				if info.SiblingCPUID == -1 || info.CpuID > info.SiblingCPUID {
@@ -420,6 +416,123 @@ func TestPublishResources(t *testing.T) {
 
 				require.Equal(t, devNum1+1, devNum2, "hyperthread device names are not successive for core %d (cpus %d, %d)", info.CoreID, info.CpuID, info.SiblingCPUID)
 			}
+		})
+	}
+}
+
+func TestInitializeDeviceLookupMaps(t *testing.T) {
+	logger := testr.New(t)
+
+	testCases := []struct {
+		name                       string
+		cpuDeviceMode              string
+		cpuDeviceGroupBy           string
+		cpuInfos                   []cpuinfo.CPUInfo
+		reservedCPUs               cpuset.CPUSet
+		expectedDeviceNameToCPUID  map[string]int
+		expectedDeviceNameToSocket map[string]int
+		expectedDeviceNameToNUMA   map[string]int
+	}{
+		{
+			name:          "individual mode",
+			cpuDeviceMode: CPU_DEVICE_MODE_INDIVIDUAL,
+			cpuInfos:      mockCPUInfos_SingleSocket_4CPUS_HT,
+			reservedCPUs:  cpuset.New(1),
+			expectedDeviceNameToCPUID: map[string]int{
+				"cpudev000": 0,
+				"cpudev001": 2,
+				"cpudev002": 3,
+			},
+		},
+		{
+			name:                       "grouped by socket",
+			cpuDeviceMode:              CPU_DEVICE_MODE_GROUPED,
+			cpuDeviceGroupBy:           GROUP_BY_SOCKET,
+			cpuInfos:                   mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			reservedCPUs:               cpuset.New(0, 1, 4, 5),
+			expectedDeviceNameToSocket: map[string]int{"cpudevsocket001": 1},
+		},
+		{
+			name:                     "grouped by numa node",
+			cpuDeviceMode:            CPU_DEVICE_MODE_GROUPED,
+			cpuDeviceGroupBy:         GROUP_BY_NUMA_NODE,
+			cpuInfos:                 mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			reservedCPUs:             cpuset.New(2, 3, 6, 7),
+			expectedDeviceNameToNUMA: map[string]int{"cpudevnuma000": 0},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: tc.cpuInfos}
+			topo, err := mockProvider.GetCPUTopology(logger)
+			require.NoError(t, err)
+
+			cp := &CPUDriver{
+				cpuTopology:      topo,
+				reservedCPUs:     tc.reservedCPUs,
+				cpuDeviceMode:    tc.cpuDeviceMode,
+				cpuDeviceGroupBy: tc.cpuDeviceGroupBy,
+			}
+			cp.initializeDeviceLookupMaps()
+
+			if tc.expectedDeviceNameToCPUID == nil {
+				tc.expectedDeviceNameToCPUID = map[string]int{}
+			}
+			if tc.expectedDeviceNameToSocket == nil {
+				tc.expectedDeviceNameToSocket = map[string]int{}
+			}
+			if tc.expectedDeviceNameToNUMA == nil {
+				tc.expectedDeviceNameToNUMA = map[string]int{}
+			}
+			require.Equal(t, tc.expectedDeviceNameToCPUID, cp.deviceNameToCPUID)
+			require.Equal(t, tc.expectedDeviceNameToSocket, cp.deviceNameToSocketID)
+			require.Equal(t, tc.expectedDeviceNameToNUMA, cp.deviceNameToNUMANodeID)
+		})
+	}
+}
+
+func TestPublishResourcesDoesNotInitializeGroupedLookupMaps(t *testing.T) {
+	logger := testr.New(t)
+
+	testCases := []struct {
+		name             string
+		cpuDeviceGroupBy string
+	}{
+		{
+			name:             "socket grouped",
+			cpuDeviceGroupBy: GROUP_BY_SOCKET,
+		},
+		{
+			name:             "numa grouped",
+			cpuDeviceGroupBy: GROUP_BY_NUMA_NODE,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockPlugin := &mockKubeletPlugin{}
+			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT}
+			topo, err := mockProvider.GetCPUTopology(logger)
+			require.NoError(t, err)
+
+			cp := &CPUDriver{
+				nodeName:               testNodeName,
+				draPlugin:              mockPlugin,
+				deviceNameToSocketID:   make(map[string]int),
+				deviceNameToNUMANodeID: make(map[string]int),
+				cpuTopology:            topo,
+				cpuDeviceMode:          CPU_DEVICE_MODE_GROUPED,
+				cpuDeviceGroupBy:       tc.cpuDeviceGroupBy,
+				reservedCPUs:           cpuset.New(),
+				pcieRootMapper:         store.NewPCIeRootMapper(),
+			}
+
+			cp.PublishResources(context.Background())
+
+			require.NotNil(t, mockPlugin.publishedResources)
+			require.Empty(t, cp.deviceNameToSocketID)
+			require.Empty(t, cp.deviceNameToNUMANodeID)
 		})
 	}
 }

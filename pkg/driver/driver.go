@@ -165,6 +165,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.cpuTopology, config.ReservedCPUs)
 	plugin.podConfigStore = store.NewPodConfig()
+	plugin.initializeDeviceLookupMaps()
 
 	driverPluginPath := filepath.Join(kubeletPluginPath, config.DriverName)
 	if err := os.MkdirAll(driverPluginPath, 0750); err != nil {
