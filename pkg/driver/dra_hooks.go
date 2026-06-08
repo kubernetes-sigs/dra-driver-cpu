@@ -408,9 +408,12 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		return kubeletplugin.PrepareResult{}
 	}
 
+	result := cp.prepareDevices(logger, claim, cpuAssignment)
+	if result.Err != nil {
+		return result
+	}
 	cp.cpuAllocationStore.AddResourceClaimAllocation(logger, claim.UID, cpuAssignment)
-
-	return cp.prepareDevices(logger, claim, cpuAssignment)
+	return result
 }
 
 func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
@@ -461,8 +464,12 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 		}
 	}
 
+	result := cp.prepareDevices(logger, claim, claimCPUSet)
+	if result.Err != nil {
+		return result
+	}
 	cp.cpuAllocationStore.AddResourceClaimAllocation(logger, claim.UID, claimCPUSet)
-	return cp.prepareDevices(logger, claim, claimCPUSet)
+	return result
 }
 
 func (cp *CPUDriver) prepareDevices(logger logr.Logger, claim *resourceapi.ResourceClaim, claimCPUSet cpuset.CPUSet) kubeletplugin.PrepareResult {
