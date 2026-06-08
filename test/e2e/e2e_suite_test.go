@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kubernetes-sigs/dra-driver-cpu/api/v1alpha1"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	e2epod "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/pod"
@@ -36,6 +37,7 @@ import (
 	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/cpuset"
@@ -51,9 +53,11 @@ func TestE2E(t *testing.T) {
 // shared code which is not ready yet to be moved into a test/pkg/... package
 
 const (
+	driverName                 = "dra.cpu"
 	reasonCreateContainerError = "CreateContainerError"
 	argReservedCPUs            = "--reserved-cpus="
 	argCPUDeviceMode           = "--cpu-device-mode="
+	argGroupBy                 = "--group-by="
 	daemonSetNamespace         = "kube-system"
 	daemonSetLabel             = "app=dracpu"
 	driverPodPollInterval      = 2 * time.Second
@@ -301,7 +305,7 @@ func makeResourceClaimSpec(cpus int, isConsumable bool) resourcev1.ResourceClaim
 					{
 						Name: "request-cpus",
 						Exactly: &resourcev1.ExactDeviceRequest{
-							DeviceClassName: "dra.cpu",
+							DeviceClassName: driverName,
 							Count:           int64(cpus),
 						},
 					},
@@ -315,7 +319,7 @@ func makeResourceClaimSpec(cpus int, isConsumable bool) resourcev1.ResourceClaim
 				{
 					Name: "request-cpus",
 					Exactly: &resourcev1.ExactDeviceRequest{
-						DeviceClassName: "dra.cpu",
+						DeviceClassName: driverName,
 						Capacity: &resourcev1.CapacityRequirements{
 							Requests: map[resourcev1.QualifiedName]resource.Quantity{
 								"dra.cpu/cpu": *resource.NewQuantity(int64(cpus), resource.DecimalSI),
@@ -326,4 +330,32 @@ func makeResourceClaimSpec(cpus int, isConsumable bool) resourcev1.ResourceClaim
 			},
 		},
 	}
+}
+
+func makeResourceClaimSpecWithOpaqueConfig(cpus int, isConsumable bool, cpusetStr string) resourcev1.ResourceClaimSpec {
+	spec := makeResourceClaimSpec(cpus, isConsumable)
+	if cpusetStr != "" {
+		config := v1alpha1.OpaqueConfig{
+			APIVersion: v1alpha1.APIVersion,
+			CPUConfig: v1alpha1.CPUConfig{
+				CPUSet: cpusetStr,
+			},
+		}
+		rawConfig, err := json.Marshal(config)
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		spec.Devices.Config = []resourcev1.DeviceClaimConfiguration{
+			{
+				Requests: []string{spec.Devices.Requests[0].Name},
+				DeviceConfiguration: resourcev1.DeviceConfiguration{
+					Opaque: &resourcev1.OpaqueDeviceConfiguration{
+						Driver: driverName,
+						Parameters: runtime.RawExtension{
+							Raw: rawConfig,
+						},
+					},
+				},
+			},
+		}
+	}
+	return spec
 }
