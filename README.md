@@ -29,6 +29,7 @@ The driver can be configured with the following command-line flags:
   - `"numanode"` (default): Groups CPUs by NUMA node.
   - `"socket"`: Groups CPUs by socket.
 - `--reserved-cpus`: Specifies a set of CPUs to be reserved for system and kubelet processes. These CPUs will not be allocatable by the DRA driver and would be excluded from the `ResourceSlice`. The value is a cpuset, e.g., `0-1`. This semantic is the same as the one the kubelet applies with its `static` CPU Manager policy and enabling [`strict-cpu-reservation`](https://kubernetes.io/blog/2024/12/16/cpumanager-strict-cpu-reservation/) flag and specifying the CPUs with the [`reservedSystemCPUs`](https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/#explicitly-reserved-cpu-list) to be reserved for system daemons. For correct CPU accounting, the number of CPUs reserved with this flag should match the sum of the kubelet's `kubeReserved` and `systemReserved` settings. This ensures the kubelet subtracts the correct number of CPUs from `Node.Status.Allocatable`.
+- `--expose-pcie-roots`: If enabled, adds the "resource.kubernetes.io/pcieRoot" standard value to CPU devices, to report the PCIe roots close to each device. Since it always reports values as list, this option requires the cluster Feature Gate `DRAListTypeAttributes` (see KEP 5491) to be enabled. The driver has no way to introspect the cluster Feature Gate, so care must be taken to enable first the Feature Gate then this option.
 
 ## How it Works
 
@@ -149,11 +150,11 @@ the claim would need to be updated or recreated manually.
 
 ### Exposing PCIe roots
 
-The DRA CPU Driver can expose the PCIe root locality of CPU devices via the driver-specific `dra.cpu/pcieRoots` attribute.
+The DRA CPU Driver can expose the PCIe root locality of CPU devices via the standard `resource.kubernetes.io/pcieRoot` attribute.
 This feature is opt-in, and requires _both_ the `DRAListTypeAttributes` Feature Gate (see KEP-5491) enabled in the cluster and the `--expose-pcie-roots` command line
 flag in the driver. The driver has no way to introspect the cluster feature gate states, so care must be taken to keep the configuration consistent.
 
-**IMPORTANT NOTE**: it is recommended to consume the pcieRoots list attributes using the `matchAttribute` or [the derived attributes](https://github.com/kubernetes/enhancements/issues/6080).
+**IMPORTANT NOTE**: it is recommended to consume the `pcieRoot` list attributes using the `matchAttribute` or [the derived attributes](https://github.com/kubernetes/enhancements/issues/6080).
 Care must be taken to consume the attribute using the CEL expressions selector, because the backward compatibility path is not yet clear
 (see: https://github.com/kubernetes/enhancements/pull/6081#issuecomment-4606653735 and following)
 
@@ -193,7 +194,7 @@ spec:
         int: 31
       dra.cpu/numaNodeID:
         int: 0
-      dra.cpu/pcieRoots:
+      resource.kubernetes.io/pcieRoot:
         strings:
         - pci0000:00
       dra.cpu/smtEnabled:

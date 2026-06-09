@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/dynamic-resource-allocation/deviceattribute"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/utils/cpuset"
@@ -492,9 +493,12 @@ func (cp *CPUDriver) HandleError(ctx context.Context, err error, msg string) {
 }
 
 func (cp *CPUDriver) setPCIeRootsAttribute(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, cpuIDs ...int) {
+	// Note: union semantics are correct because kernel cpulistaffinity currently collapses to NUMA granularity;
+	// grouped allocation at socket/NUMA level therefore covers all CPUs local to every reported root.
+	// See docs/dev/topology-linux-sysfs.md for in-depth exploration about the topic.
 	pcieRoots := cp.pcieRootMapper.GetPCIeRootsForCPU(cpuIDs...)
 	if len(pcieRoots) == 0 {
 		return
 	}
-	attrs[AttributePCIeRoots] = resourceapi.DeviceAttribute{StringValues: pcieRoots}
+	attrs[deviceattribute.StandardDeviceAttributePCIeRoot] = resourceapi.DeviceAttribute{StringValues: pcieRoots}
 }

@@ -29,5 +29,4 @@ const (
 	AttributeCoreID     resourceapi.QualifiedName = "dra.cpu/coreID"
 	AttributeCPUID      resourceapi.QualifiedName = "dra.cpu/cpuID"
 	AttributeNumCPUs    resourceapi.QualifiedName = "dra.cpu/numCPUs"
-	AttributePCIeRoots  resourceapi.QualifiedName = "dra.cpu/pcieRoots"
 )

@@ -25,6 +25,7 @@ import (
 	"github.com/onsi/gomega"
 	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/dynamic-resource-allocation/deviceattribute"
 )
 
 const (
@@ -120,7 +121,7 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 
 		for _, slice := range slices {
 			for _, dev := range slice.Spec.Devices {
-				_, hasPCIeRoots := dev.Attributes[driver.AttributePCIeRoots]
+				_, hasPCIeRoots := dev.Attributes[deviceattribute.StandardDeviceAttributePCIeRoot]
 				if !hasPCIeRoots {
 					continue
 				}
@@ -137,12 +138,12 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 
 		for _, slice := range slices {
 			for _, dev := range slice.Spec.Devices {
-				pcieRoots, ok := dev.Attributes[driver.AttributePCIeRoots]
+				pcieRoots, ok := dev.Attributes[deviceattribute.StandardDeviceAttributePCIeRoot]
 				if !ok {
 					continue
 				}
 				gomega.Expect(pcieRoots.StringValues).ToNot(gomega.BeEmpty(),
-					"device %q in slice %q has dra.cpu/pcieRoots but StringValues is empty", dev.Name, slice.Name)
+					"device %q in slice %q has resource.kubernetes.io/pcieRoot but StringValues is empty", dev.Name, slice.Name)
 			}
 		}
 	})
