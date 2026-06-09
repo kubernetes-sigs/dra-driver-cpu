@@ -180,3 +180,35 @@ func TestRemoveDevice(t *testing.T) {
 		})
 	}
 }
+
+func TestAddDeviceOverwrite(t *testing.T) {
+	logger := testr.New(t)
+	tempCDIDir := t.TempDir()
+
+	mgr, err := NewCdiManager(logger, testDriverName, tempCDIDir)
+	require.NoError(t, err)
+
+	deviceName := "claim-cpu-overwrite"
+	expectedSpecName := mgr.getSpecName(deviceName)
+
+	assertFileCount := func(expected int) {
+		files, err := os.ReadDir(tempCDIDir)
+		require.NoError(t, err)
+		require.Len(t, files, expected)
+	}
+
+	err = mgr.AddDevice(logger, deviceName, "CPU=0,1")
+	require.NoError(t, err)
+	assertFileCount(1)
+
+	// Verify the cache has the initial spec
+	spec1 := getSpecFromCache(mgr, expectedSpecName)
+	require.NotNil(t, spec1)
+	require.Equal(t, []string{"CPU=0,1"}, spec1.Devices[0].ContainerEdits.Env)
+
+	// Call AddDevice again with the same deviceName and same data
+	err = mgr.AddDevice(logger, deviceName, "CPU=0,1")
+	require.NoError(t, err)
+	// Verify that we do not create a new file
+	assertFileCount(1)
+}

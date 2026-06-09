@@ -351,6 +351,16 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		}
 	}
 
+	if existingCPUs, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(claim.UID); ok {
+		logger.V(2).Info("claim already has allocated CPUs in store, reusing assignment", "cpus", existingCPUs.String())
+		// Even if the claim is already allocated in our in-memory store (which happens when a duplicate prepare
+		// call is invoked without an intermediate unprepare), we must call prepareDevices and return the result back to Kubelet.
+		// If the CDI file is already created on disk, the CDI manager will safely overwrite it with the same configuration.
+		// This ensures that the CDI specification file is written/recreated on disk (for example, if the driver
+		// pod restarted and synchronized its memory store from the runtime but did not recreate the CDI files on disk).
+		return cp.prepareDevices(logger, claim, existingCPUs)
+	}
+
 	var cpuAssignment cpuset.CPUSet
 	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
 	for _, alloc := range claim.Status.Allocation.Devices.Results {
@@ -400,32 +410,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 
 	cp.cpuAllocationStore.AddResourceClaimAllocation(logger, claim.UID, cpuAssignment)
 
-	deviceName := getCDIDeviceName(claim.UID)
-	envVar := fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claim.UID, cpuAssignment.String())
-	if err := cp.cdiMgr.AddDevice(logger, deviceName, envVar); err != nil {
-		return kubeletplugin.PrepareResult{Err: err}
-	}
-
-	qualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, deviceName)
-	logger.V(6).Info("prepared CDI device", "cdiDeviceName", deviceName, "envVar", envVar, "qualifiedName", qualifiedName)
-	preparedDevices := []kubeletplugin.Device{}
-	for _, allocResult := range claim.Status.Allocation.Devices.Results {
-		if allocResult.Driver != cp.driverName {
-			continue
-		}
-		preparedDevice := kubeletplugin.Device{
-			PoolName:     allocResult.Pool,
-			DeviceName:   allocResult.Device,
-			CDIDeviceIDs: []string{qualifiedName},
-			Requests:     []string{allocResult.Request},
-		}
-		preparedDevices = append(preparedDevices, preparedDevice)
-	}
-
-	logger.V(4).Info("prepared devices for grouped resource claim", "preparedDevices", preparedDevices)
-	return kubeletplugin.PrepareResult{
-		Devices: preparedDevices,
-	}
+	return cp.prepareDevices(logger, claim, cpuAssignment)
 }
 
 func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
@@ -457,6 +442,17 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 	}
 
 	claimCPUSet := cpuset.New(claimCPUIDs...)
+	if existingCPUs, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(claim.UID); ok {
+		logger.V(2).Info("claim already has allocated CPUs in store, reusing assignment", "cpus", existingCPUs.String())
+		if !existingCPUs.Equals(claimCPUSet) {
+			// This should realistically never happen as the claim is immutable.
+			return kubeletplugin.PrepareResult{
+				Err: fmt.Errorf("claim %s/%s is already prepared with different CPUs %s (requested %s)", claim.Namespace, claim.Name, existingCPUs.String(), claimCPUSet.String()),
+			}
+		}
+		return cp.prepareDevices(logger, claim, existingCPUs)
+	}
+
 	// All the CPUs allocated to a claim should currently be in the shared pool.
 	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
 	if !claimCPUSet.IsSubsetOf(sharedCPUs) {
@@ -466,6 +462,10 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 	}
 
 	cp.cpuAllocationStore.AddResourceClaimAllocation(logger, claim.UID, claimCPUSet)
+	return cp.prepareDevices(logger, claim, claimCPUSet)
+}
+
+func (cp *CPUDriver) prepareDevices(logger logr.Logger, claim *resourceapi.ResourceClaim, claimCPUSet cpuset.CPUSet) kubeletplugin.PrepareResult {
 	deviceName := getCDIDeviceName(claim.UID)
 	envVar := fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claim.UID, claimCPUSet.String())
 	if err := cp.cdiMgr.AddDevice(logger, deviceName, envVar); err != nil {
@@ -484,10 +484,13 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 			DeviceName:   allocResult.Device,
 			CDIDeviceIDs: []string{qualifiedName},
 		}
+		if allocResult.Request != "" {
+			preparedDevice.Requests = []string{allocResult.Request}
+		}
 		preparedDevices = append(preparedDevices, preparedDevice)
 	}
 
-	logger.V(4).Info("prepared devices for individual resource claim", "preparedDevices", preparedDevices)
+	logger.V(4).Info("prepared devices for resource claim", "preparedDevices", preparedDevices)
 	return kubeletplugin.PrepareResult{
 		Devices: preparedDevices,
 	}
