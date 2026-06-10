@@ -181,7 +181,7 @@ func (cp *CPUDriver) initializeDeviceLookupMaps() {
 	cp.deviceNameToNUMANodeID = make(map[string]int)
 
 	if cp.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
-		for _, device := range cp.groupedCPUDeviceInfos() {
+		for _, device := range cp.groupedDeviceInfos {
 			switch cp.cpuDeviceGroupBy {
 			case GROUP_BY_SOCKET:
 				cp.deviceNameToSocketID[device.name] = device.socketID
@@ -192,7 +192,7 @@ func (cp *CPUDriver) initializeDeviceLookupMaps() {
 		return
 	}
 
-	for _, device := range cp.cpuDeviceInfos() {
+	for _, device := range cp.individualDeviceInfos {
 		cp.deviceNameToCPUID[device.name] = device.cpu.CpuID
 	}
 }
@@ -202,7 +202,7 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 	logger.V(4).Info("creating grouped CPU devices")
 	var devices []resourceapi.Device
 
-	for _, deviceInfo := range cp.groupedCPUDeviceInfos() {
+	for _, deviceInfo := range cp.groupedDeviceInfos {
 		availableCPUs := int64(deviceInfo.cpus.Size())
 		deviceCapacity := map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
 			cpuResourceQualifiedName: {Value: *resource.NewQuantity(availableCPUs, resource.DecimalSI)},
@@ -266,7 +266,7 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 // to co-locate workloads on hyperthreads of the same core.
 func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 	var allDevices []resourceapi.Device
-	for _, deviceInfo := range cp.cpuDeviceInfos() {
+	for _, deviceInfo := range cp.individualDeviceInfos {
 		cpu := deviceInfo.cpu
 		deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 			AttributeNUMANodeID: {IntValue: new(int64(cpu.NUMANodeID))},
