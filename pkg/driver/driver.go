@@ -194,14 +194,20 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 
 	if plugin.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
 		plugin.groupedDeviceInfos = plugin.groupedCPUDeviceInfos()
-	} else {
-		plugin.individualDeviceInfos = plugin.cpuDeviceInfos()
-	}
-	plugin.initializeDeviceLookupMaps()
-
-	if plugin.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
+		for _, dev := range plugin.groupedDeviceInfos {
+			switch plugin.cpuDeviceGroupBy {
+			case GROUP_BY_SOCKET:
+				plugin.deviceNameToSocketID[dev.name] = dev.socketID
+			case GROUP_BY_NUMA_NODE:
+				plugin.deviceNameToNUMANodeID[dev.name] = dev.numaNodeID
+			}
+		}
 		plugin.deviceSlices = plugin.createGroupedCPUDeviceSlices(logger)
 	} else {
+		plugin.individualDeviceInfos = plugin.cpuDeviceInfos()
+		for _, dev := range plugin.individualDeviceInfos {
+			plugin.deviceNameToCPUID[dev.name] = dev.cpu.CpuID
+		}
 		plugin.deviceSlices = plugin.createCPUDeviceSlices()
 	}
 
