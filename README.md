@@ -158,15 +158,25 @@ flag in the driver. The driver has no way to introspect the cluster feature gate
 Care must be taken to consume the attribute using the CEL expressions selector, because the backward compatibility path is not yet clear
 (see: https://github.com/kubernetes/enhancements/pull/6081#issuecomment-4606653735 and following)
 
+#### Current limitations (v0.2.0)
+
+In grouped mode, the `pcieRoot` attribute reports the union of all PCIe roots local to the group's allocatable CPUs.
+When `matchAttribute` is used for cross-driver co-location (e.g., CPU + NIC), the scheduler matches on a shared root,
+but the driver's CPU allocator selects CPUs within the socket/NUMA group _without taking into account the exact matched root_.
+The consequence is that `pcieRoot` in grouped mode should be read as "the group contains CPUs associated with these roots",
+not "the allocated CPUs are guaranteed to be local to the selected root".
+
+In practice, this distinction is currently not harmful because the kernel's PCIe bus CPU affinity collapses to NUMA-node granularity
+(see docs/dev/topology-linux-sysfs.md for in-depth research based on Linux kernel 7.0.9), so grouped allocation within a NUMA
+node inherently stays within a single root's affinity domain.
+
+For future releases, we plan to both introduce means to feed the driver with finer-grained PCIe root locality and to implement
+PCIe-root-aware CPU selection in the core allocator.
+
 #### Implementation details
 
 While devices don't expose the PCIe root locality, the reverse is true: the linux kernel does report the CPUs local to PCIe buses and devices; the driver scans the PCIe
 buses and tracks the PCIe host bridges CPU locality; from there, we can reconstruct the CPU to PCIe root mapping and then populate the attributes.
-
-Because how the linux kernel retrieves the data from the firmware, and because how the ACPI data reports locality, the PCIe root mapping acts as coarse alignment hint
-and it is not consumed by the internal CPU selection when the driver operates in grouped mode.
-While the driver can consume the PCIe root locality data in its internal CPU selection, the locality granularity hard depends on the kernel-provided data.
-These limitations are planned to be addressed (CPU selection input) and mitigated (coarse granularity) in future versions of the driver.
 
 This is an example of a resource slice produced by a driver running in a kind CI cluster, grouped mode, grouping by numa nodes:
 
