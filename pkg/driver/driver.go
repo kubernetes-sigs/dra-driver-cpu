@@ -165,11 +165,18 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.cpuTopology, config.ReservedCPUs)
 	plugin.podConfigStore = store.NewPodConfig()
+	plugin.initializeDeviceLookupMaps()
 
 	driverPluginPath := filepath.Join(kubeletPluginPath, config.DriverName)
 	if err := os.MkdirAll(driverPluginPath, 0750); err != nil {
 		return nil, asyncErr, fmt.Errorf("failed to create plugin path %s: %w", driverPluginPath, err)
 	}
+
+	cdiMgr, err := NewCdiManager(logger, config.DriverName, cdiSpecDir)
+	if err != nil {
+		return nil, asyncErr, fmt.Errorf("failed to create CDI manager: %w", err)
+	}
+	plugin.cdiMgr = cdiMgr
 
 	kubeletOpts := []kubeletplugin.Option{
 		kubeletplugin.DriverName(config.DriverName),
@@ -191,12 +198,6 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 	if err != nil {
 		return nil, asyncErr, err
 	}
-
-	cdiMgr, err := NewCdiManager(logger, config.DriverName, cdiSpecDir)
-	if err != nil {
-		return nil, asyncErr, fmt.Errorf("failed to create CDI manager: %w", err)
-	}
-	plugin.cdiMgr = cdiMgr
 
 	// register the NRI plugin
 	nriOpts := []stub.Option{
