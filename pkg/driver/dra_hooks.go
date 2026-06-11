@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/dynamic-resource-allocation/deviceattribute"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/utils/cpuset"
@@ -41,11 +42,7 @@ import (
 )
 
 const (
-	// maxDevicesPerResourceSlice is the maximum number of devices that can be packed into a single
-	// ResourceSlice object. This is a hard limit defined in the Kubernetes API at
-	// https://github.com/kubernetes/kubernetes/blob/8e6d788887034b799f6c2a86991a68a080bb0576/pkg/apis/resource/types.go#L245
-	maxDevicesPerResourceSlice = 128
-	cpuDevicePrefix            = "cpudev"
+	cpuDevicePrefix = "cpudev"
 
 	// Grouped Mode
 	// cpuResourceQualifiedName is the qualified name for the CPU resource capacity.
@@ -82,10 +79,11 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 			cp.deviceNameToSocketID[deviceName] = socketID
 
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				"dra.cpu/socketID":   {IntValue: ptr.To(int64(socketID))},
-				"dra.cpu/numCPUs":    {IntValue: ptr.To(availableCPUsInSocket)},
-				"dra.cpu/smtEnabled": {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
+				AttributeSocketID:   {IntValue: ptr.To(int64(socketID))},
+				AttributeNumCPUs:    {IntValue: ptr.To(availableCPUsInSocket)},
+				AttributeSMTEnabled: {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
 			}
+			cp.setPCIeRootsAttribute(deviceAttrs, allocatableCPUs.UnsortedList()...)
 
 			devices = append(devices, resourceapi.Device{
 				Name:                     deviceName,
@@ -117,11 +115,12 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 			cp.deviceNameToNUMANodeID[deviceName] = numaID
 
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				"dra.cpu/numaNodeID": {IntValue: ptr.To(int64(numaID))},
-				"dra.cpu/socketID":   {IntValue: ptr.To(socketID)},
-				"dra.cpu/smtEnabled": {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
-				"dra.cpu/numCPUs":    {IntValue: ptr.To(availableCPUsInNUMANode)},
+				AttributeNUMANodeID: {IntValue: ptr.To(int64(numaID))},
+				AttributeSocketID:   {IntValue: ptr.To(socketID)},
+				AttributeSMTEnabled: {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
+				AttributeNumCPUs:    {IntValue: ptr.To(availableCPUsInNUMANode)},
 			}
+			cp.setPCIeRootsAttribute(deviceAttrs, allocatableCPUs.UnsortedList()...)
 			device.SetCompatibilityAttributes(deviceAttrs, int64(numaID))
 
 			devices = append(devices, resourceapi.Device{
@@ -192,15 +191,16 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 	for _, group := range coreGroups {
 		for _, cpu := range group {
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				"dra.cpu/numaNodeID": {IntValue: ptr.To(int64(cpu.NUMANodeID))},
-				"dra.cpu/socketID":   {IntValue: ptr.To(int64(cpu.SocketID))},
-				"dra.cpu/smtEnabled": {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
-				"dra.cpu/cacheL3ID":  {IntValue: ptr.To(int64(cpu.UncoreCacheID))},
-				"dra.cpu/coreType":   {StringValue: ptr.To(cpu.CoreType.String())},
-				"dra.cpu/coreID":     {IntValue: ptr.To(int64(cpu.CoreID))},
-				"dra.cpu/cpuID":      {IntValue: ptr.To(int64(cpu.CpuID))},
+				AttributeNUMANodeID: {IntValue: ptr.To(int64(cpu.NUMANodeID))},
+				AttributeSocketID:   {IntValue: ptr.To(int64(cpu.SocketID))},
+				AttributeSMTEnabled: {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
+				AttributeCacheL3ID:  {IntValue: ptr.To(int64(cpu.UncoreCacheID))},
+				AttributeCoreType:   {StringValue: ptr.To(cpu.CoreType.String())},
+				AttributeCoreID:     {IntValue: ptr.To(int64(cpu.CoreID))},
+				AttributeCPUID:      {IntValue: ptr.To(int64(cpu.CpuID))},
 			}
 			device.SetCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID))
+			cp.setPCIeRootsAttribute(deviceAttrs, cpu.CpuID)
 
 			deviceName := fmt.Sprintf("%s%03d", cpuDevicePrefix, devId)
 			devId++
@@ -218,8 +218,8 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 		return nil
 	}
 
-	// Chunk devices into slices of at most maxDevicesPerResourceSlice
-	return slices.Collect(slices.Chunk(allDevices, maxDevicesPerResourceSlice))
+	// Chunk devices into slices of at most devicesPerResourceSlice
+	return slices.Collect(slices.Chunk(allDevices, cp.devicesPerResourceSlice))
 }
 
 // PublishResources publishes ResourceSlice for CPU resources.
@@ -490,4 +490,15 @@ func (cp *CPUDriver) HandleError(ctx context.Context, err error, msg string) {
 		ctxlog.Flush()
 		os.Exit(1)
 	}
+}
+
+func (cp *CPUDriver) setPCIeRootsAttribute(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, cpuIDs ...int) {
+	// Note: union semantics are correct because kernel cpulistaffinity currently collapses to NUMA granularity;
+	// grouped allocation at socket/NUMA level therefore covers all CPUs local to every reported root.
+	// See docs/dev/topology-linux-sysfs.md for in-depth exploration about the topic.
+	pcieRoots := cp.pcieRootMapper.GetPCIeRootsForCPU(cpuIDs...)
+	if len(pcieRoots) == 0 {
+		return
+	}
+	attrs[deviceattribute.StandardDeviceAttributePCIeRoot] = resourceapi.DeviceAttribute{StringValues: pcieRoots}
 }

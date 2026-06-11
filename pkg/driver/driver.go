@@ -28,7 +28,9 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
+	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
@@ -78,22 +80,24 @@ type CPUInfoProvider interface {
 
 // CPUDriver is the structure that holds all the driver runtime information.
 type CPUDriver struct {
-	driverName             string
-	nodeName               string
-	kubeClient             kubernetes.Interface
-	draPlugin              KubeletPlugin
-	nriPlugin              stub.Stub
-	podConfigStore         *store.PodConfig
-	cpuAllocationStore     *store.CPUAllocation
-	cdiMgr                 cdiManager
-	cpuTopology            *cpuinfo.CPUTopology
-	deviceNameToCPUID      map[string]int
-	deviceNameToSocketID   map[string]int
-	deviceNameToNUMANodeID map[string]int
-	reservedCPUs           cpuset.CPUSet
-	cpuDeviceMode          string
-	cpuDeviceGroupBy       string
-	claimTracker           *store.ClaimTracker
+	driverName              string
+	nodeName                string
+	kubeClient              kubernetes.Interface
+	draPlugin               KubeletPlugin
+	nriPlugin               stub.Stub
+	podConfigStore          *store.PodConfig
+	cpuAllocationStore      *store.CPUAllocation
+	cdiMgr                  cdiManager
+	cpuTopology             *cpuinfo.CPUTopology
+	deviceNameToCPUID       map[string]int
+	deviceNameToSocketID    map[string]int
+	deviceNameToNUMANodeID  map[string]int
+	reservedCPUs            cpuset.CPUSet
+	cpuDeviceMode           string
+	cpuDeviceGroupBy        string
+	claimTracker            *store.ClaimTracker
+	pcieRootMapper          *store.PCIeRootMapper
+	devicesPerResourceSlice int
 }
 
 // Config is the configuration for the CPUDriver.
@@ -103,6 +107,16 @@ type Config struct {
 	ReservedCPUs     cpuset.CPUSet
 	CPUDeviceMode    string
 	CPUDeviceGroupBy string
+	ExposePCIeRoots  bool
+}
+
+func (cfg Config) DevicesPerResourceSlice() int {
+	if cfg.ExposePCIeRoots {
+		// We use the lower "advanced features" limit because the driver
+		// may set list-type attributes (StringValues) such as PCIe roots.
+		return resourceapi.ResourceSliceMaxDevicesWithAdvancedFeatures
+	}
+	return resourceapi.ResourceSliceMaxDevices
 }
 
 // Start creates and starts a new CPUDriver.
@@ -112,17 +126,26 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 
 	asyncErr := make(chan error, 1)
 	plugin := &CPUDriver{
-		driverName:             config.DriverName,
-		nodeName:               config.NodeName,
-		kubeClient:             clientset,
-		deviceNameToCPUID:      make(map[string]int),
-		deviceNameToSocketID:   make(map[string]int),
-		deviceNameToNUMANodeID: make(map[string]int),
-		reservedCPUs:           config.ReservedCPUs,
-		cpuDeviceMode:          config.CPUDeviceMode,
-		cpuDeviceGroupBy:       config.CPUDeviceGroupBy,
-		claimTracker:           store.NewClaimTracker(),
+		driverName:              config.DriverName,
+		nodeName:                config.NodeName,
+		kubeClient:              clientset,
+		deviceNameToCPUID:       make(map[string]int),
+		deviceNameToSocketID:    make(map[string]int),
+		deviceNameToNUMANodeID:  make(map[string]int),
+		reservedCPUs:            config.ReservedCPUs,
+		cpuDeviceMode:           config.CPUDeviceMode,
+		cpuDeviceGroupBy:        config.CPUDeviceGroupBy,
+		claimTracker:            store.NewClaimTracker(),
+		pcieRootMapper:          store.NewPCIeRootMapper(),
+		devicesPerResourceSlice: config.DevicesPerResourceSlice(),
 	}
+	sysfs := os.DirFS(device.SysfsRoot).(device.SysFS)
+
+	onlineCPUs, err := cpuinfo.OnlineCPUs(logger, sysfs)
+	if err != nil {
+		return nil, asyncErr, fmt.Errorf("failed to get online CPUs: %w", err)
+	}
+	logger.V(2).Info("detected online CPUs", "cpus", onlineCPUs.String())
 
 	cpuInfoProvider := cpuinfo.NewSystemCPUInfo()
 	topo, err := cpuInfoProvider.GetCPUTopology(logger)
@@ -133,6 +156,13 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		return nil, asyncErr, fmt.Errorf("failed to get CPU topology: topology is nil")
 	}
 	plugin.cpuTopology = topo
+
+	if config.ExposePCIeRoots {
+		if err := plugin.pcieRootMapper.Probe(logger, sysfs, onlineCPUs); err != nil {
+			return nil, asyncErr, fmt.Errorf("failed to list PCIe domains: %w", err)
+		}
+	}
+
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.cpuTopology, config.ReservedCPUs)
 	plugin.podConfigStore = store.NewPodConfig()
 

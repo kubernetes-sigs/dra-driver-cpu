@@ -71,6 +71,8 @@ args:
   reservedCPUs: ""
   # -- Override the node name the driver registers under; omitted when empty
   hostnameOverride: ""
+  # -- Discover and expose PCIe roots as device attributes. Requires the `DRAListTypeAttributes=true` feature gate in the cluster
+  exposePCIeRoots: false # @schema type:boolean
 
 # -- Path for liveness and readiness probes
 healthzPath: /healthz

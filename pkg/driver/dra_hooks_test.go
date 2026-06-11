@@ -119,8 +119,8 @@ var (
 	}
 	mockCPUInfos_DualSocket_EqualsResourceSliceLimit = func() []cpuinfo.CPUInfo {
 		var infos []cpuinfo.CPUInfo
-		cpusPerNumaNode := maxDevicesPerResourceSlice / 2
-		for i := range maxDevicesPerResourceSlice {
+		cpusPerNumaNode := resourceapi.ResourceSliceMaxDevices / 2
+		for i := range resourceapi.ResourceSliceMaxDevices {
 			numaNodeID := i / cpusPerNumaNode
 			infos = append(infos, cpuinfo.CPUInfo{CpuID: i, CoreID: i, SocketID: numaNodeID, NUMANodeID: numaNodeID, CoreType: cpuinfo.CoreTypePerformance, SiblingCPUID: -1})
 		}
@@ -128,7 +128,7 @@ var (
 	}()
 	mockCPUInfos_DualSocket_ExceedsResourceSliceLimit = func() []cpuinfo.CPUInfo {
 		var infos []cpuinfo.CPUInfo
-		numCPUS := maxDevicesPerResourceSlice + 10
+		numCPUS := resourceapi.ResourceSliceMaxDevices + 10
 		cpusPerNumaNode := numCPUS / 2
 		for i := range numCPUS {
 			numaNodeID := i / cpusPerNumaNode
@@ -172,6 +172,7 @@ func TestPublishResources(t *testing.T) {
 	logger := testr.New(t)
 	testCases := []struct {
 		name                       string
+		config                     Config
 		cpuInfos                   []cpuinfo.CPUInfo
 		cpuInfoErr                 error
 		publishError               error
@@ -231,7 +232,17 @@ func TestPublishResources(t *testing.T) {
 			cpuInfos:                   mockCPUInfos_DualSocket_120CPUsPerSocket_HT,
 			reservedCPUs:               cpuset.New(),
 			expectPublish:              true,
-			expectedNumSlices:          2, // We should create 2 slices as number of CPUs on the machine exceeds 128.
+			expectedNumSlices:          2, // 240 CPUs / 128 per slice = 2 slices
+			expectedDevices:            len(mockCPUInfos_DualSocket_120CPUsPerSocket_HT),
+			expectedDevicesPerNUMANode: map[int]int{0: 120, 1: 120},
+		},
+		{
+			name:                       "dual socket, 120 CPUs per socker, HT on, PCIe roots exposed",
+			config:                     Config{ExposePCIeRoots: true},
+			cpuInfos:                   mockCPUInfos_DualSocket_120CPUsPerSocket_HT,
+			reservedCPUs:               cpuset.New(),
+			expectPublish:              true,
+			expectedNumSlices:          4, // 240 CPUs / 64 per slice = 4 slices
 			expectedDevices:            len(mockCPUInfos_DualSocket_120CPUsPerSocket_HT),
 			expectedDevicesPerNUMANode: map[int]int{0: 120, 1: 120},
 		},
@@ -257,22 +268,22 @@ func TestPublishResources(t *testing.T) {
 			expectedDevices:   len(mockCPUInfos_SingleSocket_4CPUS_HT),
 		},
 		{
-			name:                       "number of devices exceeds maxDevicesPerResourceSlice",
+			name:                       "number of devices exceeds ResourceSliceMaxDevices",
 			cpuInfos:                   mockCPUInfos_DualSocket_ExceedsResourceSliceLimit,
 			reservedCPUs:               cpuset.New(),
 			expectPublish:              true,
 			expectedNumSlices:          2,
 			expectedDevices:            len(mockCPUInfos_DualSocket_ExceedsResourceSliceLimit),
-			expectedDevicesPerNUMANode: map[int]int{0: (maxDevicesPerResourceSlice + 10) / 2, 1: (maxDevicesPerResourceSlice + 10) / 2},
+			expectedDevicesPerNUMANode: map[int]int{0: (resourceapi.ResourceSliceMaxDevices + 10) / 2, 1: (resourceapi.ResourceSliceMaxDevices + 10) / 2},
 		},
 		{
-			name:                       "number of devices equal to maxDevicesPerResourceSlice",
+			name:                       "number of devices equal to ResourceSliceMaxDevices",
 			cpuInfos:                   mockCPUInfos_DualSocket_EqualsResourceSliceLimit,
 			reservedCPUs:               cpuset.New(),
 			expectPublish:              true,
 			expectedNumSlices:          1,
 			expectedDevices:            len(mockCPUInfos_DualSocket_EqualsResourceSliceLimit),
-			expectedDevicesPerNUMANode: map[int]int{0: maxDevicesPerResourceSlice / 2, 1: maxDevicesPerResourceSlice / 2},
+			expectedDevicesPerNUMANode: map[int]int{0: resourceapi.ResourceSliceMaxDevices / 2, 1: resourceapi.ResourceSliceMaxDevices / 2},
 		},
 		{
 			name:                       "publish with reserved cpus",
@@ -300,11 +311,13 @@ func TestPublishResources(t *testing.T) {
 			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: tc.cpuInfos, Err: tc.cpuInfoErr}
 			topo, _ := mockProvider.GetCPUTopology(logger)
 			cp := &CPUDriver{
-				nodeName:          testNodeName,
-				draPlugin:         mockPlugin,
-				deviceNameToCPUID: make(map[string]int),
-				cpuTopology:       topo,
-				reservedCPUs:      tc.reservedCPUs,
+				nodeName:                testNodeName,
+				draPlugin:               mockPlugin,
+				deviceNameToCPUID:       make(map[string]int),
+				cpuTopology:             topo,
+				reservedCPUs:            tc.reservedCPUs,
+				pcieRootMapper:          store.NewPCIeRootMapper(),
+				devicesPerResourceSlice: tc.config.DevicesPerResourceSlice(),
 			}
 
 			cp.PublishResources(context.Background())
@@ -368,10 +381,10 @@ func TestPublishResources(t *testing.T) {
 					coreType := cpuInfo.CoreType.String()
 					socketID := int64(cpuInfo.SocketID)
 
-					require.Equal(t, numaNode, *device.Attributes["dra.cpu/numaNodeID"].IntValue)
-					require.Equal(t, CacheL3ID, *device.Attributes["dra.cpu/cacheL3ID"].IntValue)
-					require.Equal(t, coreType, *device.Attributes["dra.cpu/coreType"].StringValue)
-					require.Equal(t, socketID, *device.Attributes["dra.cpu/socketID"].IntValue)
+					require.Equal(t, numaNode, *device.Attributes[AttributeNUMANodeID].IntValue)
+					require.Equal(t, CacheL3ID, *device.Attributes[AttributeCacheL3ID].IntValue)
+					require.Equal(t, coreType, *device.Attributes[AttributeCoreType].StringValue)
+					require.Equal(t, socketID, *device.Attributes[AttributeSocketID].IntValue)
 					devicesPerNumaInSlices[cpuInfo.NUMANodeID]++
 				}
 			}

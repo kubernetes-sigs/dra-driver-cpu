@@ -14,16 +14,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package device
+package driver
 
 import (
 	resourceapi "k8s.io/api/resource/v1"
-	"k8s.io/utils/ptr"
 )
 
-// SetCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other
-// DRA resource drivers leveraging attributes which are not kubernetes standard.
-// This is the "staging area" which enables attribute sharing until (or before) they become standard.
-func SetCompatibilityAttributes(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, numaID int64) {
-	attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: ptr.To(numaID)}
-}
+const (
+	AttributeNUMANodeID resourceapi.QualifiedName = "dra.cpu/numaNodeID"
+	AttributeSocketID   resourceapi.QualifiedName = "dra.cpu/socketID"
+	AttributeSMTEnabled resourceapi.QualifiedName = "dra.cpu/smtEnabled"
+	AttributeCacheL3ID  resourceapi.QualifiedName = "dra.cpu/cacheL3ID"
+	AttributeCoreType   resourceapi.QualifiedName = "dra.cpu/coreType"
+	AttributeCoreID     resourceapi.QualifiedName = "dra.cpu/coreID"
+	AttributeCPUID      resourceapi.QualifiedName = "dra.cpu/cpuID"
+	AttributeNumCPUs    resourceapi.QualifiedName = "dra.cpu/numCPUs"
+)

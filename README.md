@@ -29,6 +29,7 @@ The driver can be configured with the following command-line flags:
   - `"numanode"` (default): Groups CPUs by NUMA node.
   - `"socket"`: Groups CPUs by socket.
 - `--reserved-cpus`: Specifies a set of CPUs to be reserved for system and kubelet processes. These CPUs will not be allocatable by the DRA driver and would be excluded from the `ResourceSlice`. The value is a cpuset, e.g., `0-1`. This semantic is the same as the one the kubelet applies with its `static` CPU Manager policy and enabling [`strict-cpu-reservation`](https://kubernetes.io/blog/2024/12/16/cpumanager-strict-cpu-reservation/) flag and specifying the CPUs with the [`reservedSystemCPUs`](https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/#explicitly-reserved-cpu-list) to be reserved for system daemons. For correct CPU accounting, the number of CPUs reserved with this flag should match the sum of the kubelet's `kubeReserved` and `systemReserved` settings. This ensures the kubelet subtracts the correct number of CPUs from `Node.Status.Allocatable`.
+- `--expose-pcie-roots`: If enabled, adds the "resource.kubernetes.io/pcieRoot" standard value to CPU devices, to report the PCIe roots close to each device. Since it always reports values as list, this option requires the cluster Feature Gate `DRAListTypeAttributes` (see KEP 5491) to be enabled. The driver has no way to introspect the cluster Feature Gate, so care must be taken to enable first the Feature Gate then this option.
 
 ## How it Works
 
@@ -146,6 +147,86 @@ spec:
 However, this is only a partial replacement of the corresponding CPU Manager option. The main problem of this approach is that it leaks assumptions about machine properties.
 We hardcode the NUMA split and, unlike the cpumanager feature, it won't automatically adapt if the same claim is handled by a 1-NUMA, 2-NUMA or 4-NUMA machine;
 the claim would need to be updated or recreated manually.
+
+### Exposing PCIe roots
+
+The DRA CPU Driver can expose the PCIe root locality of CPU devices via the standard `resource.kubernetes.io/pcieRoot` attribute.
+This feature is opt-in, and requires _both_ the `DRAListTypeAttributes` Feature Gate (see KEP-5491) enabled in the cluster and the `--expose-pcie-roots` command line
+flag in the driver. The driver has no way to introspect the cluster feature gate states, so care must be taken to keep the configuration consistent.
+
+**IMPORTANT NOTE**: it is recommended to consume the `pcieRoot` list attributes using the `matchAttribute` or [the derived attributes](https://github.com/kubernetes/enhancements/issues/6080).
+Care must be taken to consume the attribute using the CEL expressions selector, because the backward compatibility path is not yet clear
+(see: https://github.com/kubernetes/enhancements/pull/6081#issuecomment-4606653735 and following)
+
+#### Current limitations (v0.2.0)
+
+In grouped mode, the `pcieRoot` attribute reports the union of all PCIe roots local to the group's allocatable CPUs.
+When `matchAttribute` is used for cross-driver co-location (e.g., CPU + NIC), the scheduler matches on a shared root,
+but the driver's CPU allocator selects CPUs within the socket/NUMA group _without taking into account the exact matched root_.
+The consequence is that `pcieRoot` in grouped mode should be read as "the group contains CPUs associated with these roots",
+not "the allocated CPUs are guaranteed to be local to the selected root".
+
+In practice, this distinction is currently not harmful because the kernel's PCIe bus CPU affinity collapses to NUMA-node granularity
+(see docs/dev/topology-linux-sysfs.md for in-depth research based on Linux kernel 7.0.9), so grouped allocation within a NUMA
+node inherently stays within a single root's affinity domain.
+
+For future releases, we plan to both introduce means to feed the driver with finer-grained PCIe root locality and to implement
+PCIe-root-aware CPU selection in the core allocator.
+
+#### Implementation details
+
+While devices don't expose the PCIe root locality, the reverse is true: the linux kernel does report the CPUs local to PCIe buses and devices; the driver scans the PCIe
+buses and tracks the PCIe host bridges CPU locality; from there, we can reconstruct the CPU to PCIe root mapping and then populate the attributes.
+
+This is an example of a resource slice produced by a driver running in a kind CI cluster, grouped mode, grouping by numa nodes:
+
+```yaml
+apiVersion: resource.k8s.io/v1
+kind: ResourceSlice
+metadata:
+  creationTimestamp: "2026-05-29T14:09:35Z"
+  generateName: 00000-dra.cpu-dra-driver-cpu-worker-
+  generation: 1
+  name: 00000-dra.cpu-dra-driver-cpu-worker-v7pdl
+  ownerReferences:
+  - apiVersion: v1
+    controller: true
+    kind: Node
+    name: dra-driver-cpu-worker
+    uid: 80fbb23c-ae26-44b4-a21a-dce4037db82d
+  resourceVersion: "651"
+  uid: 08664794-f96b-43fd-b8ce-233c7bd172f6
+spec:
+  devices:
+  - allowMultipleAllocations: true
+    attributes:
+      dra.cpu/numCPUs:
+        int: 31
+      dra.cpu/numaNodeID:
+        int: 0
+      resource.kubernetes.io/pcieRoot:
+        strings:
+        - pci0000:00
+      dra.cpu/smtEnabled:
+        bool: true
+      dra.cpu/socketID:
+        int: 0
+      dra.net/numaNode:
+        int: 0
+    capacity:
+      dra.cpu/cpu:
+        value: "31"
+    name: cpudevnuma000
+  driver: dra.cpu
+  nodeName: dra-driver-cpu-worker
+  pool:
+    generation: 1
+    name: dra-driver-cpu-worker
+    resourceSliceCount: 1
+```
+
+Note the amount of PCIe roots may vary and depends on both the physical wiring of the system and on whether slots are populated or not;
+most firmware don't enumerate PCIe buses - and therefore don't expose PCIe roots - if no devices are connected.
 
 ## Workload Configuration Requirements
 
