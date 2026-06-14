@@ -64,22 +64,3 @@ func PCIeDomainsFromFS(logger logr.Logger, sysfs SysFS) ([]PCIeDomain, error) {
 
 	return roots, nil
 }
-
-// IsPCIeRootName matches the constructions of the pcie roots in the linux kernel.
-// The kernel format string is "pci%04x:%02x" (linux 7.0.9: drivers/pci/probe.c:1028).
-func IsPCIeRootName(name string) bool {
-	// entry: pciXXXX:YY
-	// index: 0123456789
-	//           ^^^^
-	//                ^^
-	if len(name) != 10 || name[:3] != "pci" || name[7] != ':' {
-		return false
-	}
-	for _, i := range []int{3, 4, 5, 6, 8, 9} {
-		c := name[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
-}
