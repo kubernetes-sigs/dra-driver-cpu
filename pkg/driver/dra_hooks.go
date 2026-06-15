@@ -520,9 +520,13 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 }
 
 func (cp *CPUDriver) unprepareResourceClaim(logger logr.Logger, claim kubeletplugin.NamespacedObject) error {
+	// Remove the CDI spec first. If that fails, keep the allocation recorded so
+	// the driver does not make those CPUs available while stale CDI state remains.
+	if err := cp.cdiMgr.RemoveDevice(logger, getCDIDeviceName(claim.UID)); err != nil {
+		return err
+	}
 	cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claim.UID)
-	// Remove the device from the CDI spec file using the manager.
-	return cp.cdiMgr.RemoveDevice(logger, getCDIDeviceName(claim.UID))
+	return nil
 }
 
 // HandleError is called by the kubelet plugin framework when an error occurs in the background,
