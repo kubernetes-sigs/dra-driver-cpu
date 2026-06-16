@@ -102,8 +102,7 @@ func (cp *CPUDriver) groupedCPUDeviceInfos() []groupedCPUDeviceInfo {
 			})
 		}
 	case GROUP_BY_MACHINE:
-		allCPUs := topo.CPUDetails.CPUs()
-		allocatableCPUs := allCPUs.Difference(cp.reservedCPUs)
+		allocatableCPUs := cp.onlineCPUs.Difference(cp.reservedCPUs)
 		devices = append(devices, groupedCPUDeviceInfo{
 			name: cpuDeviceMachineGrouped,
 			cpus: allocatableCPUs,
@@ -428,8 +427,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no opaque cpuset configuration found for allocation request %q", alloc.Request)}
 			}
 
-			onlineCPUs := topo.CPUDetails.CPUs()
-			if err := cp.validateOpaqueCPUSet(opaqueCPUSet, onlineCPUs, cpuAssignment, claimCPUCount); err != nil {
+			if err := cp.validateOpaqueCPUSet(opaqueCPUSet, cp.onlineCPUs, cpuAssignment, claimCPUCount); err != nil {
 				return kubeletplugin.PrepareResult{Err: err}
 			}
 			cur = opaqueCPUSet

@@ -333,6 +333,7 @@ func makeResourceClaimSpec(cpus int, isConsumable bool) resourcev1.ResourceClaim
 }
 
 func makeResourceClaimSpecWithOpaqueConfig(cpus int, isConsumable bool, cpusetStr string) resourcev1.ResourceClaimSpec {
+	ginkgo.GinkgoHelper()
 	spec := makeResourceClaimSpec(cpus, isConsumable)
 	if cpusetStr != "" {
 		config := v1alpha1.OpaqueConfig{

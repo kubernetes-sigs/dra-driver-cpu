@@ -954,6 +954,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 		driver.deviceNameToNUMANodeID = make(map[string]int)
 		mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
 		driver.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
+		driver.onlineCPUs = driver.cpuTopology.CPUDetails.CPUs()
 		driver.cpuAllocationStore = store.NewCPUAllocation(driver.cpuTopology, reservedCPUs)
 		for claimUID, cpus := range initialAllocations {
 			driver.cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, cpus)
@@ -1663,7 +1664,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 	testCases := []struct {
 		name                string
 		claims              []*resourceapi.ResourceClaim
-		expectedErrorMsg    string
+		expectedErrors      map[string]string
 		expectedAllocations map[string]cpuset.CPUSet
 		reservedCPUs        cpuset.CPUSet
 		initialAllocations  map[types.UID]cpuset.CPUSet
@@ -1685,8 +1686,12 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 				testClaimWithOpaqueConfig("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "0,4"),
 				testClaimWithOpaqueConfig("claim-2", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "4,5"),
 			},
-			expectedErrorMsg:    "conflict with already allocated claims",
-			expectedAllocations: map[string]cpuset.CPUSet{},
+			expectedErrors: map[string]string{
+				"claim-2": "conflict with already allocated claims",
+			},
+			expectedAllocations: map[string]cpuset.CPUSet{
+				"claim-1": cpuset.New(0, 4),
+			},
 		},
 		{
 			name: "CPU allocation with other device claim configurations inside the same slice",
@@ -1747,7 +1752,9 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 					return claim
 				}(),
 			},
-			expectedErrorMsg: "unsupported opaque config apiVersion",
+			expectedErrors: map[string]string{
+				"claim-1": "unsupported opaque config apiVersion",
+			},
 		},
 		{
 			name: "Incorrect source",
@@ -1771,7 +1778,9 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 					return claim
 				}(),
 			},
-			expectedErrorMsg: "opaque config: configuration from DeviceClass is not supported by this driver, custom cpusets must be defined per ResourceClaim request",
+			expectedErrors: map[string]string{
+				"claim-1": "opaque config: configuration from DeviceClass is not supported by this driver, custom cpusets must be defined per ResourceClaim request",
+			},
 		},
 		{
 			name: "CPU config block with non-matching request name is ignored",
@@ -1795,7 +1804,9 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 					return claim
 				}(),
 			},
-			expectedErrorMsg: "is targeted by 0 configurations, must be targeted by exactly 1",
+			expectedErrors: map[string]string{
+				"claim-1": "is targeted by 0 configurations, must be targeted by exactly 1",
+			},
 		},
 		{
 			name: "CPU config block with empty requests list is rejected",
@@ -1819,7 +1830,9 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 					return claim
 				}(),
 			},
-			expectedErrorMsg: "opaque config: parameters block must target exactly 1 request using the 'requests' field",
+			expectedErrors: map[string]string{
+				"claim-1": "opaque config: parameters block must target exactly 1 request using the 'requests' field",
+			},
 		},
 		{
 			name: "CPU config block targeting multiple requests is rejected",
@@ -1843,22 +1856,28 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 					return claim
 				}(),
 			},
-			expectedErrorMsg: "opaque config: parameters block must target exactly 1 request using the 'requests' field",
+			expectedErrors: map[string]string{
+				"claim-1": "opaque config: parameters block must target exactly 1 request using the 'requests' field",
+			},
 		},
 		{
 			name: "CPU allocation with offline cores",
 			claims: []*resourceapi.ResourceClaim{
 				testClaimWithOpaqueConfig("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "99,100"),
 			},
-			expectedErrorMsg: "contain offline cores: 99-100",
+			expectedErrors: map[string]string{
+				"claim-1": "contain offline cores: 99-100",
+			},
 		},
 		{
 			name: "CPU allocation with reserved cores",
 			claims: []*resourceapi.ResourceClaim{
 				testClaimWithOpaqueConfig("claim-1", testDriverName, testNodeName, map[string]int64{cpuDeviceMachineGrouped: 2}, "0,4"),
 			},
-			reservedCPUs:     cpuset.New(0, 1),
-			expectedErrorMsg: "contain reserved cores: 0",
+			reservedCPUs: cpuset.New(0, 1),
+			expectedErrors: map[string]string{
+				"claim-1": "contain reserved cores: 0",
+			},
 		},
 		{
 			name: "CPU allocation with already allocated claims conflict",
@@ -1868,7 +1887,9 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 			initialAllocations: map[types.UID]cpuset.CPUSet{
 				"other-claim": cpuset.New(4, 5),
 			},
-			expectedErrorMsg: "conflict with already allocated claims",
+			expectedErrors: map[string]string{
+				"claim-1": "conflict with already allocated claims",
+			},
 		},
 		{
 			name: "CPU allocation with overlapping cores inside the same claim",
@@ -1892,7 +1913,9 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 					return claim
 				}(),
 			},
-			expectedErrorMsg: "are already assigned to another device in this claim",
+			expectedErrors: map[string]string{
+				"claim-1": "are already assigned to another device in this claim",
+			},
 		},
 	}
 
@@ -1902,51 +1925,41 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 			if tc.reservedCPUs.Size() > 0 {
 				testReserved = tc.reservedCPUs
 			}
-			driver := createCPUDriverForTest(t, GROUP_BY_MACHINE, cpuInfos, tc.initialAllocations, testReserved)
-			driver.cdiMgr = newMockCdiMgr()
+			mockCdi := newMockCdiMgr()
+			driver := createCPUDriverForTest(t, GROUP_BY_MACHINE, cpuInfos, tc.initialAllocations, testReserved, mockCdi)
 
 			prepared, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
 			require.NoError(t, err)
 
-			if tc.expectedErrorMsg != "" {
-				var foundErr bool
-				var actualErrors []string
-				for _, claim := range tc.claims {
-					result, exists := prepared[claim.UID]
-					require.True(t, exists, "Claim result missing for UID: %s", claim.UID)
-					if result.Err != nil {
-						actualErrors = append(actualErrors, result.Err.Error())
-						if strings.Contains(result.Err.Error(), tc.expectedErrorMsg) {
-							foundErr = true
-						}
-					}
-				}
-				assert.True(t, foundErr, "Expected at least one claim to fail with error containing %q, got errors: %v", tc.expectedErrorMsg, actualErrors)
-			} else {
-				for _, claim := range tc.claims {
-					result, exists := prepared[claim.UID]
-					require.True(t, exists, "Claim result missing for UID: %s", claim.UID)
-					assert.NoError(t, result.Err, "Unexpected error for claim %s", claim.UID)
-					if expectedSet, ok := tc.expectedAllocations[string(claim.UID)]; ok {
-						alloc, found := driver.cpuAllocationStore.GetResourceClaimAllocation(claim.UID)
-						assert.True(t, found, "Allocation not stored for claim %s", claim.UID)
-						assert.Equal(t, expectedSet, alloc)
+			for _, claim := range tc.claims {
+				result, exists := prepared[claim.UID]
+				require.True(t, exists, "Claim result missing for UID: %s", claim.UID)
 
-						mockCdi := driver.cdiMgr.(*mockCdiMgr)
-						cdiDeviceName := fmt.Sprintf("claim-%s", claim.UID)
-						expectedEnvVar := fmt.Sprintf("DRA_CPUSET_%s=%s", claim.UID, expectedSet.String())
-						assert.Equal(t, expectedEnvVar, mockCdi.devices[cdiDeviceName])
-					}
+				if expectedErr, ok := tc.expectedErrors[string(claim.UID)]; ok && expectedErr != "" {
+					assert.ErrorContains(t, result.Err, expectedErr)
+					continue
+				}
+
+				assert.NoError(t, result.Err, "Unexpected error for claim %s", claim.UID)
+				if expectedSet, ok := tc.expectedAllocations[string(claim.UID)]; ok {
+					alloc, found := driver.cpuAllocationStore.GetResourceClaimAllocation(claim.UID)
+					assert.True(t, found, "Allocation not stored for claim %s", claim.UID)
+					assert.Equal(t, expectedSet, alloc)
+
+					cdiDeviceName := fmt.Sprintf("claim-%s", claim.UID)
+					expectedEnvVar := fmt.Sprintf("DRA_CPUSET_%s=%s", claim.UID, expectedSet.String())
+					assert.Equal(t, expectedEnvVar, mockCdi.devices[cdiDeviceName])
 				}
 			}
 		})
 	}
 }
 
-func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet) *CPUDriver {
+func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet, cdiMgr cdiManager) *CPUDriver {
 	t.Helper()
 	logger := testr.New(t)
 	driver := &CPUDriver{}
+	driver.cdiMgr = cdiMgr
 	driver.driverName = testDriverName
 	driver.cpuDeviceMode = CPU_DEVICE_MODE_GROUPED
 	driver.cpuDeviceGroupBy = groupBy
@@ -1954,6 +1967,7 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 	driver.deviceNameToNUMANodeID = make(map[string]int)
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
 	driver.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
+	driver.onlineCPUs = driver.cpuTopology.CPUDetails.CPUs()
 	driver.cpuAllocationStore = store.NewCPUAllocation(driver.cpuTopology, reservedCPUs)
 	for claimUID, cpus := range initialAllocations {
 		driver.cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, cpus)
