@@ -575,10 +575,12 @@ func TestPrepareResourceClaimsSucceedsBeforePublishResources(t *testing.T) {
 			topo, err := mockProvider.GetCPUTopology(logger)
 			require.NoError(t, err)
 
+			cpuStore := store.NewCPUAllocation(topo, cpuset.New())
+
 			driver := &CPUDriver{
 				driverName:         testDriverName,
 				cpuTopology:        topo,
-				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+				cpuAllocationStore: cpuStore,
 				cdiMgr:             newMockCdiMgr(),
 				cpuDeviceMode:      tc.cpuDeviceMode,
 				cpuDeviceGroupBy:   tc.cpuDeviceGroupBy,
@@ -592,7 +594,7 @@ func TestPrepareResourceClaimsSucceedsBeforePublishResources(t *testing.T) {
 			require.NotEmpty(t, preparedClaims[claimUID].Devices)
 			require.Len(t, driver.cdiMgr.(*mockCdiMgr).devices, 1)
 
-			_, ok := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
+			_, ok := cpuStore.GetResourceClaimAllocation(claimUID)
 			require.True(t, ok)
 		})
 	}
@@ -1137,6 +1139,7 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 		secondDevices  []string
 		expectedCPUSet cpuset.CPUSet
 		expectedShared cpuset.CPUSet
+		expectError    bool
 	}{
 		{
 			name:           "individual mode - same devices repeated",
@@ -1144,13 +1147,15 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 			secondDevices:  []string{"cpudev0", "cpudev1"},
 			expectedCPUSet: cpuset.New(0, 1),
 			expectedShared: cpuset.New(2, 3),
+			expectError:    false,
 		},
 		{
 			name:           "individual mode - different devices repeated",
 			firstDevices:   []string{"cpudev0", "cpudev1"},
 			secondDevices:  []string{"cpudev2", "cpudev3"},
-			expectedCPUSet: cpuset.New(2, 3),
-			expectedShared: cpuset.New(0, 1),
+			expectedCPUSet: cpuset.New(0, 1),
+			expectedShared: cpuset.New(2, 3),
+			expectError:    true,
 		},
 	}
 
@@ -1158,6 +1163,8 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
 			topo, _ := mockProvider.GetCPUTopology(logger)
+			cpuStore := store.NewCPUAllocation(topo, cpuset.New())
+			cdiMgr := newMockCdiMgr()
 			driver := &CPUDriver{
 				driverName: testDriverName,
 				deviceNameToCPUID: map[string]int{
@@ -1166,8 +1173,8 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 					"cpudev2": 2,
 					"cpudev3": 3,
 				},
-				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
-				cdiMgr:             newMockCdiMgr(),
+				cpuAllocationStore: cpuStore,
+				cdiMgr:             cdiMgr,
 			}
 
 			makeClaim := func(devices []string) []*resourceapi.ResourceClaim {
@@ -1190,15 +1197,139 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 			_, err := driver.PrepareResourceClaims(context.Background(), makeClaim(tc.firstDevices))
 			require.NoError(t, err)
 
-			_, err = driver.PrepareResourceClaims(context.Background(), makeClaim(tc.secondDevices))
+			prepareResults, err := driver.PrepareResourceClaims(context.Background(), makeClaim(tc.secondDevices))
 			require.NoError(t, err)
 
-			gotCPUs, ok := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
+			claimResult, ok := prepareResults[claimUID]
 			require.True(t, ok)
-			require.True(t, tc.expectedCPUSet.Equals(gotCPUs), "claim cpus: got %s, want %s", gotCPUs, tc.expectedCPUSet)
-			require.True(t, tc.expectedShared.Equals(driver.cpuAllocationStore.GetSharedCPUs()), "shared cpus: got %s, want %s", driver.cpuAllocationStore.GetSharedCPUs(), tc.expectedShared)
 
-			envVar := driver.cdiMgr.(*mockCdiMgr).devices[cdiDeviceName]
+			if tc.expectError {
+				require.Error(t, claimResult.Err)
+			} else {
+				require.NoError(t, claimResult.Err)
+
+				gotCPUs, ok := cpuStore.GetResourceClaimAllocation(claimUID)
+				require.True(t, ok)
+				require.True(t, tc.expectedCPUSet.Equals(gotCPUs), "claim cpus: got %s, want %s", gotCPUs, tc.expectedCPUSet)
+				require.True(t, tc.expectedShared.Equals(cpuStore.GetSharedCPUs()), "shared cpus: got %s, want %s", cpuStore.GetSharedCPUs(), tc.expectedShared)
+
+				envVar := cdiMgr.devices[cdiDeviceName]
+				parts := strings.SplitN(envVar, "=", 2)
+				require.Len(t, parts, 2)
+				actualCPUSet, err := cpuset.Parse(parts[1])
+				require.NoError(t, err)
+				require.True(t, tc.expectedCPUSet.Equals(actualCPUSet), "cdi env cpus: got %s, want %s", actualCPUSet, tc.expectedCPUSet)
+			}
+		})
+	}
+}
+
+func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
+	logger := testr.New(t)
+	claimUID := types.UID("claim-1")
+	cdiDeviceName := getCDIDeviceName(claimUID)
+
+	// tests should not access private data. Using fake/mocks, passing them to the driver
+	// and asserting on the fake/mock state accessed directly from test code (not through
+	// the driver private data) is bending the rules and a practical choice.
+
+	makeSocketDriver := func(logger logr.Logger) (*CPUDriver, *store.CPUAllocation, *mockCdiMgr) {
+		cdiMgr := newMockCdiMgr()
+		mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT}
+		topo, _ := mockProvider.GetCPUTopology(logger)
+		cpuStore := store.NewCPUAllocation(topo, cpuset.New())
+		return &CPUDriver{
+			driverName:             testDriverName,
+			cpuDeviceMode:          CPU_DEVICE_MODE_GROUPED,
+			cpuDeviceGroupBy:       GROUP_BY_SOCKET,
+			cpuTopology:            topo,
+			deviceNameToSocketID:   map[string]int{"cpudevsocket0": 0, "cpudevsocket1": 1},
+			deviceNameToNUMANodeID: map[string]int{},
+			cpuAllocationStore:     cpuStore,
+			cdiMgr:                 cdiMgr,
+		}, cpuStore, cdiMgr
+	}
+	makeNUMADriver := func(logger logr.Logger) (*CPUDriver, *store.CPUAllocation, *mockCdiMgr) {
+		cdiMgr := newMockCdiMgr()
+		mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT}
+		topo, _ := mockProvider.GetCPUTopology(logger)
+		cpuStore := store.NewCPUAllocation(topo, cpuset.New())
+		return &CPUDriver{
+			driverName:             testDriverName,
+			cpuDeviceMode:          CPU_DEVICE_MODE_GROUPED,
+			cpuDeviceGroupBy:       GROUP_BY_NUMA_NODE,
+			cpuTopology:            topo,
+			deviceNameToSocketID:   map[string]int{},
+			deviceNameToNUMANodeID: map[string]int{"cpudevnuma0": 0, "cpudevnuma1": 1},
+			cpuAllocationStore:     cpuStore,
+			cdiMgr:                 cdiMgr,
+		}, cpuStore, cdiMgr
+	}
+
+	testCases := []struct {
+		name           string
+		makeDriver     func(logr.Logger) (*CPUDriver, *store.CPUAllocation, *mockCdiMgr)
+		firstClaim     *resourceapi.ResourceClaim
+		secondClaim    *resourceapi.ResourceClaim
+		expectedCPUSet cpuset.CPUSet
+		expectedShared cpuset.CPUSet
+	}{
+		{
+			name:           "same socket repeated",
+			makeDriver:     makeSocketDriver,
+			firstClaim:     testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2}),
+			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2}),
+			expectedCPUSet: cpuset.New(0, 4),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+		},
+		{
+			name:           "different socket repeated",
+			makeDriver:     makeSocketDriver,
+			firstClaim:     testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2}),
+			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket1": 2}),
+			expectedCPUSet: cpuset.New(0, 4),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+		},
+		{
+			name:           "same NUMA node repeated",
+			makeDriver:     makeNUMADriver,
+			firstClaim:     testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2}),
+			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2}),
+			expectedCPUSet: cpuset.New(0, 4),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+		},
+		{
+			name:           "different NUMA node repeated",
+			makeDriver:     makeNUMADriver,
+			firstClaim:     testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2}),
+			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma1": 2}),
+			expectedCPUSet: cpuset.New(0, 4),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			driver, cpuStore, cdiMgr := tc.makeDriver(logger)
+
+			_, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{tc.firstClaim})
+			require.NoError(t, err)
+
+			gotCPUsAfterFirst, ok := cpuStore.GetResourceClaimAllocation(claimUID)
+			require.True(t, ok)
+			require.True(t, tc.expectedCPUSet.Equals(gotCPUsAfterFirst), "claim cpus after first prepare: got %s, want %s", gotCPUsAfterFirst, tc.expectedCPUSet)
+			require.True(t, tc.expectedShared.Equals(cpuStore.GetSharedCPUs()), "shared cpus after first prepare: got %s, want %s", cpuStore.GetSharedCPUs(), tc.expectedShared)
+
+			prepareResults, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{tc.secondClaim})
+			require.NoError(t, err)
+			require.NoError(t, prepareResults[claimUID].Err)
+
+			gotCPUs, ok := cpuStore.GetResourceClaimAllocation(claimUID)
+			require.True(t, ok)
+			require.True(t, gotCPUsAfterFirst.Equals(gotCPUs), "claim cpus must be unchanged after second prepare: got %s, want %s", gotCPUs, gotCPUsAfterFirst)
+			require.True(t, tc.expectedShared.Equals(cpuStore.GetSharedCPUs()), "shared cpus must be unchanged after second prepare: got %s, want %s", cpuStore.GetSharedCPUs(), tc.expectedShared)
+
+			envVar := cdiMgr.devices[cdiDeviceName]
 			parts := strings.SplitN(envVar, "=", 2)
 			require.Len(t, parts, 2)
 			actualCPUSet, err := cpuset.Parse(parts[1])
@@ -1339,6 +1470,7 @@ func testClaim(claimUID types.UID, driverName, poolName string, consumedCapacity
 			Driver:           driverName,
 			Pool:             poolName,
 			Device:           device,
+			Request:          string(claimUID),
 			ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{cpuResourceQualifiedName: *resource.NewQuantity(quantity, resource.DecimalSI)},
 		})
 	}
