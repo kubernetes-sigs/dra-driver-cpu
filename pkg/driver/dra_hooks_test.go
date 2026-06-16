@@ -1264,6 +1264,61 @@ func TestUnprepareResourceClaims(t *testing.T) {
 	}
 }
 
+func TestUnprepareResourceClaimsKeepsAllocationWhenCDIRemoveFails(t *testing.T) {
+	logger := testr.New(t)
+	claimUID := types.UID("claim-cdi-remove-fails")
+	cdiDeviceName := getCDIDeviceName(claimUID)
+	allocatedCPUs := cpuset.New(0, 2)
+
+	cp, mockCdiMgr := newDriverWithAllocatedClaim(t, logger, claimUID, allocatedCPUs)
+	mockCdiMgr.removeError = fmt.Errorf("cdi remove error")
+
+	unpreparedClaims, err := cp.UnprepareResourceClaims(context.Background(), []kubeletplugin.NamespacedObject{{UID: claimUID}})
+	require.NoError(t, err)
+	require.Error(t, unpreparedClaims[claimUID])
+
+	gotCPUs, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
+	require.True(t, ok)
+	require.True(t, allocatedCPUs.Equals(gotCPUs), "claim cpus: got %s, want %s", gotCPUs, allocatedCPUs)
+	require.True(t, cpuset.New(1, 3).Equals(cp.cpuAllocationStore.GetSharedCPUs()), "shared cpus: got %s", cp.cpuAllocationStore.GetSharedCPUs())
+	require.Contains(t, mockCdiMgr.devices, cdiDeviceName)
+}
+
+func TestUnprepareResourceClaimsRemovesAllocationAfterCDIRemoveSucceeds(t *testing.T) {
+	logger := testr.New(t)
+	claimUID := types.UID("claim-cdi-remove-succeeds")
+	cdiDeviceName := getCDIDeviceName(claimUID)
+	allocatedCPUs := cpuset.New(0, 2)
+
+	cp, mockCdiMgr := newDriverWithAllocatedClaim(t, logger, claimUID, allocatedCPUs)
+
+	unpreparedClaims, err := cp.UnprepareResourceClaims(context.Background(), []kubeletplugin.NamespacedObject{{UID: claimUID}})
+	require.NoError(t, err)
+	require.NoError(t, unpreparedClaims[claimUID])
+
+	_, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
+	require.False(t, ok)
+	require.True(t, cpuset.New(0, 1, 2, 3).Equals(cp.cpuAllocationStore.GetSharedCPUs()), "shared cpus: got %s", cp.cpuAllocationStore.GetSharedCPUs())
+	require.NotContains(t, mockCdiMgr.devices, cdiDeviceName)
+}
+
+func newDriverWithAllocatedClaim(t *testing.T, logger logr.Logger, claimUID types.UID, allocatedCPUs cpuset.CPUSet) (*CPUDriver, *mockCdiMgr) {
+	t.Helper()
+
+	mockCdiMgr := newMockCdiMgr()
+	mockCdiMgr.devices[getCDIDeviceName(claimUID)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, allocatedCPUs.String())
+	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
+	topo, err := mockProvider.GetCPUTopology(logger)
+	require.NoError(t, err)
+	cpuAllocationStore := store.NewCPUAllocation(topo, cpuset.New())
+	cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, allocatedCPUs)
+
+	return &CPUDriver{
+		cdiMgr:             mockCdiMgr,
+		cpuAllocationStore: cpuAllocationStore,
+	}, mockCdiMgr
+}
+
 func testClaimWithResults(claimUID types.UID, results []resourceapi.DeviceRequestAllocationResult) *resourceapi.ResourceClaim {
 	return &resourceapi.ResourceClaim{
 		ObjectMeta: metav1.ObjectMeta{UID: claimUID, Name: string(claimUID)},
