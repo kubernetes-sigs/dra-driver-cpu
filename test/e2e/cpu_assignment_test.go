@@ -68,6 +68,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		dracpuTesterImage string
 		reservedCPUs      cpuset.CPUSet
 		cpuDeviceMode     string
+		groupBy           string
 	)
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
@@ -102,9 +103,12 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		if val, ok := findArgInContainer(cnt, argCPUDeviceMode); ok {
 			cpuDeviceMode = val
 		}
+		if val, ok := findArgInContainer(cnt, argGroupBy); ok {
+			groupBy = val
+		}
 		rootFxt.Log.Info("daemonset --reserved-cpus configuration", "cpus", dsReservedCPUs.String())
 		gomega.Expect(dsReservedCPUs.Equals(reservedCPUs)).To(gomega.BeTrue(), "daemonset reserved cpus %v do not match test reserved cpus %v", dsReservedCPUs.String(), reservedCPUs.String())
-		rootFxt.Log.Info("daemonset --cpu-device-mode configuration", "mode", cpuDeviceMode)
+		rootFxt.Log.Info("daemonset --cpu-device-mode configuration", "mode", cpuDeviceMode, "groupBy", groupBy)
 
 		targetNode, err = e2enode.PickWorker(ctx, rootFxt.K8SClientset, 5*time.Second, 1*time.Minute, rootFxt.Log)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -150,6 +154,9 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 			})
 
 			ginkgo.It("should allocate exclusive CPUs and remove from the shared pool", func(ctx context.Context) {
+				if cpuDeviceMode == "grouped" && groupBy == "machine" {
+					ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
+				}
 				fixture.By("creating a best-effort reference pod")
 				shrPod1 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
 
@@ -224,6 +231,9 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				if cpuDeviceMode != "grouped" {
 					ginkgo.Skip("this test only applies to grouped CPU device mode")
 				}
+				if groupBy == "machine" {
+					ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
+				}
 				if availableCPUs.Size() < 2 {
 					ginkgo.Skip("need at least 2 available CPUs for this test")
 				}
@@ -277,6 +287,78 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				gomega.Expect(alloc.CPUAssigned.Size()).To(gomega.Equal(2), "expected 2 distinct CPUs allocated")
 				gomega.Expect(alloc.CPUAssigned.IsSubsetOf(availableCPUs)).To(gomega.BeTrue(), "allocated CPUs must be within available set")
 
+			})
+
+			ginkgo.It("should allocate exclusive CPUs using opaque config for machine grouping mode", func(ctx context.Context) {
+				if cpuDeviceMode != "grouped" || groupBy != "machine" {
+					ginkgo.Skip("this test only applies to grouped CPU device mode with machine grouping")
+				}
+				if availableCPUs.Size() < 3 {
+					ginkgo.Skip("need at least 3 available CPUs for this test")
+				}
+
+				availableList := availableCPUs.UnsortedList()
+				claim1CPUs := cpuset.New(availableList[0])
+				claim2CPUs := cpuset.New(availableList[1])
+
+				claimCPUs := claim1CPUs.Union(claim2CPUs)
+				expectedSharedCPUs := availableCPUs.Difference(claimCPUs)
+
+				fixture.By("creating a best-effort pod")
+				shrPod1 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
+				verifySharedPoolMatches(ctx, fxt, shrPod1, availableCPUs)
+
+				claimsAndCPUSets := []struct {
+					name   string
+					cpuset cpuset.CPUSet
+				}{
+					{name: "claim-machine-0", cpuset: claim1CPUs},
+					{name: "claim-machine-1", cpuset: claim2CPUs},
+				}
+
+				var exclPods []*v1.Pod
+				for _, tc := range claimsAndCPUSets {
+					fixture.By("creating ResourceClaim %s with cpuset %s", tc.name, tc.cpuset.String())
+
+					claim := &resourcev1.ResourceClaim{
+						ObjectMeta: metav1.ObjectMeta{
+							Namespace: fxt.Namespace.Name,
+							Name:      tc.name,
+						},
+						Spec: makeResourceClaimSpecWithOpaqueConfig(1, true, tc.cpuset.String()),
+					}
+					_, err := fxt.K8SClientset.ResourceV1().ResourceClaims(fxt.Namespace.Name).Create(ctx, claim, metav1.CreateOptions{})
+					gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+					fixture.By("creating pod referencing %s", tc.name)
+					pod := makeTesterPodWithNamedClaim(fxt.Namespace.Name, dracpuTesterImage, tc.name, targetNode.Name)
+					createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
+					gomega.Expect(err).ToNot(gomega.HaveOccurred())
+					exclPods = append(exclPods, createdPod)
+				}
+
+				fixture.By("verifying CPU assignments for each pod match their custom cpuset overrides")
+				for i, pod := range exclPods {
+					alloc := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, pod)
+					expectedSet := claimsAndCPUSets[i].cpuset
+					fxt.Log.Info("pod allocation verification", "pod", pod.Name, "assigned", alloc.CPUAssigned.String(), "expected", expectedSet.String())
+					gomega.Expect(alloc.CPUAssigned.Equals(expectedSet)).To(gomega.BeTrue(), "assigned CPU set %s does not match expected %s", alloc.CPUAssigned.String(), expectedSet.String())
+				}
+
+				fixture.By("creating a second best-effort pod")
+				shrPod2 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
+				verifySharedPoolMatches(ctx, fxt, shrPod2, expectedSharedCPUs)
+
+				ginkgo.By("checking the CPU pool of the best-effort pod created before the pods with CPU resource claims")
+				verifySharedPoolMatches(ctx, fxt, shrPod1, expectedSharedCPUs)
+
+				fixture.By("deleting the pods with exclusive CPUs")
+				for _, pod := range exclPods {
+					gomega.Expect(e2epod.DeleteSync(ctx, fxt.K8SClientset, pod)).To(gomega.Succeed(), "cannot delete pod %s", e2epod.Identify(pod))
+				}
+
+				verifySharedPoolMatches(ctx, fxt, shrPod1, availableCPUs)
+				verifySharedPoolMatches(ctx, fxt, shrPod2, availableCPUs)
 			})
 		})
 	})

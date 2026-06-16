@@ -101,6 +101,7 @@ LOCAL_PLATFORM?=linux/$(ARCH)
 
 # set convenient defaults for user variables
 DRACPU_E2E_CPU_DEVICE_MODE ?= grouped
+DRACPU_E2E_CPU_GROUP_BY ?= numanode
 DRACPU_E2E_RESERVED_CPUS ?= 0
 # Extra arguments passed to golangci-lint in the lint target.
 # For example, set GOLANGCI_LINT_EXTRA_ARGS=--fix to auto-fix issues.
@@ -207,6 +208,7 @@ endif
 		--set image.pullPolicy=IfNotPresent \
 		--set args.logLevel=6 \
 		--set args.cpuDeviceMode=${DRACPU_E2E_CPU_DEVICE_MODE} \
+		--set args.groupBy=${DRACPU_E2E_CPU_GROUP_BY} \
 		--set-string args.reservedCPUs=${DRACPU_E2E_RESERVED_CPUS} \
 		--set args.exposePCIeRoots=true
 	hack/ci/wait-resourcelices.sh

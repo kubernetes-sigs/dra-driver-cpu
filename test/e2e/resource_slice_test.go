@@ -28,10 +28,6 @@ import (
 	"k8s.io/dynamic-resource-allocation/deviceattribute"
 )
 
-const (
-	driverName = "dra.cpu"
-)
-
 var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
 	var (
 		fxt           *fixture.Fixture

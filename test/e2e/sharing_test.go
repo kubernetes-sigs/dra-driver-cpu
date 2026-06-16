@@ -45,6 +45,7 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 		dracpuTesterImage string
 		reservedCPUs      cpuset.CPUSet
 		cpuDeviceMode     string
+		groupBy           string
 	)
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
@@ -79,9 +80,12 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 		if val, ok := findArgInContainer(cnt, argCPUDeviceMode); ok {
 			cpuDeviceMode = val
 		}
+		if val, ok := findArgInContainer(cnt, argGroupBy); ok {
+			groupBy = val
+		}
 		gomega.Expect(dsReservedCPUs.Equals(reservedCPUs)).To(gomega.BeTrue(), "daemonset reserved cpus %v do not match test reserved cpus %v", dsReservedCPUs.String(), reservedCPUs.String())
 
-		rootFxt.Log.Info("daemonset configuration", "reservedCPUs", dsReservedCPUs.String(), "deviceMode", cpuDeviceMode)
+		rootFxt.Log.Info("daemonset configuration", "reservedCPUs", dsReservedCPUs.String(), "deviceMode", cpuDeviceMode, "groupBy", groupBy)
 
 		targetNode, err = e2enode.PickWorker(ctx, rootFxt.K8SClientset, 5*time.Second, 1*time.Minute, rootFxt.Log)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -109,6 +113,9 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 		var claim *resourcev1.ResourceClaim
 
 		ginkgo.BeforeEach(func(ctx context.Context) {
+			if cpuDeviceMode == "grouped" && groupBy == "machine" {
+				ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
+			}
 			fxt = rootFxt.WithPrefix("sharingcpu")
 			gomega.Expect(fxt.Setup(ctx)).To(gomega.Succeed())
 
@@ -128,7 +135,9 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 		})
 
 		ginkgo.AfterEach(func(ctx context.Context) {
-			gomega.Expect(fxt.Teardown(ctx)).To(gomega.Succeed())
+			if fxt != nil {
+				gomega.Expect(fxt.Teardown(ctx)).To(gomega.Succeed())
+			}
 		})
 
 		ginkgo.It("should fail to run pods which share a claim", func(ctx context.Context) {

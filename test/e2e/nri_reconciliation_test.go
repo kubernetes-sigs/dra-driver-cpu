@@ -50,6 +50,7 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 		allocatableCPUs   cpuset.CPUSet
 		reservedCPUs      cpuset.CPUSet
 		cpuDeviceMode     string
+		groupBy           string
 		orgDaemonSet      *appsv1.DaemonSet
 	)
 
@@ -80,6 +81,9 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 		if val, ok := findArgInContainer(&orgDaemonSet.Spec.Template.Spec.Containers[0], argCPUDeviceMode); ok {
 			cpuDeviceMode = val
 		}
+		if val, ok := findArgInContainer(&orgDaemonSet.Spec.Template.Spec.Containers[0], argGroupBy); ok {
+			groupBy = val
+		}
 
 		// Find target node
 		targetNode, err = e2enode.PickWorker(ctx, rootFxt.K8SClientset, 5*time.Second, 1*time.Minute, rootFxt.Log)
@@ -98,6 +102,9 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 	})
 
 	ginkgo.It("should recover shared pool mask and preserve exclusive mask after restart", func(ctx context.Context) {
+		if cpuDeviceMode == "grouped" && groupBy == "machine" {
+			ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
+		}
 		fxt := rootFxt.WithPrefix("reconciliation")
 		gomega.Expect(fxt.Setup(ctx)).To(gomega.Succeed())
 		ginkgo.DeferCleanup(fxt.Teardown)

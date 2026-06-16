@@ -50,6 +50,8 @@ const (
 	GROUP_BY_SOCKET = "socket"
 	// GROUP_BY_NUMA_NODE groups CPUs by NUMA node.
 	GROUP_BY_NUMA_NODE = "numanode"
+	// GROUP_BY_MACHINE groups CPUs by the entire machine.
+	GROUP_BY_MACHINE = "machine"
 )
 
 const (
@@ -93,6 +95,7 @@ type CPUDriver struct {
 	deviceNameToSocketID    map[string]int
 	deviceNameToNUMANodeID  map[string]int
 	reservedCPUs            cpuset.CPUSet
+	onlineCPUs              cpuset.CPUSet
 	cpuDeviceMode           string
 	cpuDeviceGroupBy        string
 	claimTracker            *store.ClaimTracker
@@ -146,6 +149,7 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		return nil, asyncErr, fmt.Errorf("failed to get online CPUs: %w", err)
 	}
 	logger.V(2).Info("detected online CPUs", "cpus", onlineCPUs.String())
+	plugin.onlineCPUs = onlineCPUs
 
 	cpuInfoProvider := cpuinfo.NewSystemCPUInfo()
 	topo, err := cpuInfoProvider.GetCPUTopology(logger)

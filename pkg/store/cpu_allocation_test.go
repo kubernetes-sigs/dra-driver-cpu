@@ -191,6 +191,30 @@ func TestCPUAllocationStoreCacheConsistency(t *testing.T) {
 	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
 }
 
+func TestCPUAllocationGetReservedCPUs(t *testing.T) {
+	logger := testr.New(t)
+	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
+	reserved := cpuset.New(0, 1)
+	store := newTestCPUAllocation(logger, allCPUs, reserved)
+	require.True(t, store.GetReservedCPUs().Equals(reserved))
+}
+
+func TestCPUAllocationGetAllocatedCPUs(t *testing.T) {
+	logger := testr.New(t)
+	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
+	store := newTestCPUAllocation(logger, allCPUs, cpuset.New())
+
+	require.True(t, store.GetAllocatedCPUs().IsEmpty())
+
+	claimUID := types.UID("claim-1")
+	cpus := cpuset.New(2, 3)
+	store.AddResourceClaimAllocation(logger, claimUID, cpus)
+	require.True(t, store.GetAllocatedCPUs().Equals(cpus))
+
+	store.RemoveResourceClaimAllocation(logger, claimUID)
+	require.True(t, store.GetAllocatedCPUs().IsEmpty())
+}
+
 func getSharedCPUsNaive(availableCPUs cpuset.CPUSet, allocations map[types.UID]cpuset.CPUSet) cpuset.CPUSet {
 	allocated := cpuset.New()
 	for _, cpus := range allocations {

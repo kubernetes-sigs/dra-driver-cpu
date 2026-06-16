@@ -65,8 +65,8 @@ args:
   logLevel: 4 # @schema type:integer;minimum:0;required:true
   # -- CPU exposure mode: `grouped` (expose NUMA nodes or sockets as devices) or `individual` (expose each CPU as a device)
   cpuDeviceMode: "grouped" # @schema enum:[grouped, individual];required:true
-  # -- Grouping criteria when `cpuDeviceMode=grouped`: `numanode` or `socket`
-  groupBy: "numanode" # @schema enum:[numanode, socket];required:true
+  # -- Grouping criteria when `cpuDeviceMode=grouped`: `numanode`, `socket` or `machine`
+  groupBy: "numanode" # @schema enum:[numanode, socket, machine];required:true
   # -- CPUs reserved for the OS and kubelet, excluded from DRA management (e.g. `"0-1"`); omitted when empty
   reservedCPUs: ""
   # -- Override the node name the driver registers under; omitted when empty
