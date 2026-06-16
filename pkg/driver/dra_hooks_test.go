@@ -821,6 +821,125 @@ func TestPrepareResourceClaims(t *testing.T) {
 	}
 }
 
+func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) {
+	logger := testr.New(t)
+	claimUID := types.UID("claim-cdi-fails")
+	existingCPUs := cpuset.New(0, 1)
+
+	individualDriver := func(withExistingAllocation bool) *CPUDriver {
+		mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
+		topo, err := mockProvider.GetCPUTopology(logger)
+		require.NoError(t, err)
+		driver := &CPUDriver{
+			driverName: testDriverName,
+			deviceNameToCPUID: map[string]int{
+				"cpudev0": 0,
+				"cpudev1": 1,
+				"cpudev2": 2,
+				"cpudev3": 3,
+			},
+			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+		}
+		if withExistingAllocation {
+			driver.cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, existingCPUs)
+		}
+		return driver
+	}
+
+	groupedDriver := func(withExistingAllocation bool) *CPUDriver {
+		mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
+		topo, err := mockProvider.GetCPUTopology(logger)
+		require.NoError(t, err)
+		driver := &CPUDriver{
+			driverName:             testDriverName,
+			cpuDeviceMode:          CPU_DEVICE_MODE_GROUPED,
+			cpuDeviceGroupBy:       GROUP_BY_SOCKET,
+			cpuTopology:            topo,
+			deviceNameToSocketID:   map[string]int{"cpudevsocket0": 0},
+			deviceNameToNUMANodeID: map[string]int{},
+			cpuAllocationStore:     store.NewCPUAllocation(topo, cpuset.New()),
+		}
+		if withExistingAllocation {
+			driver.cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, existingCPUs)
+		}
+		return driver
+	}
+
+	individualClaim := func(devices ...string) *resourceapi.ResourceClaim {
+		results := []resourceapi.DeviceRequestAllocationResult{}
+		for _, device := range devices {
+			results = append(results, resourceapi.DeviceRequestAllocationResult{
+				Driver: testDriverName,
+				Pool:   testNodeName,
+				Device: device,
+			})
+		}
+		return testClaimWithResults(claimUID, results)
+	}
+	groupedClaim := func() *resourceapi.ResourceClaim {
+		return testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2})
+	}
+
+	testCases := []struct {
+		name                       string
+		driver                     *CPUDriver
+		claim                      *resourceapi.ResourceClaim
+		expectExistingAllocation   bool
+		expectedExistingAllocation cpuset.CPUSet
+		expectedSharedCPUs         cpuset.CPUSet
+	}{
+		{
+			name:               "individual mode new claim",
+			driver:             individualDriver(false),
+			claim:              individualClaim("cpudev2", "cpudev3"),
+			expectedSharedCPUs: cpuset.New(0, 1, 2, 3),
+		},
+		{
+			name:                       "individual mode existing claim",
+			driver:                     individualDriver(true),
+			claim:                      individualClaim("cpudev0", "cpudev1"),
+			expectExistingAllocation:   true,
+			expectedExistingAllocation: existingCPUs,
+			expectedSharedCPUs:         cpuset.New(2, 3),
+		},
+		{
+			name:               "grouped mode new claim",
+			driver:             groupedDriver(false),
+			claim:              groupedClaim(),
+			expectedSharedCPUs: cpuset.New(0, 1, 2, 3),
+		},
+		{
+			name:                       "grouped mode existing claim",
+			driver:                     groupedDriver(true),
+			claim:                      groupedClaim(),
+			expectExistingAllocation:   true,
+			expectedExistingAllocation: existingCPUs,
+			expectedSharedCPUs:         cpuset.New(2, 3),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockCdiMgr := newMockCdiMgr()
+			mockCdiMgr.addError = fmt.Errorf("cdi add error")
+			tc.driver.cdiMgr = mockCdiMgr
+
+			preparedClaims, err := tc.driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{tc.claim})
+			require.NoError(t, err)
+			require.Error(t, preparedClaims[claimUID].Err)
+			require.Empty(t, preparedClaims[claimUID].Devices)
+			require.Empty(t, mockCdiMgr.devices)
+
+			gotCPUs, ok := tc.driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
+			require.Equal(t, tc.expectExistingAllocation, ok)
+			if tc.expectExistingAllocation {
+				require.True(t, tc.expectedExistingAllocation.Equals(gotCPUs), "claim cpus: got %s, want %s", gotCPUs, tc.expectedExistingAllocation)
+			}
+			require.True(t, tc.expectedSharedCPUs.Equals(tc.driver.cpuAllocationStore.GetSharedCPUs()), "shared cpus: got %s, want %s", tc.driver.cpuAllocationStore.GetSharedCPUs(), tc.expectedSharedCPUs)
+		})
+	}
+}
+
 func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 	logger := testr.New(t)
 
