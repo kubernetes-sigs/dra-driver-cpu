@@ -575,10 +575,12 @@ func TestPrepareResourceClaimsSucceedsBeforePublishResources(t *testing.T) {
 			topo, err := mockProvider.GetCPUTopology(logger)
 			require.NoError(t, err)
 
+			cpuStore := store.NewCPUAllocation(topo, cpuset.New())
+
 			driver := &CPUDriver{
 				driverName:         testDriverName,
 				cpuTopology:        topo,
-				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+				cpuAllocationStore: cpuStore,
 				cdiMgr:             newMockCdiMgr(),
 				cpuDeviceMode:      tc.cpuDeviceMode,
 				cpuDeviceGroupBy:   tc.cpuDeviceGroupBy,
@@ -592,7 +594,7 @@ func TestPrepareResourceClaimsSucceedsBeforePublishResources(t *testing.T) {
 			require.NotEmpty(t, preparedClaims[claimUID].Devices)
 			require.Len(t, driver.cdiMgr.(*mockCdiMgr).devices, 1)
 
-			_, ok := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
+			_, ok := cpuStore.GetResourceClaimAllocation(claimUID)
 			require.True(t, ok)
 		})
 	}
@@ -1161,6 +1163,8 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
 			topo, _ := mockProvider.GetCPUTopology(logger)
+			cpuStore := store.NewCPUAllocation(topo, cpuset.New())
+			cdiMgr := newMockCdiMgr()
 			driver := &CPUDriver{
 				driverName: testDriverName,
 				deviceNameToCPUID: map[string]int{
@@ -1169,8 +1173,8 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 					"cpudev2": 2,
 					"cpudev3": 3,
 				},
-				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
-				cdiMgr:             newMockCdiMgr(),
+				cpuAllocationStore: cpuStore,
+				cdiMgr:             cdiMgr,
 			}
 
 			makeClaim := func(devices []string) []*resourceapi.ResourceClaim {
@@ -1204,12 +1208,12 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 			} else {
 				require.NoError(t, claimResult.Err)
 
-				gotCPUs, ok := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
+				gotCPUs, ok := cpuStore.GetResourceClaimAllocation(claimUID)
 				require.True(t, ok)
 				require.True(t, tc.expectedCPUSet.Equals(gotCPUs), "claim cpus: got %s, want %s", gotCPUs, tc.expectedCPUSet)
-				require.True(t, tc.expectedShared.Equals(driver.cpuAllocationStore.GetSharedCPUs()), "shared cpus: got %s, want %s", driver.cpuAllocationStore.GetSharedCPUs(), tc.expectedShared)
+				require.True(t, tc.expectedShared.Equals(cpuStore.GetSharedCPUs()), "shared cpus: got %s, want %s", cpuStore.GetSharedCPUs(), tc.expectedShared)
 
-				envVar := driver.cdiMgr.(*mockCdiMgr).devices[cdiDeviceName]
+				envVar := cdiMgr.devices[cdiDeviceName]
 				parts := strings.SplitN(envVar, "=", 2)
 				require.Len(t, parts, 2)
 				actualCPUSet, err := cpuset.Parse(parts[1])
