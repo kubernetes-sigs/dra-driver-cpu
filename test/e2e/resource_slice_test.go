@@ -32,6 +32,7 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 	var (
 		fxt           *fixture.Fixture
 		cpuDeviceMode string
+		groupBy       string
 		slices        []resourcev1.ResourceSlice
 	)
 
@@ -49,7 +50,10 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 		if val, ok := findArgInContainer(cnt, argCPUDeviceMode); ok {
 			cpuDeviceMode = val
 		}
-		fxt.Log.Info("daemonset configuration", "cpuDeviceMode", cpuDeviceMode)
+		if val, ok := findArgInContainer(cnt, argGroupBy); ok {
+			groupBy = val
+		}
+		fxt.Log.Info("daemonset configuration", "cpuDeviceMode", cpuDeviceMode, "groupBy", groupBy)
 
 		ginkgo.By("listing ResourceSlices for driver " + driverName)
 		sliceList, err := fxt.K8SClientset.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{
@@ -92,10 +96,27 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 				{driver.AttributeCPUID, isInt},
 			}
 		default:
-			checks = []attrCheck{
-				{driver.AttributeSocketID, isInt},
-				{driver.AttributeSMTEnabled, isBool},
-				{driver.AttributeNumCPUs, isInt},
+			switch groupBy {
+			case driver.GROUP_BY_MACHINE:
+				checks = []attrCheck{
+					{driver.AttributeSMTEnabled, isBool},
+					{driver.AttributeNumCPUs, isInt},
+				}
+			case driver.GROUP_BY_NUMA_NODE:
+				checks = []attrCheck{
+					{driver.AttributeNUMANodeID, isInt},
+					{driver.AttributeSocketID, isInt},
+					{driver.AttributeSMTEnabled, isBool},
+					{driver.AttributeNumCPUs, isInt},
+				}
+			case driver.GROUP_BY_SOCKET:
+				checks = []attrCheck{
+					{driver.AttributeSocketID, isInt},
+					{driver.AttributeSMTEnabled, isBool},
+					{driver.AttributeNumCPUs, isInt},
+				}
+			default:
+				ginkgo.Fail("unknown CPU device group-by configuration: " + groupBy)
 			}
 		}
 
