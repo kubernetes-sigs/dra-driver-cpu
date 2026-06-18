@@ -73,6 +73,16 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 			expectedErrorContains: "failed to parse cpuset value",
 		},
 		{
+			name: "ignores DRA_CPUSET_ASSIGNED env var",
+			envs: []string{
+				fmt.Sprintf("%s_claim-uid-1=%s", cdiEnvVarPrefix, "0-1"),
+				fmt.Sprintf("%s=%s", cdiEnvVarAssigned, "0-1"),
+			},
+			expectedAllocations: map[types.UID]cpuset.CPUSet{
+				"claim-uid-1": cpuset.New(0, 1),
+			},
+		},
+		{
 			name:                "empty env",
 			envs:                []string{},
 			expectedAllocations: map[types.UID]cpuset.CPUSet{},
