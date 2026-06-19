@@ -1,3 +1,11 @@
+# This example illustrates a Pod consuming exclusive CPUs under Grouped CPU Device Mode (default).
+#
+# Driver Configuration:
+#   --cpu-device-mode: "grouped" (CPUs are grouped, e.g. by NUMA node, and exposed as consumable capacity).
+#
+# Note: The CPU requests specified in the ResourceClaim must be replicated in the container's
+# standard resource requests (resources.requests.cpu) to ensure proper scheduling accounting and avoid double-booking.
+#
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
 metadata:
@@ -22,9 +30,11 @@ spec:
       image: "registry.k8s.io/pause:3.9"
       resources:
         requests:
-          cpu: "10"
+          cpu: "10" # Replicates the 10 CPUs requested in "pod-cpu-claim-ref"
+          memory: "2Gi"
         limits:
-          cpu: "10"
+          cpu: "10" # Replicates the 10 CPUs requested in "pod-cpu-claim-ref"
+          memory: "2Gi"
         claims:
           - name: "pod-cpu-claim-ref"
   resourceClaims:
