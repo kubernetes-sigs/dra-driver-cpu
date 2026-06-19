@@ -32,73 +32,6 @@ The driver can be configured with the following command-line flags:
 - `--reserved-cpus`: Specifies a set of CPUs to be reserved for system and kubelet processes. These CPUs will not be allocatable by the DRA driver and would be excluded from the `ResourceSlice`. The value is a cpuset, e.g., `0-1`. This semantic is the same as the one the kubelet applies with its `static` CPU Manager policy and enabling [`strict-cpu-reservation`](https://kubernetes.io/blog/2024/12/16/cpumanager-strict-cpu-reservation/) flag and specifying the CPUs with the [`reservedSystemCPUs`](https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/#explicitly-reserved-cpu-list) to be reserved for system daemons. For correct CPU accounting, the number of CPUs reserved with this flag should match the sum of the kubelet's `kubeReserved` and `systemReserved` settings. This ensures the kubelet subtracts the correct number of CPUs from `Node.Status.Allocatable`.
 - `--expose-pcie-roots`: If enabled, adds the "resource.kubernetes.io/pcieRoot" standard value to CPU devices, to report the PCIe roots close to each device. Since it always reports values as list, this option requires the cluster Feature Gate `DRAListTypeAttributes` (see KEP 5491) to be enabled. The driver has no way to introspect the cluster Feature Gate, so care must be taken to enable first the Feature Gate then this option.
 
-## Custom Opaque CPUSet Allocation Overrides
-
-When using `grouped` device mode with the `--group-by=machine` configuration, the DRA driver does not perform automatic topology-aware CPU allocation. Instead, an explicit core assignment must be provided via the `cpuset` field in the claim's opaque configuration parameters.
-
-The Kubelet driver parses this configuration at prepare time from the claim's allocation status (`status.allocation.devices.config`). The control plane (typically scheduling plugin) is responsible for injecting this configuration block into the allocation result when binding the claim.
-
-### Opaque Parameters Schema (`v1alpha1`)
-
-The `opaque.parameters` field must conform to the following schema:
-
-| Field              | Type   | Description                                                                                |
-| :----------------- | :----- | :----------------------------------------------------------------------------------------- |
-| `apiVersion`       | string | Must be set to `v1alpha1`.                                                                 |
-| `cpuConfig`        | object | Container object for CPU configurations.                                                   |
-| `cpuConfig.cpuset` | string | Specifies the list of CPU cores in standard Linux cpuset format (e.g. `"2-5"`, `"0,4-6"`). |
-
-### Example of a Fully Allocated ResourceClaim with Opaque Configuration
-
-```yaml
-apiVersion: resource.k8s.io/v1
-kind: ResourceClaim
-metadata:
-  name: exclusive-cores-claim
-  namespace: default
-  uid: claim-uid-123456
-spec:
-  devices:
-    requests:
-    - name: cpu-request-1
-      exactly:
-        deviceClassName: dra.cpu
-        count: 4
-status:
-  allocation:
-    devices:
-      results:
-      - request: cpu-request-1
-        driver: dra.cpu
-        pool: test-node
-        device: cpudevmachine
-        consumedCapacity:
-          dra.cpu/cpu: "4"
-      config:  # Added by external scheduler
-      - source: FromClaim
-        requests:
-        - cpu-request-1
-        opaque:
-          driver: dra.cpu
-          parameters:
-            apiVersion: v1alpha1
-            cpuConfig:
-              cpuset: "2-5"
-```
-
-The driver allocates the specified cores directly (after validating that they are allocatable and not reserved). If it is omitted, resource preparation will fail and pod startup will be rejected.
-
-> [!IMPORTANT]
-> **Validation Rules:**
->
-> - The `cpuset` value must be specified in standard Linux cpuset format representing ranges and/or individual cores (e.g. `"2-5"`, `"1-10,15"`).
-> - **Per-Request Configurations Only**: In `status.allocation.devices.config[]`, every configuration block's `requests` array must map to exactly one request in the claim. We do not support multiple claim requests mapping to the same cpuset config.
-> - **ResourceClaim Source**: Opaque configurations must originate from the `ResourceClaim`. Configurations defined in DeviceClass (`spec.config[]`) are not supported and will result in a validation error. Since a configuration in the `DeviceClass` applies to all claims referencing it, configuring a `cpuset` there would assign the same CPUs to multiple claims, failing allocation due to conflict between claims.
-> - **CPUSet Validation**: The driver verifies that the custom cpuset is valid for the host machine and is currently allocatable. It checks that:
->   - The cores are part of the node's online CPUs.
->   - The cores are not reserved using the driver's `--reserved-cpus` configuration flag.
-> - **Error Handling**: If validation fails (e.g. core conflict, size mismatch, duplicate target, or offline cores), the driver returns a failure immediately in Kubelet's `PrepareResourceClaims` hook, causing pod startup to fail.
-
 ## How it Works
 
 The driver is deployed as a DaemonSet which contains two core components:
@@ -370,6 +303,73 @@ This discrepancy is a known issue being addressed by [KEP-5517: Native Resource 
 
 **1-to-1 Claim to Container:** This driver enforces that a specific CPU `ResourceClaim` can only be used by *one* container within or across pods. See [Sharing resource claims](#sharing-resource-claims).
 
+## Custom Opaque CPUSet Allocation Overrides
+
+When using `grouped` device mode with the `--group-by=machine` configuration, the DRA driver does not perform automatic topology-aware CPU allocation. Instead, an explicit core assignment must be provided via the `cpuset` field in the claim's opaque configuration parameters.
+
+The Kubelet driver parses this configuration at prepare time from the claim's allocation status (`status.allocation.devices.config`). The control plane (typically scheduling plugin) is responsible for injecting this configuration block into the allocation result when binding the claim.
+
+### Opaque Parameters Schema (`v1alpha1`)
+
+The `opaque.parameters` field must conform to the following schema:
+
+| Field              | Type   | Description                                                                                |
+| :----------------- | :----- | :----------------------------------------------------------------------------------------- |
+| `apiVersion`       | string | Must be set to `v1alpha1`.                                                                 |
+| `cpuConfig`        | object | Container object for CPU configurations.                                                   |
+| `cpuConfig.cpuset` | string | Specifies the list of CPU cores in standard Linux cpuset format (e.g. `"2-5"`, `"0,4-6"`). |
+
+### Example of a Fully Allocated ResourceClaim with Opaque Configuration
+
+```yaml
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: exclusive-cores-claim
+  namespace: default
+  uid: claim-uid-123456
+spec:
+  devices:
+    requests:
+    - name: cpu-request-1
+      exactly:
+        deviceClassName: dra.cpu
+        count: 4
+status:
+  allocation:
+    devices:
+      results:
+      - request: cpu-request-1
+        driver: dra.cpu
+        pool: test-node
+        device: cpudevmachine
+        consumedCapacity:
+          dra.cpu/cpu: "4"
+      config:  # Added by external scheduler
+      - source: FromClaim
+        requests:
+        - cpu-request-1
+        opaque:
+          driver: dra.cpu
+          parameters:
+            apiVersion: v1alpha1
+            cpuConfig:
+              cpuset: "2-5"
+```
+
+The driver allocates the specified cores directly (after validating that they are allocatable and not reserved). If it is omitted, resource preparation will fail and pod startup will be rejected.
+
+> [!IMPORTANT]
+> **Validation Rules:**
+>
+> - The `cpuset` value must be specified in standard Linux cpuset format representing ranges and/or individual cores (e.g. `"2-5"`, `"1-10,15"`).
+> - **Per-Request Configurations Only**: In `status.allocation.devices.config[]`, every configuration block's `requests` array must map to exactly one request in the claim. We do not support multiple claim requests mapping to the same cpuset config.
+> - **ResourceClaim Source**: Opaque configurations must originate from the `ResourceClaim`. Configurations defined in DeviceClass (`spec.config[]`) are not supported and will result in a validation error. Since a configuration in the `DeviceClass` applies to all claims referencing it, configuring a `cpuset` there would assign the same CPUs to multiple claims, failing allocation due to conflict between claims.
+> - **CPUSet Validation**: The driver verifies that the custom cpuset is valid for the host machine and is currently allocatable. It checks that:
+>   - The cores are part of the node's online CPUs.
+>   - The cores are not reserved using the driver's `--reserved-cpus` configuration flag.
+> - **Error Handling**: If validation fails (e.g. core conflict, size mismatch, duplicate target, or offline cores), the driver returns a failure immediately in Kubelet's `PrepareResourceClaims` hook, causing pod startup to fail.
+
 ## Prerequisites
 
 The driver relies on [NRI (Node Resource Interface)](https://github.com/containerd/nri) to pin containers to their
@@ -522,11 +522,17 @@ spec:
         int: 1
       dra.cpu/numaNodeID:
         int: 0
+      dra.cpu/smtEnabled:
+        bool: true
       dra.cpu/socketID:
         int: 0
       dra.net/numaNode:
         int: 0
-    name: cpudev0
+      # Only populated if the driver is run with --expose-pcie-roots=true
+      resource.kubernetes.io/pcieRoot:
+        strings:
+        - pci0000:00
+    name: cpudev000
   - attributes:
       dra.cpu/cacheL3ID:
         int: 0
@@ -538,11 +544,17 @@ spec:
         int: 33
       dra.cpu/numaNodeID:
         int: 0
+      dra.cpu/smtEnabled:
+        bool: true
       dra.cpu/socketID:
         int: 0
       dra.net/numaNode:
         int: 0
-    name: cpudev1
+      # Only populated if the driver is run with --expose-pcie-roots=true
+      resource.kubernetes.io/pcieRoot:
+        strings:
+        - pci0000:00
+    name: cpudev001
   # ... other CPU devices
 ```
 
@@ -576,10 +588,15 @@ spec:
         int: 0
       dra.net/numaNode:
         int: 0
+      # Only populated if the driver is run with --expose-pcie-roots=true
+      resource.kubernetes.io/pcieRoot:
+        strings:
+        - pci0000:00
+        - pci0000:10
     capacity:
       dra.cpu/cpu:
         value: "64"
-    name: cpudevnuma0
+    name: cpudevnuma000
   - allowMultipleAllocations: true
     attributes:
       dra.cpu/smtEnabled:
@@ -592,15 +609,30 @@ spec:
         int: 0
       dra.net/numaNode:
         int: 1
+      # Only populated if the driver is run with --expose-pcie-roots=true
+      resource.kubernetes.io/pcieRoot:
+        strings:
+        - pci0000:40
+        - pci0000:50
     capacity:
       dra.cpu/cpu:
         value: "64"
-    name: cpudevnuma1
+    name: cpudevnuma001
 ```
 
 ### Running the tests
 
-To run the e2e tests against a custom-setup, special-purpose kind cluster, just run
+#### Unit Tests
+
+To run the node-local unit tests, run:
+
+```bash
+make test-unit
+```
+
+#### E2E Tests
+
+To run the e2e tests against a custom-setup, special-purpose kind cluster, just run:
 
 ```bash
 make test-e2e-kind
@@ -621,8 +653,14 @@ KUBECONFIG=${HOME}/.kube/config DRACPU_E2E_VERBOSE=1 make test-e2e-kind
 The `test-e2e-kind` will exercise the same flows which are run on the project CI.
 The full documentation for all the supported environment variables is found in the [tests README](test/e2e/README.md).
 
-**NOTE** the custom-setup kind cluster is _not_ automatically torn down once the tests terminate
-**NOTE** if you want to run again the tests, just use `make test-e2e`. Please see `make help` for more details.
+**NOTE:** the custom-setup kind cluster is _not_ automatically torn down once the tests terminate.
+**NOTE:** if you want to run the tests again on the existing kind cluster, just use `make test-e2e`. Please see `make help` for more details.
+
+## Troubleshooting & Diagnostics
+
+The repository includes a diagnostic tool `dracpu-gatherinfo` to collect node-local CPU topology and driver configuration information. This is helpful for debugging CPU allocation issues or validating that the host topology is discovered correctly.
+
+For detailed usage instructions, see the [dracpu-gatherinfo documentation](docs/gatherinfo.md).
 
 ## Developer Notes
 

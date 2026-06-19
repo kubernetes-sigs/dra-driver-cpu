@@ -1,3 +1,11 @@
+# This example illustrates a Pod consuming exclusive CPUs under Individual CPU Device Mode.
+#
+# Driver Configuration:
+#   --cpu-device-mode: "individual" (Each CPU is exposed as an individual device in the ResourceSlice).
+#
+# Note: The CPU requests specified in the ResourceClaim must be replicated in the container's
+# standard resource requests (resources.requests.cpu) to ensure proper scheduling accounting and avoid double-booking.
+#
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
 metadata:
@@ -32,18 +40,22 @@ spec:
       image: "registry.k8s.io/pause:3.9"
       resources:
         requests:
-          cpu: "4"
+          cpu: "4" # Replicates the 4 CPUs requested in "container1-claim"
+          memory: "2Gi"
         limits:
-          cpu: "4"
+          cpu: "4" # Replicates the 4 CPUs requested in "container1-claim"
+          memory: "2Gi"
         claims:
           - name: "container1-claim"
     - name: container2
       image: "registry.k8s.io/pause:3.9"
       resources:
         requests:
-          cpu: "6"
+          cpu: "6" # Replicates the 6 CPUs requested in "container2-claim"
+          memory: "2Gi"
         limits:
-          cpu: "6"
+          cpu: "6" # Replicates the 6 CPUs requested in "container2-claim"
+          memory: "2Gi"
         claims:
           - name: "container2-claim"
   resourceClaims:
