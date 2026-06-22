@@ -30,7 +30,7 @@ spec:
         - /dracpu
         - --v=4
         - --cpu-device-mode=grouped
-        image: registry.k8s.io/dra-driver-cpu/dra-driver-cpu:v0.1.0
+        image: registry.k8s.io/dra-driver-cpu/dra-driver-cpu:v0.2.0
         imagePullPolicy: Always
         livenessProbe:
           httpGet:
