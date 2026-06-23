@@ -33,6 +33,7 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gcustom"
 	"github.com/onsi/gomega/types"
+	"github.com/go-logr/logr"
 	v1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -97,12 +98,12 @@ func waitForRunningDriverPods(ctx context.Context, client kubernetes.Interface) 
 	return pods
 }
 
-func BeFailedToCreate(fxt *fixture.Fixture) types.GomegaMatcher {
+func BeFailedToCreate(logr logr.Logger) types.GomegaMatcher {
 	return gcustom.MakeMatcher(func(actual *v1.Pod) (bool, error) {
 		if actual == nil {
 			return false, errors.New("nil Pod")
 		}
-		logger := fxt.Log.WithValues("podUID", actual.UID, "namespace", actual.Namespace, "name", actual.Name)
+		logger := logr.WithValues("podUID", actual.UID, "namespace", actual.Namespace, "name", actual.Name)
 		if actual.Status.Phase != v1.PodPending {
 			logger.Info("unexpected phase", "phase", actual.Status.Phase)
 			return false, nil
@@ -130,7 +131,7 @@ func EventuallyFailedToCreate(ctx context.Context, fxt *fixture.Fixture, pod *v1
 			return nil
 		}
 		return pod
-	}).WithTimeout(time.Minute).WithPolling(2 * time.Second).Should(BeFailedToCreate(fxt))
+	}).WithTimeout(time.Minute).WithPolling(2 * time.Second).Should(BeFailedToCreate(fxt.Log))
 }
 
 func findWaitingContainerStatus(statuses []v1.ContainerStatus) *v1.ContainerStatus {
