@@ -19,7 +19,6 @@ package e2e
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -28,11 +27,10 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/api/v1alpha1"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
+	podmatchers "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/matchers/pod"
 	e2epod "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/pod"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/onsi/gomega/gcustom"
-	"github.com/onsi/gomega/types"
 	v1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -53,15 +51,14 @@ func TestE2E(t *testing.T) {
 // shared code which is not ready yet to be moved into a test/pkg/... package
 
 const (
-	driverName                 = "dra.cpu"
-	reasonCreateContainerError = "CreateContainerError"
-	argReservedCPUs            = "--reserved-cpus="
-	argCPUDeviceMode           = "--cpu-device-mode="
-	argGroupBy                 = "--group-by="
-	daemonSetNamespace         = "kube-system"
-	daemonSetLabel             = "app=dracpu"
-	driverPodPollInterval      = 2 * time.Second
-	driverPodPollTimeout       = 2 * time.Minute
+	driverName            = "dra.cpu"
+	argReservedCPUs       = "--reserved-cpus="
+	argCPUDeviceMode      = "--cpu-device-mode="
+	argGroupBy            = "--group-by="
+	daemonSetNamespace    = "kube-system"
+	daemonSetLabel        = "app=dracpu"
+	driverPodPollInterval = 2 * time.Second
+	driverPodPollTimeout  = 2 * time.Minute
 )
 
 func listDriverPods(ctx context.Context, client kubernetes.Interface) ([]v1.Pod, error) {
@@ -97,30 +94,6 @@ func waitForRunningDriverPods(ctx context.Context, client kubernetes.Interface) 
 	return pods
 }
 
-func BeFailedToCreate(fxt *fixture.Fixture) types.GomegaMatcher {
-	return gcustom.MakeMatcher(func(actual *v1.Pod) (bool, error) {
-		if actual == nil {
-			return false, errors.New("nil Pod")
-		}
-		logger := fxt.Log.WithValues("podUID", actual.UID, "namespace", actual.Namespace, "name", actual.Name)
-		if actual.Status.Phase != v1.PodPending {
-			logger.Info("unexpected phase", "phase", actual.Status.Phase)
-			return false, nil
-		}
-		cntSt := findWaitingContainerStatus(actual.Status.ContainerStatuses)
-		if cntSt == nil {
-			logger.Info("no container in waiting state")
-			return false, nil
-		}
-		if cntSt.State.Waiting.Reason != reasonCreateContainerError {
-			logger.Info("container waiting for different reason", "containerName", cntSt.Name, "reason", cntSt.State.Waiting.Reason)
-			return false, nil
-		}
-		logger.Info("container creation error", "containerName", cntSt.Name)
-		return true, nil
-	}).WithTemplate("Pod {{.Actual.Namespace}}/{{.Actual.Name}} UID {{.Actual.UID}} was not in failed phase")
-}
-
 func EventuallyFailedToCreate(ctx context.Context, fxt *fixture.Fixture, pod *v1.Pod) {
 	ginkgo.GinkgoHelper()
 
@@ -130,17 +103,7 @@ func EventuallyFailedToCreate(ctx context.Context, fxt *fixture.Fixture, pod *v1
 			return nil
 		}
 		return pod
-	}).WithTimeout(time.Minute).WithPolling(2 * time.Second).Should(BeFailedToCreate(fxt))
-}
-
-func findWaitingContainerStatus(statuses []v1.ContainerStatus) *v1.ContainerStatus {
-	for idx := range statuses {
-		cntSt := &statuses[idx]
-		if cntSt.State.Waiting != nil {
-			return cntSt
-		}
-	}
-	return nil
+	}).WithTimeout(time.Minute).WithPolling(2 * time.Second).Should(podmatchers.BeFailedToCreate(fxt.Log))
 }
 
 func makeCPUSetFromDiscoveredCPUInfo(cpuInfo discovery.DRACPUInfo) cpuset.CPUSet {
