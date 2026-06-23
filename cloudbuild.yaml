@@ -7,3 +7,4 @@ steps:
     entrypoint: ./scripts/build-and-publish-image.sh
     env:
     - IMG_PREFIX=us-central1-docker.pkg.dev/k8s-staging-images/dra-driver-cpu
+    - IMG_TAG=$TAG_NAME
