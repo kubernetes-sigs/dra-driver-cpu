@@ -133,6 +133,7 @@ func TestCreateContainer(t *testing.T) {
 		container                   *api.Container
 		expectedContainerAdjustment *api.ContainerAdjustment
 		expectedContainerUpdates    []*api.ContainerUpdate
+		expectedErrorContains       string
 	}{
 		{
 			name:               "guaranteed container triggers container adjustment with cpus in resource claim",
@@ -186,7 +187,7 @@ func TestCreateContainer(t *testing.T) {
 			},
 		},
 		{
-			name:               "guaranteed container with malformed env falls back to shared",
+			name:               "guaranteed container with malformed env fails closed",
 			podConfigStore:     store.NewPodConfig(),
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 			claimTracker:       store.NewClaimTracker(),
@@ -196,10 +197,7 @@ func TestCreateContainer(t *testing.T) {
 				Name:         "my-ctr",
 				Env:          []string{fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, "a-b")},
 			},
-			expectedContainerAdjustment: &api.ContainerAdjustment{
-				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
-			},
-			expectedContainerUpdates: []*api.ContainerUpdate{},
+			expectedErrorContains: "failed to parse cpuset value",
 		},
 	}
 
@@ -211,8 +209,15 @@ func TestCreateContainer(t *testing.T) {
 				claimTracker:       tc.claimTracker,
 			}
 			adjust, updates, err := driver.CreateContainer(context.Background(), pod, tc.container)
-			require.NoError(t, err)
+			if tc.expectedErrorContains != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expectedErrorContains)
+				require.Nil(t, adjust)
+				require.Nil(t, updates)
+				return
+			}
 
+			require.NoError(t, err)
 			require.Equal(t, tc.expectedContainerAdjustment, adjust)
 			require.ElementsMatch(t, tc.expectedContainerUpdates, updates)
 		})

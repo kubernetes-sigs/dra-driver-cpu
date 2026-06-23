@@ -121,6 +121,18 @@ func BeFailedToCreate(fxt *fixture.Fixture) types.GomegaMatcher {
 	}).WithTemplate("Pod {{.Actual.Namespace}}/{{.Actual.Name}} UID {{.Actual.UID}} was not in failed phase")
 }
 
+func EventuallyFailedToCreate(ctx context.Context, fxt *fixture.Fixture, pod *v1.Pod) {
+	ginkgo.GinkgoHelper()
+
+	gomega.Eventually(func() *v1.Pod {
+		pod, err := fxt.K8SClientset.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil
+		}
+		return pod
+	}).WithTimeout(time.Minute).WithPolling(2 * time.Second).Should(BeFailedToCreate(fxt))
+}
+
 func findWaitingContainerStatus(statuses []v1.ContainerStatus) *v1.ContainerStatus {
 	for idx := range statuses {
 		cntSt := &statuses[idx]

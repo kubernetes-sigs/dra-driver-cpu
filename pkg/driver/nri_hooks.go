@@ -160,6 +160,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 	claimAllocations, err := parseDRAEnvToClaimAllocations(logger, ctr.Env)
 	if err != nil {
 		logger.Error(err, "error parsing DRA env for container")
+		return nil, nil, err
 	}
 
 	containerId := types.UID(ctr.GetId())
