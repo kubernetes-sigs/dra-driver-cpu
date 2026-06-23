@@ -142,6 +142,20 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 			gomega.Expect(fxt.Teardown(ctx)).To(gomega.Succeed())
 		})
 
+		ginkgo.It("should fail to create a container with malformed DRA_CPUSET env", ginkgo.Label("negative"), func(ctx context.Context) {
+			pod := makeTesterPodBestEffort(fxt.Namespace.Name, dracpuTesterImage)
+			pod.GenerateName = "tester-pod-malformed-dra-cpuset-"
+			pod.Spec.RestartPolicy = v1.RestartPolicyNever
+			pod.Spec.Containers[0].Env = []v1.EnvVar{
+				{Name: "DRA_CPUSET_malformed_claim", Value: "a-b"},
+			}
+			pod = e2epod.PinToNode(pod, targetNode.Name)
+
+			createdPod, err := fxt.K8SClientset.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			EventuallyFailedToCreate(ctx, fxt, createdPod)
+		})
+
 		ginkgo.Context("for exclusive CPU allocation", func() {
 			// TODO: check and ensure cpumanager configuration?
 
