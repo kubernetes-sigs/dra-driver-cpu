@@ -305,7 +305,9 @@ func TestNRISynchronize(t *testing.T) {
 		runtimePods     []*api.PodSandbox
 		runtimeCtrs     []*api.Container
 		expectedUpdates []*api.ContainerUpdate
-		expectedError   bool
+		expectedError   string
+		expectStoreLen  int
+		expectClaims    int
 	}{
 		{
 			name: "empty runtime state clears the store",
@@ -322,6 +324,8 @@ func TestNRISynchronize(t *testing.T) {
 			runtimePods:     []*api.PodSandbox{},
 			runtimeCtrs:     []*api.Container{},
 			expectedUpdates: []*api.ContainerUpdate{},
+			expectStoreLen:  0,
+			expectClaims:    0,
 		},
 		{
 			name: "mixed containers across multiple pods",
@@ -351,6 +355,8 @@ func TestNRISynchronize(t *testing.T) {
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-7"}}},
 				},
 			},
+			expectStoreLen: 2,
+			expectClaims:   1,
 		},
 		{
 			name: "only shared containers",
@@ -375,6 +381,8 @@ func TestNRISynchronize(t *testing.T) {
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
 				},
 			},
+			expectStoreLen: 2,
+			expectClaims:   0,
 		},
 		{
 			name: "only guaranteed containers",
@@ -399,6 +407,8 @@ func TestNRISynchronize(t *testing.T) {
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-3"}}},
 				},
 			},
+			expectStoreLen: 2,
+			expectClaims:   2,
 		},
 		{
 			name: "container with multiple claims",
@@ -418,6 +428,29 @@ func TestNRISynchronize(t *testing.T) {
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-3"}}},
 				},
 			},
+			expectStoreLen: 1,
+			expectClaims:   2,
+		},
+		{
+			name: "malformed DRA env fails without committing partial synchronized state",
+			driver: func() *CPUDriver {
+				driver := &CPUDriver{
+					podConfigStore:     store.NewPodConfig(),
+					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+					claimTracker:       store.NewClaimTracker(),
+					cpuTopology:        topo,
+				}
+				driver.podConfigStore.SetContainerState(types.UID("existing-pod"), store.NewContainerState("existing-ctr", "existing-id"))
+				return driver
+			}(),
+			runtimePods: []*api.PodSandbox{pod1},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
+				{Id: "p1-malformed", PodSandboxId: pod1.Id, Name: "malformed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "a-b")}},
+			},
+			expectedError:  "failed to parse cpuset value",
+			expectStoreLen: 1,
+			expectClaims:   0,
 		},
 	}
 
@@ -425,14 +458,17 @@ func TestNRISynchronize(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			updates, err := tc.driver.Synchronize(context.Background(), tc.runtimePods, tc.runtimeCtrs)
 
-			if tc.expectedError {
+			if tc.expectedError != "" {
 				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expectedError)
+				require.Equal(t, tc.expectStoreLen, tc.driver.podConfigStore.Len())
+				require.Equal(t, tc.expectClaims, tc.driver.claimTracker.Len())
 				return
 			}
 			require.NoError(t, err)
 
 			// Verify that the store has been populated correctly
-			require.Equal(t, len(tc.runtimePods), tc.driver.podConfigStore.Len())
+			require.Equal(t, tc.expectStoreLen, tc.driver.podConfigStore.Len())
 			for _, pod := range tc.runtimePods {
 				for _, container := range tc.runtimeCtrs {
 					if container.PodSandboxId != pod.Id {
@@ -445,6 +481,7 @@ func TestNRISynchronize(t *testing.T) {
 
 			// Verify that the returned updates match expectations
 			require.ElementsMatch(t, tc.expectedUpdates, updates)
+			require.Equal(t, tc.expectClaims, tc.driver.claimTracker.Len())
 		})
 	}
 }
