@@ -162,7 +162,7 @@ func run(logger logr.Logger) error {
 	}()
 	signal.Notify(signalCh, os.Interrupt, unix.SIGINT)
 
-	driverConfig := &driver.Config{
+	driverConfig := driver.Config{
 		DriverName:       driverName,
 		NodeName:         nodeName,
 		ReservedCPUs:     reservedCPUSet,
@@ -170,7 +170,14 @@ func run(logger logr.Logger) error {
 		CPUDeviceGroupBy: driverFlags.GroupBy,
 		ExposePCIeRoots:  driverFlags.ExposePCIeRoots,
 	}
-	dracpu, asyncErr, err := driver.Start(ctx, clientset, driverConfig)
+	driverProviders := driver.Providers{
+		K8SClient: clientset,
+	}
+	dracpu, err := driver.New(logger, driverProviders, &driverConfig)
+	if err != nil {
+		return fmt.Errorf("driver failed to initialize: %w", err)
+	}
+	asyncErr, err := dracpu.Start(ctx)
 	if err != nil {
 		return fmt.Errorf("driver failed to start: %w", err)
 	}
