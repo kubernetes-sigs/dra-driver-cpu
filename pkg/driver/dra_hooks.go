@@ -512,7 +512,7 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 
 func (cp *CPUDriver) prepareDevices(logger logr.Logger, claim *resourceapi.ResourceClaim, claimCPUSet cpuset.CPUSet) kubeletplugin.PrepareResult {
 	deviceName := getCDIDeviceName(claim.UID)
-	envVar := fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claim.UID, claimCPUSet.String())
+	envVar := fmt.Sprintf("%s%s=%s", cdiEnvVarNamePrefix, claim.UID, claimCPUSet.String())
 	if err := cp.cdiMgr.AddDevice(logger, deviceName, envVar); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}

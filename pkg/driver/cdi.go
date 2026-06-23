@@ -24,11 +24,12 @@ import (
 )
 
 const (
-	cdiSpecVersion  = "0.8.0"
-	cdiVendor       = "dra.k8s.io"
-	cdiClass        = "cpu"
-	cdiEnvVarPrefix = "DRA_CPUSET"
-	cdiSpecDir      = "/var/run/cdi"
+	cdiSpecVersion      = "0.8.0"
+	cdiVendor           = "dra.k8s.io"
+	cdiClass            = "cpu"
+	cdiEnvVarPrefix     = "DRA_CPUSET"
+	cdiEnvVarNamePrefix = cdiEnvVarPrefix + "_"
+	cdiSpecDir          = "/var/run/cdi"
 )
 
 // CdiManager handles the lifecycle of CDI allocations for the driver.

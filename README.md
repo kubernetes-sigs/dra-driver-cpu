@@ -51,7 +51,7 @@ The driver is deployed as a DaemonSet which contains two core components:
 
   - A CDI JSON spec file is created or updated for the allocated claim.
   - This spec instructs the runtime to inject an environment variable (e.g., `DRA_CPUSET_<claimUID>=<cpuset>`) into the container.
-  - The `DRA_CPUSET_*` environment variable prefix is reserved for the driver. Containers with malformed `DRA_CPUSET_*` values are rejected during creation.
+  - The `DRA_CPUSET_` environment variable prefix is reserved for the driver inside workload containers. Containers with malformed `DRA_CPUSET_` values are rejected during creation.
   - The driver includes mechanisms for thread-safe and atomic updates to the CDI spec files.
 
 - **NRI Plugin**: This component integrates with the container runtime via the Node Resource Interface (NRI).

@@ -101,7 +101,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types.UID]cpuset.CPUSet, error) {
 	allocations := make(map[types.UID]cpuset.CPUSet)
 	for _, env := range envs {
-		if !strings.HasPrefix(env, cdiEnvVarPrefix) {
+		if !strings.HasPrefix(env, cdiEnvVarNamePrefix) {
 			continue
 		}
 		logger.V(4).Info("parsing DRA env entry", "env", env)
@@ -110,13 +110,11 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 			return nil, fmt.Errorf("malformed DRA env entry %q", env)
 		}
 		key, value := parts[0], parts[1]
-		var claimUID types.UID
-		if strings.HasPrefix(key, cdiEnvVarPrefix+"_") {
-			uidStr := strings.TrimPrefix(key, cdiEnvVarPrefix+"_")
-			claimUID = types.UID(uidStr)
-		} else {
-			continue
+		uidStr := strings.TrimPrefix(key, cdiEnvVarNamePrefix)
+		if uidStr == "" {
+			return nil, fmt.Errorf("missing claim UID in DRA env entry %q", env)
 		}
+		claimUID := types.UID(uidStr)
 
 		parsedSet, err := cpuset.Parse(value)
 		if err != nil {
