@@ -2,6 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
+    "affinity": {
+      "description": "Affinity rules for scheduling the DaemonSet pods",
+      "type": "object"
+    },
     "args": {
       "type": "object",
       "required": [
