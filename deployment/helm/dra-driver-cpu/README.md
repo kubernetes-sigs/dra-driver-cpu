@@ -29,6 +29,7 @@ helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system -f m
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| affinity | object | `{}` | Affinity rules for scheduling the DaemonSet pods |
 | args.cpuDeviceMode | string | `"grouped"` | CPU exposure mode: `grouped` (expose NUMA nodes or sockets as devices) or `individual` (expose each CPU as a device) |
 | args.exposePCIeRoots | bool | `false` | Discover and expose PCIe roots as device attributes. Requires the `DRAListTypeAttributes=true` feature gate in the cluster |
 | args.groupBy | string | `"numanode"` | Grouping criteria when `cpuDeviceMode=grouped`: `numanode`, `socket` or `machine` |
@@ -43,6 +44,7 @@ helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system -f m
 | image.tag | string | `""` | Image tag; defaults to `.Chart.AppVersion` when empty, which is set to the release tag at package time |
 | imagePullSecrets | list | `[]` | List of image pull secrets |
 | nameOverride | string | `""` | Override the chart name |
+| nodeSelector | object | `{}` | Node selector for scheduling the DaemonSet pods |
 | podAnnotations | object | `{}` | Annotations to add to pods |
 | podLabels | object | `{}` | Extra labels to add to pods |
 | rbac.create | bool | `true` | Create RBAC resources (ClusterRole and ClusterRoleBinding) |

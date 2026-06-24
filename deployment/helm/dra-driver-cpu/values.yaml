@@ -59,6 +59,12 @@ tolerations:
   - operator: "Exists" # @schema enum:[Exists, Equal]
     effect: "NoSchedule" # @schema enum:[NoSchedule, PreferNoSchedule, NoExecute]
 
+# -- Node selector for scheduling the DaemonSet pods
+nodeSelector: {}
+
+# -- Affinity rules for scheduling the DaemonSet pods
+affinity: {}
+
 # @schema additionalProperties:false
 args:
   # -- Log verbosity level passed as `--v`

@@ -2,6 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
+    "affinity": {
+      "description": "Affinity rules for scheduling the DaemonSet pods",
+      "type": "object"
+    },
     "args": {
       "type": "object",
       "required": [
@@ -95,6 +99,10 @@
     "nameOverride": {
       "description": "Override the chart name",
       "type": "string"
+    },
+    "nodeSelector": {
+      "description": "Node selector for scheduling the DaemonSet pods",
+      "type": "object"
     },
     "podAnnotations": {
       "description": "Annotations to add to pods",

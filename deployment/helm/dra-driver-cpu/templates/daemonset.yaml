@@ -43,6 +43,14 @@ spec:
       priorityClassName: system-node-critical
       tolerations:
         {{- toYaml .Values.tolerations | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       serviceAccountName: {{ include "dra-driver-cpu.fullname" . }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
