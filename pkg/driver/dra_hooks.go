@@ -512,13 +512,14 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 
 func (cp *CPUDriver) prepareDevices(logger logr.Logger, claim *resourceapi.ResourceClaim, claimCPUSet cpuset.CPUSet) kubeletplugin.PrepareResult {
 	deviceName := getCDIDeviceName(claim.UID)
-	envVar := fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claim.UID, claimCPUSet.String())
-	if err := cp.cdiMgr.AddDevice(logger, deviceName, envVar); err != nil {
+	perClaimEnvVar := fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claim.UID, claimCPUSet.String())
+	aggregateEnvVar := fmt.Sprintf("%s=%s", cdiEnvVarAssigned, claimCPUSet.String())
+	if err := cp.cdiMgr.AddDevice(logger, deviceName, []string{perClaimEnvVar, aggregateEnvVar}); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
 
 	qualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, deviceName)
-	logger.V(6).Info("prepared CDI device", "cdiDeviceName", deviceName, "envVar", envVar, "qualifiedName", qualifiedName)
+	logger.V(6).Info("prepared CDI device", "cdiDeviceName", deviceName, "perClaimEnvVar", perClaimEnvVar, "aggregateEnvVar", aggregateEnvVar, "qualifiedName", qualifiedName)
 	preparedDevices := []kubeletplugin.Device{}
 	for _, allocResult := range claim.Status.Allocation.Devices.Results {
 		if allocResult.Driver != cp.driverName {

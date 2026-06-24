@@ -28,7 +28,9 @@ const (
 	cdiVendor       = "dra.k8s.io"
 	cdiClass        = "cpu"
 	cdiEnvVarPrefix = "DRA_CPUSET"
-	cdiSpecDir      = "/var/run/cdi"
+	// This mirrors the semantics of the assigned.cpuset introduced in k/k KEP #6122.
+	cdiEnvVarAssigned = "DRA_CPUSET_ASSIGNED"
+	cdiSpecDir        = "/var/run/cdi"
 )
 
 // CdiManager handles the lifecycle of CDI allocations for the driver.
@@ -66,7 +68,7 @@ func (c *CdiManager) getSpecName(deviceName string) string {
 }
 
 // AddDevice writes a dedicated CDI spec file for a single device allocation.
-func (c *CdiManager) AddDevice(logger logr.Logger, deviceName string, envVar string) error {
+func (c *CdiManager) AddDevice(logger logr.Logger, deviceName string, envVars []string) error {
 	specName := c.getSpecName(deviceName)
 
 	spec := &cdiSpec.Spec{
@@ -76,7 +78,7 @@ func (c *CdiManager) AddDevice(logger logr.Logger, deviceName string, envVar str
 			{
 				Name: deviceName,
 				ContainerEdits: cdiSpec.ContainerEdits{
-					Env: []string{envVar},
+					Env: envVars,
 				},
 			},
 		},
@@ -86,7 +88,7 @@ func (c *CdiManager) AddDevice(logger logr.Logger, deviceName string, envVar str
 		return fmt.Errorf("failed to write CDI spec %q: %w", specName, err)
 	}
 
-	logger.V(4).Info("Added CDI device", "deviceName", deviceName, "specName", specName, "env", envVar)
+	logger.V(4).Info("Added CDI device", "deviceName", deviceName, "specName", specName, "envVars", envVars)
 	return nil
 }
 

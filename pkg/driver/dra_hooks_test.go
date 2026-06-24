@@ -60,22 +60,22 @@ func (m *mockKubeletPlugin) PublishResources(ctx context.Context, resources reso
 func (m *mockKubeletPlugin) Stop() {}
 
 type mockCdiMgr struct {
-	devices     map[string]string
+	devices     map[string][]string
 	addError    error
 	removeError error
 }
 
 func newMockCdiMgr() *mockCdiMgr {
 	return &mockCdiMgr{
-		devices: make(map[string]string),
+		devices: make(map[string][]string),
 	}
 }
 
-func (m *mockCdiMgr) AddDevice(_ logr.Logger, deviceName, envVar string) error {
+func (m *mockCdiMgr) AddDevice(_ logr.Logger, deviceName string, envVars []string) error {
 	if m.addError != nil {
 		return m.addError
 	}
-	m.devices[deviceName] = envVar
+	m.devices[deviceName] = envVars
 	return nil
 }
 
@@ -815,9 +815,9 @@ func TestPrepareResourceClaims(t *testing.T) {
 
 			require.Len(t, mockCdiMgr.devices, tc.expectedCdiDevicesCount)
 			if tc.expectedCdiDevice != "" {
-				envVar, ok := mockCdiMgr.devices[tc.expectedCdiDevice]
+				envVars, ok := mockCdiMgr.devices[tc.expectedCdiDevice]
 				require.True(t, ok, "expected CDI device not found")
-				require.Equal(t, tc.expectedCdiEnvVar, envVar)
+				require.Equal(t, tc.expectedCdiEnvVar, envVars[0])
 			}
 		})
 	}
@@ -1249,7 +1249,11 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 					}
 					require.ElementsMatch(t, expectedPreparedDevices, result.Devices)
 
-					envVar := mockCdiMgr.devices[cdiDeviceName]
+					envVars := mockCdiMgr.devices[cdiDeviceName]
+					var envVar string
+					if len(envVars) > 0 {
+						envVar = envVars[0]
+					}
 					parts := strings.SplitN(envVar, "=", 2)
 					// if expectedCPUSet is empty, parts[1] can be empty
 					if tc.expectedCPUSet.Size() > 0 {
@@ -1267,6 +1271,8 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 					require.True(t, actualCPUSet.Equals(tc.expectedCPUSet), "Expected CPUSet %s, but got %s for test case %s", tc.expectedCPUSet.String(), actualCPUSet.String(), tc.name)
 					if tc.expectedCPUSet.Size() > 0 {
 						require.Equal(t, 1, len(mockCdiMgr.devices), "Expected 1 CDI device to be created")
+						require.Len(t, envVars, 2, "Expected 2 env vars in CDI device spec")
+						require.Equal(t, fmt.Sprintf("%s=%s", cdiEnvVarAssigned, tc.expectedCPUSet.String()), envVars[1], "Expected DRA_CPUSET_ASSIGNED env var")
 					} else {
 						require.Equal(t, 0, len(mockCdiMgr.devices), "Expected 0 CDI devices to be created")
 					}
@@ -1364,8 +1370,8 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 				require.True(t, tc.expectedCPUSet.Equals(gotCPUs), "claim cpus: got %s, want %s", gotCPUs, tc.expectedCPUSet)
 				require.True(t, tc.expectedShared.Equals(cpuStore.GetSharedCPUs()), "shared cpus: got %s, want %s", cpuStore.GetSharedCPUs(), tc.expectedShared)
 
-				envVar := cdiMgr.devices[cdiDeviceName]
-				parts := strings.SplitN(envVar, "=", 2)
+				envVars := cdiMgr.devices[cdiDeviceName]
+				parts := strings.SplitN(envVars[0], "=", 2)
 				require.Len(t, parts, 2)
 				actualCPUSet, err := cpuset.Parse(parts[1])
 				require.NoError(t, err)
@@ -1480,8 +1486,8 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			require.True(t, gotCPUsAfterFirst.Equals(gotCPUs), "claim cpus must be unchanged after second prepare: got %s, want %s", gotCPUs, gotCPUsAfterFirst)
 			require.True(t, tc.expectedShared.Equals(cpuStore.GetSharedCPUs()), "shared cpus must be unchanged after second prepare: got %s, want %s", cpuStore.GetSharedCPUs(), tc.expectedShared)
 
-			envVar := cdiMgr.devices[cdiDeviceName]
-			parts := strings.SplitN(envVar, "=", 2)
+			envVars := cdiMgr.devices[cdiDeviceName]
+			parts := strings.SplitN(envVars[0], "=", 2)
 			require.Len(t, parts, 2)
 			actualCPUSet, err := cpuset.Parse(parts[1])
 			require.NoError(t, err)
@@ -1588,7 +1594,10 @@ func newDriverWithAllocatedClaim(t *testing.T, logger logr.Logger, claimUID type
 	t.Helper()
 
 	mockCdiMgr := newMockCdiMgr()
-	mockCdiMgr.devices[getCDIDeviceName(claimUID)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, allocatedCPUs.String())
+	mockCdiMgr.devices[getCDIDeviceName(claimUID)] = []string{
+		fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, allocatedCPUs.String()),
+		fmt.Sprintf("%s=%s", cdiEnvVarAssigned, allocatedCPUs.String()),
+	}
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
 	topo, err := mockProvider.GetCPUTopology(logger)
 	require.NoError(t, err)
@@ -1948,7 +1957,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 
 					cdiDeviceName := fmt.Sprintf("claim-%s", claim.UID)
 					expectedEnvVar := fmt.Sprintf("DRA_CPUSET_%s=%s", claim.UID, expectedSet.String())
-					assert.Equal(t, expectedEnvVar, mockCdi.devices[cdiDeviceName])
+					assert.Equal(t, expectedEnvVar, mockCdi.devices[cdiDeviceName][0])
 				}
 			}
 		})

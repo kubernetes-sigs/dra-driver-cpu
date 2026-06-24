@@ -81,7 +81,7 @@ func TestAddDevice(t *testing.T) {
 			expectedSpecName := mgr.getSpecName(tc.deviceName)
 			expectedFilePath := filepath.Join(tempCDIDir, expectedSpecName)
 
-			err = mgr.AddDevice(logger, tc.deviceName, tc.envVar)
+			err = mgr.AddDevice(logger, tc.deviceName, []string{tc.envVar})
 
 			if tc.expectedError != "" {
 				require.Error(t, err)
@@ -157,7 +157,7 @@ func TestRemoveDevice(t *testing.T) {
 			expectedFilePath := filepath.Join(tempCDIDir, expectedSpecName)
 
 			if !tc.simulateErr {
-				err = mgr.AddDevice(logger, tc.deviceName, tc.envVar)
+				err = mgr.AddDevice(logger, tc.deviceName, []string{tc.envVar})
 				require.NoError(t, err)
 			}
 
@@ -197,7 +197,7 @@ func TestAddDeviceOverwrite(t *testing.T) {
 		require.Len(t, files, expected)
 	}
 
-	err = mgr.AddDevice(logger, deviceName, "CPU=0,1")
+	err = mgr.AddDevice(logger, deviceName, []string{"CPU=0,1"})
 	require.NoError(t, err)
 	assertFileCount(1)
 
@@ -207,7 +207,7 @@ func TestAddDeviceOverwrite(t *testing.T) {
 	require.Equal(t, []string{"CPU=0,1"}, spec1.Devices[0].ContainerEdits.Env)
 
 	// Call AddDevice again with the same deviceName and same data
-	err = mgr.AddDevice(logger, deviceName, "CPU=0,1")
+	err = mgr.AddDevice(logger, deviceName, []string{"CPU=0,1"})
 	require.NoError(t, err)
 	// Verify that we do not create a new file
 	assertFileCount(1)
