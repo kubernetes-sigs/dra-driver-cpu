@@ -96,6 +96,10 @@
       "description": "Override the chart name",
       "type": "string"
     },
+    "nodeSelector": {
+      "description": "Node selector for scheduling the DaemonSet pods",
+      "type": "object"
+    },
     "podAnnotations": {
       "description": "Annotations to add to pods",
       "type": "object"
