@@ -111,8 +111,8 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 		}
 		key, value := parts[0], parts[1]
 		var claimUID types.UID
-		if strings.HasPrefix(key, cdiEnvVarPrefix+"_") {
-			uidStr := strings.TrimPrefix(key, cdiEnvVarPrefix+"_")
+		if after, ok := strings.CutPrefix(key, cdiEnvVarPrefix+"_"); ok {
+			uidStr := after
 			claimUID = types.UID(uidStr)
 		} else {
 			continue

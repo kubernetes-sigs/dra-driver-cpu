@@ -109,7 +109,7 @@ func (ref ObjectRef) String() string {
 }
 
 // MarshalLog implements logr.Marshaler.
-func (ref ObjectRef) MarshalLog() interface{} {
+func (ref ObjectRef) MarshalLog() any {
 	return ref
 }
 

@@ -39,7 +39,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/cpuset"
-	"k8s.io/utils/ptr"
 )
 
 func TestE2E(t *testing.T) {
@@ -178,7 +177,7 @@ func makeTesterPodWithExclusiveCPUClaim(ns, image, cpuClaimTemplateName string, 
 			ResourceClaims: []v1.PodResourceClaim{
 				{
 					Name:                      "tester-container-1-claim",
-					ResourceClaimTemplateName: ptr.To(cpuClaimTemplateName),
+					ResourceClaimTemplateName: new(cpuClaimTemplateName),
 				},
 			},
 			RestartPolicy: v1.RestartPolicyAlways,
@@ -221,8 +220,8 @@ func mustCreateBestEffortPod(ctx context.Context, fxt *fixture.Fixture, nodeName
 
 func findArgInContainer(container *v1.Container, prefix string) (string, bool) {
 	for _, arg := range container.Args {
-		if strings.HasPrefix(arg, prefix) {
-			return strings.TrimPrefix(arg, prefix), true
+		if after, ok := strings.CutPrefix(arg, prefix); ok {
+			return after, true
 		}
 	}
 	return "", false
@@ -263,7 +262,7 @@ func makeTesterPodWithNamedClaim(ns, image, claimName string, nodeName string) *
 			ResourceClaims: []v1.PodResourceClaim{
 				{
 					Name:              "cpu-claim",
-					ResourceClaimName: ptr.To(claimName),
+					ResourceClaimName: new(claimName),
 				},
 			},
 			RestartPolicy: v1.RestartPolicyAlways,

@@ -250,7 +250,7 @@ type nriRunner interface {
 
 func runNRIPluginWithRetry(ctx context.Context, plugin nriRunner, maxAttempts int) error {
 	logger := ctxlog.FromContext(ctx)
-	for i := 0; i < maxAttempts; i++ {
+	for i := range maxAttempts {
 		err := plugin.Run(ctx)
 		if ctx.Err() != nil {
 			logger.Info("NRI plugin stopped", "reason", "context cancelled")

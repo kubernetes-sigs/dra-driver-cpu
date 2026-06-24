@@ -181,14 +181,8 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 				numCPUs := availableCPUs.Size()
 				// Ensure at least 1 CPU is available for the shared pool
-				maxExclusiveCpus := numCPUs - 1
-				if maxExclusiveCpus < 0 {
-					maxExclusiveCpus = 0
-				}
-				numPods := maxExclusiveCpus / cpusPerClaim
-				if numPods > maxExclusivePods {
-					numPods = maxExclusivePods
-				}
+				maxExclusiveCpus := max(numCPUs-1, 0)
+				numPods := min(maxExclusiveCpus/cpusPerClaim, maxExclusivePods)
 
 				fxt.Log.Info("Creating pods requesting exclusive CPUs", "numPods", numPods, "cpusPerClaim", cpusPerClaim)
 				var exclPods []*v1.Pod
@@ -203,7 +197,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					},
 				}
 				createdClaimTemplate, err := fxt.K8SClientset.ResourceV1().ResourceClaimTemplates(fxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
-				for i := 0; i < numPods; i++ {
+				for i := range numPods {
 					gomega.Expect(err).ToNot(gomega.HaveOccurred())
 					pod := makeTesterPodWithExclusiveCPUClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, int64(cpusPerClaim), targetNode.Name)
 					createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
