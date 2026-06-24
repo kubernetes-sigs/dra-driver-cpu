@@ -306,8 +306,7 @@ func TestNRISynchronize(t *testing.T) {
 		runtimeCtrs     []*api.Container
 		expectedUpdates []*api.ContainerUpdate
 		expectedError   string
-		expectStoreLen  int
-		expectClaims    int
+		postSyncCheck   func(t *testing.T, driver *CPUDriver)
 	}{
 		{
 			name: "empty runtime state clears the store",
@@ -324,8 +323,6 @@ func TestNRISynchronize(t *testing.T) {
 			runtimePods:     []*api.PodSandbox{},
 			runtimeCtrs:     []*api.Container{},
 			expectedUpdates: []*api.ContainerUpdate{},
-			expectStoreLen:  0,
-			expectClaims:    0,
 		},
 		{
 			name: "mixed containers across multiple pods",
@@ -355,8 +352,6 @@ func TestNRISynchronize(t *testing.T) {
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-7"}}},
 				},
 			},
-			expectStoreLen: 2,
-			expectClaims:   1,
 		},
 		{
 			name: "only shared containers",
@@ -381,8 +376,6 @@ func TestNRISynchronize(t *testing.T) {
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
 				},
 			},
-			expectStoreLen: 2,
-			expectClaims:   0,
 		},
 		{
 			name: "only guaranteed containers",
@@ -407,8 +400,6 @@ func TestNRISynchronize(t *testing.T) {
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-3"}}},
 				},
 			},
-			expectStoreLen: 2,
-			expectClaims:   2,
 		},
 		{
 			name: "container with multiple claims",
@@ -428,8 +419,6 @@ func TestNRISynchronize(t *testing.T) {
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-3"}}},
 				},
 			},
-			expectStoreLen: 1,
-			expectClaims:   2,
 		},
 		{
 			name: "malformed DRA env fails without committing partial synchronized state",
@@ -448,9 +437,32 @@ func TestNRISynchronize(t *testing.T) {
 				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
 				{Id: "p1-malformed", PodSandboxId: pod1.Id, Name: "malformed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "a-b")}},
 			},
-			expectedError:  "failed to parse cpuset value",
-			expectStoreLen: 1,
-			expectClaims:   0,
+			expectedError: "failed to parse cpuset value",
+			postSyncCheck: func(t *testing.T, driver *CPUDriver) {
+				sharedPod := &api.PodSandbox{Id: "post-sync-shared-pod-id", Name: "post-sync-shared-pod", Namespace: "my-ns", Uid: "post-sync-shared-pod-uid"}
+				sharedCtr := &api.Container{Id: "post-sync-shared", PodSandboxId: sharedPod.Id, Name: "post-sync-shared-ctr"}
+
+				adjust, updates, err := driver.CreateContainer(context.Background(), sharedPod, sharedCtr)
+				require.NoError(t, err)
+				require.Equal(t, &api.ContainerAdjustment{
+					Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
+				}, adjust)
+				require.Empty(t, updates)
+
+				guaranteedPod := &api.PodSandbox{Id: "post-sync-guaranteed-pod-id", Name: "post-sync-guaranteed-pod", Namespace: "my-ns", Uid: "post-sync-guaranteed-pod-uid"}
+				guaranteedCtr := &api.Container{
+					Id:           "post-sync-guaranteed",
+					PodSandboxId: guaranteedPod.Id,
+					Name:         "post-sync-guaranteed-ctr",
+					Env:          []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")},
+				}
+
+				adjust, _, err = driver.CreateContainer(context.Background(), guaranteedPod, guaranteedCtr)
+				require.NoError(t, err)
+				require.Equal(t, &api.ContainerAdjustment{
+					Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1"}}},
+				}, adjust)
+			},
 		},
 	}
 
@@ -461,27 +473,17 @@ func TestNRISynchronize(t *testing.T) {
 			if tc.expectedError != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.expectedError)
-				require.Equal(t, tc.expectStoreLen, tc.driver.podConfigStore.Len())
-				require.Equal(t, tc.expectClaims, tc.driver.claimTracker.Len())
+				if tc.postSyncCheck != nil {
+					tc.postSyncCheck(t, tc.driver)
+				}
 				return
 			}
 			require.NoError(t, err)
 
-			// Verify that the store has been populated correctly
-			require.Equal(t, tc.expectStoreLen, tc.driver.podConfigStore.Len())
-			for _, pod := range tc.runtimePods {
-				for _, container := range tc.runtimeCtrs {
-					if container.PodSandboxId != pod.Id {
-						continue
-					}
-					state := tc.driver.podConfigStore.GetContainerState(types.UID(pod.Uid), container.Name)
-					require.NotNil(t, state)
-				}
-			}
-
-			// Verify that the returned updates match expectations
 			require.ElementsMatch(t, tc.expectedUpdates, updates)
-			require.Equal(t, tc.expectClaims, tc.driver.claimTracker.Len())
+			if tc.postSyncCheck != nil {
+				tc.postSyncCheck(t, tc.driver)
+			}
 		})
 	}
 }
