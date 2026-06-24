@@ -23,7 +23,9 @@ if [[ -z ${IMG_PREFIX:-} ]]; then
 fi
 
 if [[ -z ${IMG_TAG:-} ]]; then
-	# Use a tag if the current commit is a tag, otherwise use a date+git-hash tag
+	# Use a tag if the current commit is a tag, otherwise use a date+git-hash tag.
+	# $TAG_NAME is set by cloud build when triggered by a tag push. Fall back to
+	# git describe for local runs, then to date+sha if neither is available.
 	if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
 		IMG_TAG=$(git describe --exact-match --tags HEAD)
 	else
@@ -45,7 +47,13 @@ make push-image \
 	TAG="${IMG_TAG}" \
 	PLATFORMS="linux/amd64,linux/arm64"
 
-make helm-push \
-	CHART_REGISTRY="${IMG_PREFIX}/charts" \
-	CHART_VERSION="${CHART_VERSION}" \
-	TAG="${IMG_TAG}"
+# Only publish the helm chart for tagged releases. Branch-push builds produce
+# a dev image but should not publish a chart to the release registry.
+if [[ -n ${TAG_NAME:-} ]]; then
+	make helm-push \
+		CHART_REGISTRY="${IMG_PREFIX}/charts" \
+		CHART_VERSION="${CHART_VERSION}" \
+		TAG="${IMG_TAG}"
+else
+	echo "Skipping helm-push: not a tag-triggered build (TAG_NAME is not set)"
+fi
