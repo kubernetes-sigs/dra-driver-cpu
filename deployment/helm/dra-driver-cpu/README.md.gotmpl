@@ -3,6 +3,11 @@
 {{ template "chart.description" . }}
 
 ## Installation
+From a stable release:
+
+```bash
+helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu --version 0.2.0 -n kube-system
+```
 
 From a local checkout:
 
@@ -13,7 +18,7 @@ helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system
 To override values at install time:
 
 ```bash
-helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system \
+helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu --version 0.2.0 -n kube-system \
   --set args.cpuDeviceMode=individual \
   --set args.reservedCPUs="0-1"
 ```
@@ -21,8 +26,8 @@ helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system \
 Parameters can be set at install time using `--set` or a custom values file:
 
 ```bash
-helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system --set args.logLevel=4
-helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system -f my-values.yaml
+helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu --version 0.2.0 -n kube-system --set args.logLevel=4
+helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu --version 0.2.0 -n kube-system -f my-values.yaml
 ```
 
 {{ template "chart.valuesSection" . }}
