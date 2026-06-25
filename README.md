@@ -304,6 +304,16 @@ This discrepancy is a known issue being addressed by [KEP-5517: Native Resource 
 
 **1-to-1 Claim to Container:** This driver enforces that a specific CPU `ResourceClaim` can only be used by *one* container within or across pods. See [Sharing resource claims](#sharing-resource-claims).
 
+### Extended Resource Claim Status integrations
+
+When integrating through Kubernetes `status.extendedResourceClaimStatus`, be aware that kubelet does not attach CDI devices to a container merely because the pod status names a generated `ResourceClaim`. That status path is for DRA-backed extended resources, not for native resources like `cpu` or `memory`.
+
+For CDI injection to reach the runtime, the container must have a non-zero request for the DRA-backed extended resource, `status.extendedResourceClaimStatus.requestMappings[].resourceName` must match that exact container resource name, and `requestMappings[].requestName` must match the corresponding `spec.devices.requests[].name` in the generated `ResourceClaim`.
+
+If these fields do not line up, `NodePrepareResources` can still succeed and the driver can still write a valid CDI spec, but kubelet will not add the CDI device ID to the CRI container config. In that case the container will not receive the `DRA_CPUSET_*` environment variable and the NRI plugin will treat it as a shared-CPU container.
+
+For integrations that model native `cpu`, use the Kubernetes node-allocatable DRA status path when available instead of `extendedResourceClaimStatus`.
+
 ## Custom Opaque CPUSet Allocation Overrides
 
 When using `grouped` device mode with the `--group-by=machine` configuration, the DRA driver does not perform automatic topology-aware CPU allocation. Instead, an explicit core assignment must be provided via the `cpuset` field in the claim's opaque configuration parameters.
