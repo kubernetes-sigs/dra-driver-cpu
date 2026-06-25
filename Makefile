@@ -238,6 +238,9 @@ lint:  ## run the linter against the codebase
 modernize: ## run modernize to report suggested code modernizations
 	go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@$(GOPLS_VERSION) -diff ./...
 
+modernize-fix: ## apply modernize suggestions
+	go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@$(GOPLS_VERSION) -fix ./...
+
 # dependencies
 .PHONY: install-yq
 install-yq: $(OUT_DIR)  ## make sure the yq tool is available locally
