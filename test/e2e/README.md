@@ -71,6 +71,16 @@ To run against an existing cluster with the driver already deployed:
 make test-e2e
 ```
 
+Note: `make test-e2e` does not build or load the test image; it only runs the Go e2e suite.
+The `make test-e2e-kind` target builds and loads the image
+automatically into a kind cluster, but for an arbitrary cluster the default `IMAGE_TEST` value
+points at the local CI image name and will not be pullable. Either make sure the
+test image is available to the cluster, or override the image explicitly:
+
+```bash
+DRACPU_E2E_TEST_IMAGE=<image> make test-e2e
+```
+
 ### troubleshooting
 
 - **Kubelet fails with `unknown service runtime.v1.RuntimeService`**
