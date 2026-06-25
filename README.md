@@ -306,13 +306,11 @@ This discrepancy is a known issue being addressed by [KEP-5517: Native Resource 
 
 ### Extended Resource Claim Status integrations
 
-When integrating through Kubernetes `status.extendedResourceClaimStatus`, be aware that kubelet does not attach CDI devices to a container merely because the pod status names a generated `ResourceClaim`. That status path is for DRA-backed extended resources, not for native resources like `cpu` or `memory`.
+Kubernetes `status.extendedResourceClaimStatus` is for DRA-backed extended resources. Extended resource names exclude standard resources such as `cpu` and `memory`, so `extendedResourceName` in a `DeviceClass` or `extendedResourceClaimStatus` in a Pod status is not expected to work with this CPU DRA driver when the container only requests native `cpu`.
 
-For CDI injection to reach the runtime, the container must have a non-zero request for the DRA-backed extended resource, `status.extendedResourceClaimStatus.requestMappings[].resourceName` must match that exact container resource name, and `requestMappings[].requestName` must match the corresponding `spec.devices.requests[].name` in the generated `ResourceClaim`.
+For example, a Pod that references a CPU `ResourceClaim` explicitly through `containers[].resources.claims` follows this driver's supported path. A Pod that only patches `status.extendedResourceClaimStatus` with `requestMappings[].resourceName: cpu` does not, because `cpu` is a native resource rather than a DRA-backed extended resource.
 
-If these fields do not line up, `NodePrepareResources` can still succeed and the driver can still write a valid CDI spec, but kubelet will not add the CDI device ID to the CRI container config. In that case the container will not receive the `DRA_CPUSET_*` environment variable and the NRI plugin will treat it as a shared-CPU container.
-
-For integrations that model native `cpu`, use the Kubernetes node-allocatable DRA status path when available instead of `extendedResourceClaimStatus`.
+For integrations that model native `cpu`, use the Kubernetes node-allocatable DRA status path when available instead.
 
 ## Custom Opaque CPUSet Allocation Overrides
 
