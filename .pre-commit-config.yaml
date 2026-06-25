@@ -28,7 +28,7 @@ repos:
     rev: 0.7.22
     hooks:
       - id: mdformat
-        exclude: (\.chglog/.*|deployment/helm/.*)\.md
+        exclude: (\.chglog/.*|deployment/helm/.*|\.github/ISSUE_TEMPLATE/.*)\.md
         additional_dependencies:
           - mdformat-toc
           - mdformat-tables
