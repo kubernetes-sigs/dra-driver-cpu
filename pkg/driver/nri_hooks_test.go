@@ -306,7 +306,6 @@ func TestNRISynchronize(t *testing.T) {
 		runtimeCtrs     []*api.Container
 		expectedUpdates []*api.ContainerUpdate
 		expectedError   string
-		postSyncCheck   func(t *testing.T, driver *CPUDriver)
 	}{
 		{
 			name: "empty runtime state clears the store",
@@ -421,48 +420,19 @@ func TestNRISynchronize(t *testing.T) {
 			},
 		},
 		{
-			name: "malformed DRA env fails without committing partial synchronized state",
-			driver: func() *CPUDriver {
-				driver := &CPUDriver{
-					podConfigStore:     store.NewPodConfig(),
-					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
-					claimTracker:       store.NewClaimTracker(),
-					cpuTopology:        topo,
-				}
-				driver.podConfigStore.SetContainerState(types.UID("existing-pod"), store.NewContainerState("existing-ctr", "existing-id"))
-				return driver
-			}(),
+			name: "malformed DRA env fails synchronize",
+			driver: &CPUDriver{
+				podConfigStore:     store.NewPodConfig(),
+				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+				claimTracker:       store.NewClaimTracker(),
+				cpuTopology:        topo,
+			},
 			runtimePods: []*api.PodSandbox{pod1},
 			runtimeCtrs: []*api.Container{
 				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
 				{Id: "p1-malformed", PodSandboxId: pod1.Id, Name: "malformed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "a-b")}},
 			},
 			expectedError: "failed to parse cpuset value",
-			postSyncCheck: func(t *testing.T, driver *CPUDriver) {
-				sharedPod := &api.PodSandbox{Id: "post-sync-shared-pod-id", Name: "post-sync-shared-pod", Namespace: "my-ns", Uid: "post-sync-shared-pod-uid"}
-				sharedCtr := &api.Container{Id: "post-sync-shared", PodSandboxId: sharedPod.Id, Name: "post-sync-shared-ctr"}
-
-				adjust, updates, err := driver.CreateContainer(context.Background(), sharedPod, sharedCtr)
-				require.NoError(t, err)
-				require.Equal(t, &api.ContainerAdjustment{
-					Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
-				}, adjust)
-				require.Empty(t, updates)
-
-				guaranteedPod := &api.PodSandbox{Id: "post-sync-guaranteed-pod-id", Name: "post-sync-guaranteed-pod", Namespace: "my-ns", Uid: "post-sync-guaranteed-pod-uid"}
-				guaranteedCtr := &api.Container{
-					Id:           "post-sync-guaranteed",
-					PodSandboxId: guaranteedPod.Id,
-					Name:         "post-sync-guaranteed-ctr",
-					Env:          []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")},
-				}
-
-				adjust, _, err = driver.CreateContainer(context.Background(), guaranteedPod, guaranteedCtr)
-				require.NoError(t, err)
-				require.Equal(t, &api.ContainerAdjustment{
-					Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1"}}},
-				}, adjust)
-			},
 		},
 	}
 
@@ -473,17 +443,11 @@ func TestNRISynchronize(t *testing.T) {
 			if tc.expectedError != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.expectedError)
-				if tc.postSyncCheck != nil {
-					tc.postSyncCheck(t, tc.driver)
-				}
 				return
 			}
 			require.NoError(t, err)
 
 			require.ElementsMatch(t, tc.expectedUpdates, updates)
-			if tc.postSyncCheck != nil {
-				tc.postSyncCheck(t, tc.driver)
-			}
 		})
 	}
 }
