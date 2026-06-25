@@ -91,3 +91,29 @@ make test-e2e
   go install sigs.k8s.io/kind@v0.32.0
   docker rmi kindest/node:<version>
   ```
+
+- **Pods fail with `openat2 .../cpuset.cpus: no such file or directory`**
+
+  When running kind with rootless Docker, the `cpuset` cgroup controller is not
+  delegated to user sessions by default. The NRI hook sets `cpuset.cpus` on every
+  container, so all pods (including CoreDNS) crash on startup.
+
+  Verify by checking inside a kind node:
+
+  ```bash
+  docker exec <kind-node> cat /sys/fs/cgroup/cgroup.controllers
+  # If "cpuset" is missing from the output, this is the issue.
+  ```
+
+  Fix:
+
+  ```bash
+  sudo mkdir -p /etc/systemd/system/user@.service.d
+  sudo tee /etc/systemd/system/user@.service.d/delegate-cpuset.conf <<EOF
+  [Service]
+  Delegate=cpuset cpu io memory pids
+  EOF
+  sudo systemctl daemon-reload
+  ```
+
+  Then recreate the kind cluster.
