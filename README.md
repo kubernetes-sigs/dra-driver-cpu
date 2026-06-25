@@ -306,7 +306,7 @@ This discrepancy is a known issue being addressed by [KEP-5517: Native Resource 
 
 ### Extended Resource Claim Status integrations
 
-Kubernetes `status.extendedResourceClaimStatus` is for DRA-backed extended resources. Extended resource names exclude standard resources such as `cpu` and `memory`, so `extendedResourceName` in a `DeviceClass` or `extendedResourceClaimStatus` in a Pod status is not expected to work with this CPU DRA driver when the container only requests native `cpu`.
+Kubernetes `status.extendedResourceClaimStatus` is for DRA-backed extended resources. [Extended resource names](https://kubernetes.io/docs/tasks/configure-pod-container/extended-resource/) exclude standard resources such as `cpu` and `memory`, so `extendedResourceName` in a `DeviceClass` or a pod's `status.extendedResourceClaimStatus` is not expected to work with this CPU DRA driver when the container only requests native `cpu`.
 
 For example, a Pod that references a CPU `ResourceClaim` explicitly through `containers[].resources.claims` follows this driver's supported path. A Pod that only patches `status.extendedResourceClaimStatus` with `requestMappings[].resourceName: cpu` does not, because `cpu` is a native resource rather than a DRA-backed extended resource.
 
