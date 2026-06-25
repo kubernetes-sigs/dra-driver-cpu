@@ -96,7 +96,7 @@ type numaOrSocketsFirstFuncs interface {
 	takeFullSecondLevel()
 	sortAvailableNUMANodes() []int
 	sortAvailableSockets() []int
-	sortAvailableCores() []int
+	sortAvailableCores() []topology.CoreKey
 }
 
 type numaFirst struct{ acc *cpuAccumulator }
@@ -151,11 +151,11 @@ func (n *numaFirst) sortAvailableSockets() []int {
 
 // If NUMA nodes are higher in the memory hierarchy than sockets, then
 // cores sit directly below sockets in the memory hierarchy.
-func (n *numaFirst) sortAvailableCores() []int {
-	var result []int
+func (n *numaFirst) sortAvailableCores() []topology.CoreKey {
+	var result []topology.CoreKey
 	for _, socket := range n.acc.sortAvailableSockets() {
-		cores := n.acc.details.CoresInSockets(socket).UnsortedList()
-		n.acc.sort(cores, n.acc.details.CPUsInCores)
+		cores := n.acc.details.CoreKeysInSockets(socket)
+		n.acc.sortCoreKeys(cores, n.acc.details.CPUsInCoreKeys)
 		result = append(result, cores...)
 	}
 	return result
@@ -196,11 +196,11 @@ func (s *socketsFirst) sortAvailableSockets() []int {
 
 // If sockets are higher in the memory hierarchy than NUMA nodes, then cores
 // sit directly below NUMA Nodes in the memory hierarchy.
-func (s *socketsFirst) sortAvailableCores() []int {
-	var result []int
+func (s *socketsFirst) sortAvailableCores() []topology.CoreKey {
+	var result []topology.CoreKey
 	for _, numa := range s.acc.sortAvailableNUMANodes() {
-		cores := s.acc.details.CoresInNUMANodes(numa).UnsortedList()
-		s.acc.sort(cores, s.acc.details.CPUsInCores)
+		cores := s.acc.details.CoreKeysInNUMANodes(numa)
+		s.acc.sortCoreKeys(cores, s.acc.details.CPUsInCoreKeys)
 		result = append(result, cores...)
 	}
 	return result
@@ -333,7 +333,7 @@ func (a *cpuAccumulator) isNUMANodeFree(numaID int) bool {
 // Returns true if the supplied socket is fully available in `a.details`.
 // "fully available" means that all the CPUs in it are free.
 func (a *cpuAccumulator) isSocketFree(socketID int) bool {
-	return a.details.CPUsInSockets(socketID).Size() == a.topo.CPUsPerSocket()
+	return a.details.CPUsInSockets(socketID).Size() == a.topo.CPUDetails.CPUsInSockets(socketID).Size()
 }
 
 // Returns true if the supplied UnCoreCache is fully available,
@@ -344,8 +344,8 @@ func (a *cpuAccumulator) isUncoreCacheFree(uncoreID int) bool {
 
 // Returns true if the supplied core is fully available in `a.details`.
 // "fully available" means that all the CPUs in it are free.
-func (a *cpuAccumulator) isCoreFree(coreID int) bool {
-	return a.details.CPUsInCores(coreID).Size() == a.topo.CPUsPerCore()
+func (a *cpuAccumulator) isCoreFree(core topology.CoreKey) bool {
+	return a.details.CPUsInCoreKeys(core).Size() == a.topo.CPUDetails.CPUsInCoreKeys(core).Size()
 }
 
 // Returns free NUMA Node IDs as a slice sorted by sortAvailableNUMANodes().
@@ -382,8 +382,8 @@ func (a *cpuAccumulator) freeUncoreCache() []int {
 }
 
 // Returns free core IDs as a slice sorted by sortAvailableCores().
-func (a *cpuAccumulator) freeCores() []int {
-	free := []int{}
+func (a *cpuAccumulator) freeCores() []topology.CoreKey {
+	free := []topology.CoreKey{}
 	for _, core := range a.sortAvailableCores() {
 		if a.isCoreFree(core) {
 			free = append(free, core)
@@ -415,6 +415,21 @@ func (a *cpuAccumulator) sort(ids []int, getCPUs func(ids ...int) cpuset.CPUSet)
 				return false
 			}
 			return ids[i] < ids[j]
+		})
+}
+
+func (a *cpuAccumulator) sortCoreKeys(keys []topology.CoreKey, getCPUs func(keys ...topology.CoreKey) cpuset.CPUSet) {
+	sort.Slice(keys,
+		func(i, j int) bool {
+			iCPUs := getCPUs(keys[i])
+			jCPUs := getCPUs(keys[j])
+			if iCPUs.Size() < jCPUs.Size() {
+				return true
+			}
+			if iCPUs.Size() > jCPUs.Size() {
+				return false
+			}
+			return keys[i].Less(keys[j])
 		})
 }
 
@@ -476,7 +491,7 @@ func (a *cpuAccumulator) sortAvailableSockets() []int {
 // same way as described in the previous paragraph, except that the priority of NUMA nodes and
 // sockets is inverted (e.g. first sort the cores by number of free CPUs in their NUMA nodes, then,
 // for each NUMA node, sort the cores by number of free CPUs in their sockets, etc...).
-func (a *cpuAccumulator) sortAvailableCores() []int {
+func (a *cpuAccumulator) sortAvailableCores() []topology.CoreKey {
 	return a.numaOrSocketsFirst.sortAvailableCores()
 }
 
@@ -506,7 +521,7 @@ func (a *cpuAccumulator) sortAvailableCores() []int {
 func (a *cpuAccumulator) sortAvailableCPUsPacked() []int {
 	var result []int
 	for _, core := range a.sortAvailableCores() {
-		cpus := a.details.CPUsInCores(core).UnsortedList()
+		cpus := a.details.CPUsInCoreKeys(core).UnsortedList()
 		sort.Ints(cpus)
 		result = append(result, cpus...)
 	}
@@ -566,28 +581,16 @@ func (a *cpuAccumulator) takeFullUncore() {
 }
 
 func (a *cpuAccumulator) takePartialUncore(uncoreID int) {
-	// determine the number of cores needed whether SMT/hyperthread is enabled or disabled
-	numCoresNeeded := (a.numCPUsNeeded + a.topo.CPUsPerCore() - 1) / a.topo.CPUsPerCore()
-
 	// determine the N number of free cores (physical cpus) within the UncoreCache, then
 	// determine the M number of free cpus (virtual cpus) that correspond with the free cores
-	freeCores := a.details.CoresNeededInUncoreCache(numCoresNeeded, uncoreID)
-	freeCPUs := a.details.CPUsInCores(freeCores.UnsortedList()...)
+	freeCores := a.details.CoreKeysNeededForCPUsInUncoreCache(a.numCPUsNeeded, uncoreID)
+	freeCPUs := a.details.CPUsInCoreKeys(freeCores...)
 
-	// when SMT/hyperthread is enabled and remaining cpu requirement is an odd integer value:
-	// sort the free CPUs that were determined based on the cores that have available cpus.
-	// if the amount of free cpus is greater than the cpus needed, we can drop the last cpu
-	// since the odd integer request will only require one out of the two free cpus that
-	// correspond to the last core
-	if a.numCPUsNeeded%2 != 0 && a.topo.CPUsPerCore() > 1 {
-		// we sort freeCPUs to ensure we pack virtual cpu allocations, meaning we allocate
-		// whole core's worth of cpus as much as possible to reduce smt-misalignment
+	// We sort and trim CPUs to pack whole cores as much as possible while still
+	// allowing the final core to contribute only the CPUs needed by this request.
+	if freeCPUs.Size() > a.numCPUsNeeded {
 		sortFreeCPUs := freeCPUs.List()
-		if len(sortFreeCPUs) > a.numCPUsNeeded {
-			// if we are in takePartialUncore, the accumulator is not satisfied after
-			// takeFullUncore, so freeCPUs.Size() can't be < 1
-			sortFreeCPUs = sortFreeCPUs[:freeCPUs.Size()-1]
-		}
+		sortFreeCPUs = sortFreeCPUs[:a.numCPUsNeeded]
 		freeCPUs = cpuset.New(sortFreeCPUs...)
 	}
 
@@ -597,7 +600,7 @@ func (a *cpuAccumulator) takePartialUncore(uncoreID int) {
 		"uncore", uncoreID,
 		"claimed", claimed,
 		"needed", a.numCPUsNeeded,
-		"cores", freeCores.String(),
+		"cores", freeCores,
 		"cpus", freeCPUs.String())
 	if !claimed {
 		return
@@ -608,10 +611,9 @@ func (a *cpuAccumulator) takePartialUncore(uncoreID int) {
 // First try to take full UncoreCache, if available and need is at least the size of the UncoreCache group.
 // Second try to take the partial UncoreCache if available and the request size can fit w/in the UncoreCache.
 func (a *cpuAccumulator) takeUncoreCache() {
-	numCPUsInUncore := a.topo.CPUsPerUncore()
 	for _, uncore := range a.sortAvailableUncoreCaches() {
 		// take full UncoreCache if the CPUs needed is greater than free UncoreCache size
-		if a.needsAtLeast(numCPUsInUncore) {
+		if a.needsAtLeast(a.topo.CPUDetails.CPUsInUncoreCaches(uncore).Size()) {
 			a.takeFullUncore()
 		}
 
@@ -629,7 +631,7 @@ func (a *cpuAccumulator) takeUncoreCache() {
 
 func (a *cpuAccumulator) takeFullCores() {
 	for _, core := range a.freeCores() {
-		cpusInCore := a.topo.CPUDetails.CPUsInCores(core)
+		cpusInCore := a.topo.CPUDetails.CPUsInCoreKeys(core)
 		if !a.needsAtLeast(cpusInCore.Size()) {
 			continue
 		}
