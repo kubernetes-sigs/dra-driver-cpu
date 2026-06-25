@@ -166,33 +166,17 @@ delete-kind-cluster: ## delete kind cluster
 dist:
 	@mkdir -p dist
 
-manifests-legacy: dist install-yq ## create the install manifest (legacy, pre-helm)
-	@cd dist && cp -a ../manifests/base/*.part.yaml .
-ifeq ($(OVERRIDE_IMAGE),true)
-	@$(YQ) -i '.spec.template.spec.containers[0].image = "${IMAGE}"' dist/daemonset-dracpu.part.yaml
-	@$(YQ) -i '.spec.template.spec.containers[0].imagePullPolicy = "IfNotPresent"' dist/daemonset-dracpu.part.yaml
-	@$(YQ) -i '.spec.template.metadata.labels["build"] = "${GIT_VERSION}"' dist/daemonset-dracpu.part.yaml
-endif
-	@$(YQ) '.' \
-		dist/clusterrole-dracpu.part.yaml \
-		dist/serviceaccount-dracpu.part.yaml \
-		dist/clusterrolebinding-dracpu.part.yaml \
-		dist/daemonset-dracpu.part.yaml \
-		dist/deviceclass-dracpu.part.yaml \
-		> dist/install.yaml
-	@rm dist/*.part.yaml
-
-manifests: dist install-helm ## create the install manifest
+manifests: dist install-helm ## create rendered helm manifest
 ifeq ($(OVERRIDE_IMAGE),true)
 	$(HELM) template dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
 		--set podLabels.build=${GIT_VERSION} \
 		--set image.repository=${IMAGE_REPO} \
 		--set image.tag=${TAG} \
 		--set image.pullPolicy=IfNotPresent \
-		> dist/install.yaml
+		> dist/helm-manifest.yaml
 else
 	$(HELM) template dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
-		> dist/install.yaml
+		> dist/helm-manifest.yaml
 endif
 
 ci-kind-setup: ensure-kind-node-image install-helm build-image build-test-image ## setup a CI cluster from scratch using reserved CPUs

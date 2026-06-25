@@ -446,14 +446,14 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
 
 See the [Helm chart README](deployment/helm/dra-driver-cpu/README.md) for the full list of configuration options.
 
-#### Installation via install.yaml (deprecated)
+#### Installation via rendered manifest (deprecated)
 
-> **Deprecated:** `install.yaml` is deprecated in favor of the Helm chart and will be removed in a future release.
+> **Deprecated:** Manifest-based installation is deprecated in favor of the Helm chart and will be removed in a future release.
 > New users should use the Helm-based installation above.
 
 ```bash
 make manifests
-kubectl apply -f dist/install.yaml
+kubectl apply -f dist/helm-manifest.yaml
 ```
 
 ### Migrating from install.yaml to Helm
@@ -463,8 +463,9 @@ Because the DaemonSet label selectors differ between `install.yaml` (`app: dracp
 in-place migration is not possible. The only practical migration path is a delete and reinstall:
 
 ```bash
-# Step 1: remove the install.yaml-managed resources
-kubectl delete -f dist/install.yaml
+# Step 1: remove the legacy manifest-managed resources
+# (use the same manifest file that was originally applied)
+kubectl delete -f <legacy-manifest>.yaml
 
 # Step 2: install the Helm-managed release
 helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu -n kube-system
