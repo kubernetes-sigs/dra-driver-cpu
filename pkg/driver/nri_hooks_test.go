@@ -237,9 +237,14 @@ func TestCreateContainer(t *testing.T) {
 				store.AddResourceClaimAllocation(logger, types.UID(claimUID), cpuset.New(0, 1))
 				return store
 			}(),
-			claimTracker:          store.NewClaimTracker(),
-			container:             newTestContainer(claimUID, "0-3"),
-			expectedErrorContains: fmt.Sprintf("claim %q has cpuset", claimUID),
+			claimTracker: store.NewClaimTracker(),
+			container:    newTestContainer(claimUID, "0-3"),
+			expectedErrorContains: fmt.Sprintf(
+				"validation failed for claim %q: cpuset mismatch (expected %q, got %q)",
+				claimUID,
+				"0-1",
+				"0-3",
+			),
 		},
 	}
 

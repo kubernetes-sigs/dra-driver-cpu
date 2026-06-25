@@ -134,7 +134,7 @@ func (cp *CPUDriver) validatePreparedClaimAllocation(uid types.UID, cpus cpuset.
 		return fmt.Errorf("claim %q is not prepared by this driver", uid)
 	}
 	if !preparedCPUs.Equals(cpus) {
-		return fmt.Errorf("claim %q has cpuset %q, expected prepared cpuset %q", uid, cpus.String(), preparedCPUs.String())
+		return fmt.Errorf("validation failed for claim %q: cpuset mismatch (expected %q, got %q)", uid, preparedCPUs.String(), cpus.String())
 	}
 	return nil
 }
