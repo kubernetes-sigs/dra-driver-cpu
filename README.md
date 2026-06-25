@@ -440,7 +440,8 @@ make kind-cluster
 The recommended way to install the driver is via the provided Helm chart:
 
 ```bash
-helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system
+helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu -n kube-system
+
 ```
 
 See the [Helm chart README](deployment/helm/dra-driver-cpu/README.md) for the full list of configuration options.
@@ -466,7 +467,7 @@ in-place migration is not possible. The only practical migration path is a delet
 kubectl delete -f dist/install.yaml
 
 # Step 2: install the Helm-managed release
-helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system
+helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu -n kube-system
 ```
 
 **Disruption:** Deleting the DaemonSet terminates the driver pods on all nodes simultaneously. During

@@ -79,7 +79,7 @@ $(OUT_DIR):  ## creates the output directory (used internally)
 CLUSTER_NAME=dra-driver-cpu
 IMAGE_NAME=dra-driver-cpu
 # docker image registry, default to upstream
-REGISTRY ?= us-central1-docker.pkg.dev/k8s-staging-images
+REGISTRY ?= registry.k8s.io/k8s-staging-images
 # this is an intentionally non-existent registry to be used only by local CI using the local image loading
 REGISTRY_CI := dev.kind.local/ci
 IMAGE_REPO := ${REGISTRY}/${IMAGE_NAME}/${IMAGE_NAME}

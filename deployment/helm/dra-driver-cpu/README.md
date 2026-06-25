@@ -3,6 +3,11 @@
 Kubernetes DRA driver for managing CPU resources with topology-aware allocation, exclusive CPU assignment, and shared CPU pool management via the Dynamic Resource Allocation framework.
 
 ## Installation
+From a stable release:
+
+```bash
+helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu --version 0.2.0 -n kube-system
+```
 
 From a local checkout:
 
@@ -13,7 +18,7 @@ helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system
 To override values at install time:
 
 ```bash
-helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system \
+helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu --version 0.2.0 -n kube-system \
   --set args.cpuDeviceMode=individual \
   --set args.reservedCPUs="0-1"
 ```
@@ -21,8 +26,8 @@ helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system \
 Parameters can be set at install time using `--set` or a custom values file:
 
 ```bash
-helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system --set args.logLevel=4
-helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system -f my-values.yaml
+helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu --version 0.2.0 -n kube-system --set args.logLevel=4
+helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu --version 0.2.0 -n kube-system -f my-values.yaml
 ```
 
 ## Values
@@ -40,7 +45,7 @@ helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system -f m
 | healthzPath | string | `"/healthz"` | Path for liveness and readiness probes |
 | healthzPort | int | `8080` | Port the HTTP server binds to; used for the container port and probes |
 | image.pullPolicy | string | `"IfNotPresent"` | Image pull policy |
-| image.repository | string | `"us-central1-docker.pkg.dev/k8s-staging-images/dra-driver-cpu/dra-driver-cpu"` | Container image repository |
+| image.repository | string | `"registry.k8s.io/dra-driver-cpu/dra-driver-cpu"` | Container image repository |
 | image.tag | string | `""` | Image tag; defaults to `.Chart.AppVersion` when empty, which is set to the release tag at package time |
 | imagePullSecrets | list | `[]` | List of image pull secrets |
 | nameOverride | string | `""` | Override the chart name |
