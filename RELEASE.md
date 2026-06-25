@@ -83,8 +83,9 @@ Before publishing the release, verify the images are available at k8s-registry:
 - Go to the [Releases page](https://github.com/kubernetes-sigs/dra-driver-cpu/releases) on GitHub.
 - Find the new tag and click "Edit tag" (or "Draft a new release" and select the tag).
 - Paste the final changelog into the release description.
-- Upload the generated manifests (`dist/install.yaml`) as release artifacts.
 - Publish the release.
+
+**Note:** The project uses Helm charts for deployment. Release artifacts are automatically published to the Helm chart registry and should not include `install.yaml` manifests.
 
 ## 5. Post-Release Tasks
 
