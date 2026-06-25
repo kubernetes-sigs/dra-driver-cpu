@@ -18,12 +18,11 @@ package device
 
 import (
 	resourceapi "k8s.io/api/resource/v1"
-	"k8s.io/utils/ptr"
 )
 
 // SetCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other
 // DRA resource drivers leveraging attributes which are not kubernetes standard.
 // This is the "staging area" which enables attribute sharing until (or before) they become standard.
 func SetCompatibilityAttributes(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, numaID int64) {
-	attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: ptr.To(numaID)}
+	attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: new(numaID)}
 }

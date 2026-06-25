@@ -34,7 +34,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/cpuset"
-	"k8s.io/utils/ptr"
 )
 
 var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
@@ -170,7 +169,7 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 					ResourceClaims: []v1.PodResourceClaim{
 						{
 							Name:              "cpu",
-							ResourceClaimName: ptr.To(claim.Name),
+							ResourceClaimName: new(claim.Name),
 						},
 					},
 				},
@@ -232,7 +231,7 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 					ResourceClaims: []v1.PodResourceClaim{
 						{
 							Name:              "cpu",
-							ResourceClaimName: ptr.To(claim.Name),
+							ResourceClaimName: new(claim.Name),
 						},
 					},
 				},

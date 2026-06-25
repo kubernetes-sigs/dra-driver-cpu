@@ -38,7 +38,6 @@ import (
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/utils/cpuset"
-	"k8s.io/utils/ptr"
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
 )
 
@@ -212,9 +211,9 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 		switch cp.cpuDeviceGroupBy {
 		case GROUP_BY_SOCKET:
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				AttributeSocketID:   {IntValue: ptr.To(int64(deviceInfo.socketID))},
-				AttributeNumCPUs:    {IntValue: ptr.To(availableCPUs)},
-				AttributeSMTEnabled: {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
+				AttributeSocketID:   {IntValue: new(int64(deviceInfo.socketID))},
+				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
+				AttributeSMTEnabled: {BoolValue: new(cp.cpuTopology.SMTEnabled)},
 			}
 			cp.setPCIeRootsAttribute(deviceAttrs, deviceInfo.cpus.UnsortedList()...)
 
@@ -222,14 +221,14 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 				Name:                     deviceInfo.name,
 				Attributes:               deviceAttrs,
 				Capacity:                 deviceCapacity,
-				AllowMultipleAllocations: ptr.To(true),
+				AllowMultipleAllocations: new(true),
 			})
 		case GROUP_BY_NUMA_NODE:
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				AttributeNUMANodeID: {IntValue: ptr.To(int64(deviceInfo.numaNodeID))},
-				AttributeSocketID:   {IntValue: ptr.To(int64(deviceInfo.socketID))},
-				AttributeSMTEnabled: {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
-				AttributeNumCPUs:    {IntValue: ptr.To(availableCPUs)},
+				AttributeNUMANodeID: {IntValue: new(int64(deviceInfo.numaNodeID))},
+				AttributeSocketID:   {IntValue: new(int64(deviceInfo.socketID))},
+				AttributeSMTEnabled: {BoolValue: new(cp.cpuTopology.SMTEnabled)},
+				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
 			}
 			device.SetCompatibilityAttributes(deviceAttrs, int64(deviceInfo.numaNodeID))
 			cp.setPCIeRootsAttribute(deviceAttrs, deviceInfo.cpus.UnsortedList()...)
@@ -238,19 +237,19 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 				Name:                     deviceInfo.name,
 				Attributes:               deviceAttrs,
 				Capacity:                 deviceCapacity,
-				AllowMultipleAllocations: ptr.To(true),
+				AllowMultipleAllocations: new(true),
 			})
 		case GROUP_BY_MACHINE:
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				AttributeSMTEnabled: {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
-				AttributeNumCPUs:    {IntValue: ptr.To(availableCPUs)},
+				AttributeSMTEnabled: {BoolValue: new(cp.cpuTopology.SMTEnabled)},
+				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
 			}
 			cp.setPCIeRootsAttribute(deviceAttrs, deviceInfo.cpus.UnsortedList()...)
 			devices = append(devices, resourceapi.Device{
 				Name:                     deviceInfo.name,
 				Attributes:               deviceAttrs,
 				Capacity:                 deviceCapacity,
-				AllowMultipleAllocations: ptr.To(true),
+				AllowMultipleAllocations: new(true),
 			})
 		}
 	}
@@ -270,13 +269,13 @@ func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 	for _, deviceInfo := range cp.cpuDeviceInfos() {
 		cpu := deviceInfo.cpu
 		deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-			AttributeNUMANodeID: {IntValue: ptr.To(int64(cpu.NUMANodeID))},
-			AttributeSocketID:   {IntValue: ptr.To(int64(cpu.SocketID))},
-			AttributeSMTEnabled: {BoolValue: ptr.To(cp.cpuTopology.SMTEnabled)},
-			AttributeCacheL3ID:  {IntValue: ptr.To(int64(cpu.UncoreCacheID))},
-			AttributeCoreType:   {StringValue: ptr.To(cpu.CoreType.String())},
-			AttributeCoreID:     {IntValue: ptr.To(int64(cpu.CoreID))},
-			AttributeCPUID:      {IntValue: ptr.To(int64(cpu.CpuID))},
+			AttributeNUMANodeID: {IntValue: new(int64(cpu.NUMANodeID))},
+			AttributeSocketID:   {IntValue: new(int64(cpu.SocketID))},
+			AttributeSMTEnabled: {BoolValue: new(cp.cpuTopology.SMTEnabled)},
+			AttributeCacheL3ID:  {IntValue: new(int64(cpu.UncoreCacheID))},
+			AttributeCoreType:   {StringValue: new(cpu.CoreType.String())},
+			AttributeCoreID:     {IntValue: new(int64(cpu.CoreID))},
+			AttributeCPUID:      {IntValue: new(int64(cpu.CpuID))},
 		}
 		device.SetCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID))
 		cp.setPCIeRootsAttribute(deviceAttrs, cpu.CpuID)
