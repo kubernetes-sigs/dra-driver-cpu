@@ -128,15 +128,13 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 	return allocations, nil
 }
 
-func (cp *CPUDriver) validatePreparedClaimAllocations(claimAllocations map[types.UID]cpuset.CPUSet) error {
-	for uid, cpus := range claimAllocations {
-		preparedCPUs, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(uid)
-		if !ok {
-			return fmt.Errorf("claim %q is not prepared by this driver", uid)
-		}
-		if !preparedCPUs.Equals(cpus) {
-			return fmt.Errorf("claim %q has cpuset %q, expected prepared cpuset %q", uid, cpus.String(), preparedCPUs.String())
-		}
+func (cp *CPUDriver) validatePreparedClaimAllocation(uid types.UID, cpus cpuset.CPUSet) error {
+	preparedCPUs, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(uid)
+	if !ok {
+		return fmt.Errorf("claim %q is not prepared by this driver", uid)
+	}
+	if !preparedCPUs.Equals(cpus) {
+		return fmt.Errorf("claim %q has cpuset %q, expected prepared cpuset %q", uid, cpus.String(), preparedCPUs.String())
 	}
 	return nil
 }
@@ -190,14 +188,14 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 	} else {
 		// NRI invokes CreateContainer for all containers. Only trust DRA env
 		// entries that match a claim prepared by this driver.
-		if err := cp.validatePreparedClaimAllocations(claimAllocations); err != nil {
-			return nil, nil, err
-		}
-
 		guaranteedCPUs := cpuset.New()
 		claimUIDs := []types.UID{}
 		for uid, cpus := range claimAllocations {
 			cLogger := logger.WithValues("claimUID", uid)
+			if err := cp.validatePreparedClaimAllocation(uid, cpus); err != nil {
+				return nil, nil, err
+			}
+
 			err := cp.claimTracker.SetOwner(cLogger, uid, types.UID(pod.Uid), ctr.Name)
 			if err != nil {
 				return nil, nil, err
