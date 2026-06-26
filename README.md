@@ -32,6 +32,29 @@ The driver can be configured with the following command-line flags:
 - `--reserved-cpus`: Specifies a set of CPUs to be reserved for system and kubelet processes. These CPUs will not be allocatable by the DRA driver and would be excluded from the `ResourceSlice`. The value is a cpuset, e.g., `0-1`. This semantic is the same as the one the kubelet applies with its `static` CPU Manager policy and enabling [`strict-cpu-reservation`](https://kubernetes.io/blog/2024/12/16/cpumanager-strict-cpu-reservation/) flag and specifying the CPUs with the [`reservedSystemCPUs`](https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/#explicitly-reserved-cpu-list) to be reserved for system daemons. For correct CPU accounting, the number of CPUs reserved with this flag should match the sum of the kubelet's `kubeReserved` and `systemReserved` settings. This ensures the kubelet subtracts the correct number of CPUs from `Node.Status.Allocatable`.
 - `--expose-pcie-roots`: If enabled, adds the "resource.kubernetes.io/pcieRoot" standard value to CPU devices, to report the PCIe roots close to each device. Since it always reports values as list, this option requires the cluster Feature Gate `DRAListTypeAttributes` (see KEP 5491) to be enabled. The driver has no way to introspect the cluster Feature Gate, so care must be taken to enable first the Feature Gate then this option.
 
+### Configuration file
+
+When deploying with Helm, set `driverConfig` in your values file. The chart serializes the
+map to YAML, stores it in a ConfigMap, mounts it as `/etc/dracpu/config.yaml` inside the
+driver container, and passes `--config` automatically.
+
+```yaml
+# values.yaml
+driverConfig:
+  cpuDeviceMode: grouped
+  groupBy: numanode
+  reservedCPUs: "0-3"
+```
+
+`driverConfig` is a single map covering all driver settings — there is no separate Helm value
+per field. `args.*` on the other hand exposes individual fields as explicit Helm values and
+translates them to CLI flags. Both reach the same driver settings; `args.*` takes priority when
+both are set for the same field.
+
+Both `args.*` and `driverConfig` exist during a transition period. The intent is to eventually
+deprecate `args.*` in favour of `driverConfig` as the single configuration mechanism. The driver
+logs the effective configuration at startup so you can verify which values are active.
+
 ## How it Works
 
 The driver is deployed as a DaemonSet which contains two core components:
