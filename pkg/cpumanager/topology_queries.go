@@ -41,7 +41,7 @@ func (q topologyQueries) allCPUs() cpuset.CPUSet {
 }
 
 func (q topologyQueries) availableCPUsSet() cpuset.CPUSet {
-	return (*q.availableCPUs).CPUs()
+	return q.availableCPUs.CPUs()
 }
 
 func (q topologyQueries) allNUMANodes() cpuset.CPUSet {
@@ -49,11 +49,11 @@ func (q topologyQueries) allNUMANodes() cpuset.CPUSet {
 }
 
 func (q topologyQueries) availableNUMANodes() cpuset.CPUSet {
-	return (*q.availableCPUs).NUMANodes()
+	return q.availableCPUs.NUMANodes()
 }
 
 func (q topologyQueries) availableSockets() cpuset.CPUSet {
-	return (*q.availableCPUs).Sockets()
+	return q.availableCPUs.Sockets()
 }
 
 func (q topologyQueries) allCPUsInNUMANodes(ids ...int) cpuset.CPUSet {
@@ -61,7 +61,7 @@ func (q topologyQueries) allCPUsInNUMANodes(ids ...int) cpuset.CPUSet {
 }
 
 func (q topologyQueries) availableCPUsInNUMANodes(ids ...int) cpuset.CPUSet {
-	return (*q.availableCPUs).CPUsInNUMANodes(ids...)
+	return q.availableCPUs.CPUsInNUMANodes(ids...)
 }
 
 func (q topologyQueries) allCPUsInSockets(ids ...int) cpuset.CPUSet {
@@ -69,7 +69,7 @@ func (q topologyQueries) allCPUsInSockets(ids ...int) cpuset.CPUSet {
 }
 
 func (q topologyQueries) availableCPUsInSockets(ids ...int) cpuset.CPUSet {
-	return (*q.availableCPUs).CPUsInSockets(ids...)
+	return q.availableCPUs.CPUsInSockets(ids...)
 }
 
 func (q topologyQueries) allCPUsInUncoreCaches(ids ...int) cpuset.CPUSet {
@@ -77,7 +77,7 @@ func (q topologyQueries) allCPUsInUncoreCaches(ids ...int) cpuset.CPUSet {
 }
 
 func (q topologyQueries) availableCPUsInUncoreCaches(ids ...int) cpuset.CPUSet {
-	return (*q.availableCPUs).CPUsInUncoreCaches(ids...)
+	return q.availableCPUs.CPUsInUncoreCaches(ids...)
 }
 
 func (q topologyQueries) allCPUsInCoreKeys(keys ...topology.CoreKey) cpuset.CPUSet {
@@ -85,29 +85,29 @@ func (q topologyQueries) allCPUsInCoreKeys(keys ...topology.CoreKey) cpuset.CPUS
 }
 
 func (q topologyQueries) availableCPUsInCoreKeys(keys ...topology.CoreKey) cpuset.CPUSet {
-	return (*q.availableCPUs).CPUsInCoreKeys(keys...)
+	return q.availableCPUs.CPUsInCoreKeys(keys...)
 }
 
 func (q topologyQueries) availableUncoreInNUMANodes(ids ...int) cpuset.CPUSet {
-	return (*q.availableCPUs).UncoreInNUMANodes(ids...)
+	return q.availableCPUs.UncoreInNUMANodes(ids...)
 }
 
 func (q topologyQueries) availableSocketsInNUMANodes(ids ...int) cpuset.CPUSet {
-	return (*q.availableCPUs).SocketsInNUMANodes(ids...)
+	return q.availableCPUs.SocketsInNUMANodes(ids...)
 }
 
 func (q topologyQueries) availableNUMANodesInSockets(ids ...int) cpuset.CPUSet {
-	return (*q.availableCPUs).NUMANodesInSockets(ids...)
+	return q.availableCPUs.NUMANodesInSockets(ids...)
 }
 
 func (q topologyQueries) availableCoreKeysInSockets(ids ...int) []topology.CoreKey {
-	return (*q.availableCPUs).CoreKeysInSockets(ids...)
+	return q.availableCPUs.CoreKeysInSockets(ids...)
 }
 
 func (q topologyQueries) availableCoreKeysInNUMANodes(ids ...int) []topology.CoreKey {
-	return (*q.availableCPUs).CoreKeysInNUMANodes(ids...)
+	return q.availableCPUs.CoreKeysInNUMANodes(ids...)
 }
 
 func (q topologyQueries) availableCoreKeysNeededForCPUsInUncoreCache(numCPUsNeeded int, ids ...int) []topology.CoreKey {
-	return (*q.availableCPUs).CoreKeysNeededForCPUsInUncoreCache(numCPUsNeeded, ids...)
+	return q.availableCPUs.CoreKeysNeededForCPUsInUncoreCache(numCPUsNeeded, ids...)
 }

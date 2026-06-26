@@ -14,8 +14,8 @@ The driver currently has three concerns that are coupled more tightly than we
 should rely on for long-term development:
 
 1. CPU topology discovery from Linux sysfs.
-2. CPU allocation policy, currently derived from kubelet CPUManager code.
-3. ResourceSlice/device projection, which is the scheduler-visible API surface.
+1. CPU allocation policy, currently derived from kubelet CPUManager code.
+1. ResourceSlice/device projection, which is the scheduler-visible API surface.
 
 PR #210 is a scoped correctness fix: it keeps the current allocator and
 ResourceSlice shape, but stops using symmetric averages such as
@@ -539,11 +539,11 @@ E2E tests should stay focused on externally visible guarantees:
 
 1. Accept that PR #210 is a correctness fix and should not redesign the
    resource model.
-2. Accept that the allocator has crossed the zero-cost kubelet-resync boundary.
-3. Decide whether to intentionally own a DRA-specific allocator boundary.
-4. Decide whether sysfs-shaped topology data is the preferred internal source
+1. Accept that the allocator has crossed the zero-cost kubelet-resync boundary.
+1. Decide whether to intentionally own a DRA-specific allocator boundary.
+1. Decide whether sysfs-shaped topology data is the preferred internal source
    of truth for now.
-5. Decide how to treat ResourceSlice shape compatibility before GA.
+1. Decide how to treat ResourceSlice shape compatibility before GA.
 
 ## References
 
