@@ -33,6 +33,7 @@ type allocationRequest struct {
 
 type allocationConstraints struct {
 	preferAlignByUncoreCache bool
+	cpuGroupSize             int
 }
 
 func newPackedAllocationRequest(topo *topology.CPUTopology, availableCPUs cpuset.CPUSet, numCPUs int, cpuSortingStrategy CPUSortingStrategy, preferAlignByUncoreCache bool) allocationRequest {
@@ -43,6 +44,18 @@ func newPackedAllocationRequest(topo *topology.CPUTopology, availableCPUs cpuset
 		cpuSortingStrategy: cpuSortingStrategy,
 		constraints: allocationConstraints{
 			preferAlignByUncoreCache: preferAlignByUncoreCache,
+		},
+	}
+}
+
+func newDistributedAllocationRequest(topo *topology.CPUTopology, availableCPUs cpuset.CPUSet, numCPUs int, cpuGroupSize int, cpuSortingStrategy CPUSortingStrategy) allocationRequest {
+	return allocationRequest{
+		topology:           topo,
+		availableCPUs:      availableCPUs,
+		numCPUs:            numCPUs,
+		cpuSortingStrategy: cpuSortingStrategy,
+		constraints: allocationConstraints{
+			cpuGroupSize: cpuGroupSize,
 		},
 	}
 }

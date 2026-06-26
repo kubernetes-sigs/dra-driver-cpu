@@ -907,14 +907,26 @@ func takeByTopologyNUMAPackedRequest(logger logr.Logger, request allocationReque
 // important, for example, to ensure that all CPUs (i.e. all hyperthreads) from
 // a single core are allocated together.
 func takeByTopologyNUMADistributed(logger logr.Logger, topo *topology.CPUTopology, availableCPUs cpuset.CPUSet, numCPUs int, cpuGroupSize int, cpuSortingStrategy CPUSortingStrategy) (cpuset.CPUSet, error) {
+	return takeByTopologyNUMADistributedRequest(logger, newDistributedAllocationRequest(topo, availableCPUs, numCPUs, cpuGroupSize, cpuSortingStrategy))
+}
+
+func takeByTopologyNUMADistributedRequest(logger logr.Logger, request allocationRequest) (cpuset.CPUSet, error) {
+	cpuGroupSize := request.constraints.cpuGroupSize
+
 	// If the number of CPUs requested cannot be handed out in chunks of
 	// 'cpuGroupSize', then we just call out the packing algorithm since we
 	// can't distribute CPUs in this chunk size.
 	// PreferAlignByUncoreCache feature not implemented here yet and set to false.
 	// Support for PreferAlignByUncoreCache to be done at beta release.
-	request := newPackedAllocationRequest(topo, availableCPUs, numCPUs, cpuSortingStrategy, false)
-	if (numCPUs % cpuGroupSize) != 0 {
-		return takeByTopologyNUMAPackedRequest(logger, request)
+	packedRequest := newPackedAllocationRequest(
+		request.topology,
+		request.availableCPUs,
+		request.numCPUs,
+		request.cpuSortingStrategy,
+		false,
+	)
+	if (request.numCPUs % cpuGroupSize) != 0 {
+		return takeByTopologyNUMAPackedRequest(logger, packedRequest)
 	}
 
 	// Otherwise build an accumulator to start allocating CPUs from.
@@ -955,7 +967,7 @@ func takeByTopologyNUMADistributed(logger logr.Logger, topo *topology.CPUTopolog
 			// Check that this combination of NUMA nodes has enough CPUs to
 			// satisfy the allocation overall.
 			cpus := acc.queries.availableCPUsInNUMANodes(combo...)
-			if cpus.Size() < numCPUs {
+			if cpus.Size() < request.numCPUs {
 				return Continue
 			}
 
@@ -965,14 +977,14 @@ func takeByTopologyNUMADistributed(logger logr.Logger, topo *topology.CPUTopolog
 			for _, numa := range combo {
 				numCPUGroups += (acc.queries.availableCPUsInNUMANodes(numa).Size() / cpuGroupSize)
 			}
-			if (numCPUGroups * cpuGroupSize) < numCPUs {
+			if (numCPUGroups * cpuGroupSize) < request.numCPUs {
 				return Continue
 			}
 
 			// Check that each NUMA node in this combination can allocate an
 			// even distribution of CPUs in groups of size 'cpuGroupSize',
 			// modulo some remainder.
-			distribution := (numCPUs / len(combo) / cpuGroupSize) * cpuGroupSize
+			distribution := (request.numCPUs / len(combo) / cpuGroupSize) * cpuGroupSize
 			for _, numa := range combo {
 				cpus := acc.queries.availableCPUsInNUMANodes(numa)
 				if cpus.Size() < distribution {
@@ -996,7 +1008,7 @@ func takeByTopologyNUMADistributed(logger logr.Logger, topo *topology.CPUTopolog
 			// Check if there are any remaining CPUs to distribute across the
 			// NUMA nodes once CPUs have been evenly distributed in groups of
 			// size 'cpuGroupSize'.
-			remainder := numCPUs - (distribution * len(combo))
+			remainder := request.numCPUs - (distribution * len(combo))
 
 			// Get a list of NUMA nodes to consider pulling the remainder CPUs
 			// from. This list excludes NUMA nodes that don't have at least
@@ -1095,15 +1107,15 @@ func takeByTopologyNUMADistributed(logger logr.Logger, topo *topology.CPUTopolog
 		// Otherwise, start allocating CPUs from the NUMA node combination
 		// chosen. First allocate an even distribution of CPUs in groups of
 		// size 'cpuGroupSize' from 'bestCombo'.
-		distribution := (numCPUs / len(bestCombo) / cpuGroupSize) * cpuGroupSize
+		distribution := (request.numCPUs / len(bestCombo) / cpuGroupSize) * cpuGroupSize
 		for _, numa := range bestCombo {
-			cpus, _ := TakeByTopologyNUMAPacked(logger, acc.topo, acc.queries.availableCPUsInNUMANodes(numa), distribution, cpuSortingStrategy, false)
+			cpus, _ := TakeByTopologyNUMAPacked(logger, acc.topo, acc.queries.availableCPUsInNUMANodes(numa), distribution, request.cpuSortingStrategy, false)
 			acc.take(cpus)
 		}
 
 		// Then allocate any remaining CPUs in groups of size 'cpuGroupSize'
 		// from each NUMA node in the remainder set.
-		remainder := numCPUs - (distribution * len(bestCombo))
+		remainder := request.numCPUs - (distribution * len(bestCombo))
 		for remainder > 0 {
 			for _, numa := range bestRemainder {
 				if remainder == 0 {
@@ -1112,7 +1124,7 @@ func takeByTopologyNUMADistributed(logger logr.Logger, topo *topology.CPUTopolog
 				if acc.queries.availableCPUsInNUMANodes(numa).Size() < cpuGroupSize {
 					continue
 				}
-				cpus, _ := TakeByTopologyNUMAPacked(logger, acc.topo, acc.queries.availableCPUsInNUMANodes(numa), cpuGroupSize, cpuSortingStrategy, false)
+				cpus, _ := TakeByTopologyNUMAPacked(logger, acc.topo, acc.queries.availableCPUsInNUMANodes(numa), cpuGroupSize, request.cpuSortingStrategy, false)
 				acc.take(cpus)
 				remainder -= cpuGroupSize
 			}
@@ -1136,5 +1148,5 @@ func takeByTopologyNUMADistributed(logger logr.Logger, topo *topology.CPUTopolog
 
 	// If we never found a combination of NUMA nodes that we could properly
 	// distribute CPUs across, fall back to the packing algorithm.
-	return takeByTopologyNUMAPackedRequest(logger, request)
+	return takeByTopologyNUMAPackedRequest(logger, packedRequest)
 }

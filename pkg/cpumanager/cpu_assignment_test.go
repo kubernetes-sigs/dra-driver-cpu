@@ -878,6 +878,27 @@ func TestTakeByTopologyNUMAPackedRequest(t *testing.T) {
 	}
 }
 
+func TestTakeByTopologyNUMADistributedRequest(t *testing.T) {
+	logger := klog.Background()
+	request := newDistributedAllocationRequest(
+		topoDualSocketHT,
+		cpuset.New(1, 2, 3, 4, 5, 7, 8, 9, 10, 11),
+		1,
+		2,
+		CPUSortingStrategyPacked,
+	)
+
+	got, err := takeByTopologyNUMADistributedRequest(logger, request)
+	if err != nil {
+		t.Fatalf("takeByTopologyNUMADistributedRequest() failed: %v", err)
+	}
+
+	want := cpuset.New(2)
+	if !got.Equals(want) {
+		t.Fatalf("takeByTopologyNUMADistributedRequest() = %s, want %s", got.String(), want.String())
+	}
+}
+
 func TestTakeByTopologyWithSpreadPhysicalCPUsPreferredOption(t *testing.T) {
 	logger := klog.Background()
 	testCases := []struct {
