@@ -215,6 +215,52 @@ func TestCPUAllocationGetAllocatedCPUs(t *testing.T) {
 	require.True(t, store.GetAllocatedCPUs().IsEmpty())
 }
 
+func TestCPUAllocationSnapshot(t *testing.T) {
+	logger := testr.New(t)
+	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
+	reserved := cpuset.New(0, 1)
+	store := newTestCPUAllocation(logger, allCPUs, reserved)
+
+	require.Equal(t, AllocationSnapshot{
+		AllocatedCPUs:        0,
+		AvailableCPUs:        6,
+		ReservedCPUs:         2,
+		ActiveResourceClaims: 0,
+	}, store.Snapshot())
+
+	store.AddResourceClaimAllocation(logger, "claim-1", cpuset.New(2, 3))
+	require.Equal(t, AllocationSnapshot{
+		AllocatedCPUs:        2,
+		AvailableCPUs:        4,
+		ReservedCPUs:         2,
+		ActiveResourceClaims: 1,
+	}, store.Snapshot())
+
+	store.AddResourceClaimAllocation(logger, "claim-1", cpuset.New(4, 5, 6))
+	require.Equal(t, AllocationSnapshot{
+		AllocatedCPUs:        3,
+		AvailableCPUs:        3,
+		ReservedCPUs:         2,
+		ActiveResourceClaims: 1,
+	}, store.Snapshot())
+
+	store.AddResourceClaimAllocation(logger, "claim-2", cpuset.New(2, 3))
+	require.Equal(t, AllocationSnapshot{
+		AllocatedCPUs:        5,
+		AvailableCPUs:        1,
+		ReservedCPUs:         2,
+		ActiveResourceClaims: 2,
+	}, store.Snapshot())
+
+	store.RemoveResourceClaimAllocation(logger, "claim-1")
+	require.Equal(t, AllocationSnapshot{
+		AllocatedCPUs:        2,
+		AvailableCPUs:        4,
+		ReservedCPUs:         2,
+		ActiveResourceClaims: 1,
+	}, store.Snapshot())
+}
+
 func getSharedCPUsNaive(availableCPUs cpuset.CPUSet, allocations map[types.UID]cpuset.CPUSet) cpuset.CPUSet {
 	allocated := cpuset.New()
 	for _, cpus := range allocations {
