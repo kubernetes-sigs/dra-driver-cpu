@@ -786,7 +786,18 @@ func (a *cpuAccumulator) iterateCombinations(n []int, k int, f func([]int) LoopC
 // order of free CPUs). For any NUMA node, the cores are selected from the ones in the socket with
 // the least amount of free CPUs to the one with the highest amount of free CPUs.
 func TakeByTopologyNUMAPacked(logger logr.Logger, topo *topology.CPUTopology, availableCPUs cpuset.CPUSet, numCPUs int, cpuSortingStrategy CPUSortingStrategy, preferAlignByUncoreCache bool) (cpuset.CPUSet, error) {
-	return takeByTopologyNUMAPackedRequest(logger, newPackedAllocationRequest(topo, availableCPUs, numCPUs, cpuSortingStrategy, preferAlignByUncoreCache))
+	return takeByTopologyRequest(logger, newPackedAllocationRequest(topo, availableCPUs, numCPUs, cpuSortingStrategy, preferAlignByUncoreCache))
+}
+
+func takeByTopologyRequest(logger logr.Logger, request allocationRequest) (cpuset.CPUSet, error) {
+	switch request.policy {
+	case allocationPolicyPacked:
+		return takeByTopologyNUMAPackedRequest(logger, request)
+	case allocationPolicyDistributed:
+		return takeByTopologyNUMADistributedRequest(logger, request)
+	default:
+		return cpuset.New(), fmt.Errorf("unknown allocation policy: %d", request.policy)
+	}
 }
 
 func takeByTopologyNUMAPackedRequest(logger logr.Logger, request allocationRequest) (cpuset.CPUSet, error) {
@@ -907,7 +918,7 @@ func takeByTopologyNUMAPackedRequest(logger logr.Logger, request allocationReque
 // important, for example, to ensure that all CPUs (i.e. all hyperthreads) from
 // a single core are allocated together.
 func takeByTopologyNUMADistributed(logger logr.Logger, topo *topology.CPUTopology, availableCPUs cpuset.CPUSet, numCPUs int, cpuGroupSize int, cpuSortingStrategy CPUSortingStrategy) (cpuset.CPUSet, error) {
-	return takeByTopologyNUMADistributedRequest(logger, newDistributedAllocationRequest(topo, availableCPUs, numCPUs, cpuGroupSize, cpuSortingStrategy))
+	return takeByTopologyRequest(logger, newDistributedAllocationRequest(topo, availableCPUs, numCPUs, cpuGroupSize, cpuSortingStrategy))
 }
 
 func takeByTopologyNUMADistributedRequest(logger logr.Logger, request allocationRequest) (cpuset.CPUSet, error) {

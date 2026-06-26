@@ -899,6 +899,42 @@ func TestTakeByTopologyNUMADistributedRequest(t *testing.T) {
 	}
 }
 
+func TestTakeByTopologyRequestUsesPackedPolicy(t *testing.T) {
+	logger := klog.Background()
+	request := newPackedAllocationRequest(topoAsymmetricUncoreSMT, mustParseCPUSet(t, "0-5"), 3, CPUSortingStrategyPacked, true)
+
+	got, err := takeByTopologyRequest(logger, request)
+	if err != nil {
+		t.Fatalf("takeByTopologyRequest() failed: %v", err)
+	}
+
+	want := cpuset.New(0, 2, 5)
+	if !got.Equals(want) {
+		t.Fatalf("takeByTopologyRequest() = %s, want %s", got.String(), want.String())
+	}
+}
+
+func TestTakeByTopologyRequestUsesDistributedPolicy(t *testing.T) {
+	logger := klog.Background()
+	request := newDistributedAllocationRequest(
+		topoDualSocketHT,
+		cpuset.New(1, 2, 3, 4, 5, 7, 8, 9, 10, 11),
+		1,
+		2,
+		CPUSortingStrategyPacked,
+	)
+
+	got, err := takeByTopologyRequest(logger, request)
+	if err != nil {
+		t.Fatalf("takeByTopologyRequest() failed: %v", err)
+	}
+
+	want := cpuset.New(2)
+	if !got.Equals(want) {
+		t.Fatalf("takeByTopologyRequest() = %s, want %s", got.String(), want.String())
+	}
+}
+
 func TestTakeByTopologyWithSpreadPhysicalCPUsPreferredOption(t *testing.T) {
 	logger := klog.Background()
 	testCases := []struct {

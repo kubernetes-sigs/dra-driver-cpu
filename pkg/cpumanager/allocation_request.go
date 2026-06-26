@@ -21,6 +21,13 @@ import (
 	"k8s.io/utils/cpuset"
 )
 
+type allocationPolicy int
+
+const (
+	allocationPolicyPacked allocationPolicy = iota
+	allocationPolicyDistributed
+)
+
 // allocationRequest keeps grouped-allocation inputs explicit without
 // committing to a public cross-package allocator interface yet.
 type allocationRequest struct {
@@ -28,6 +35,7 @@ type allocationRequest struct {
 	availableCPUs      cpuset.CPUSet
 	numCPUs            int
 	cpuSortingStrategy CPUSortingStrategy
+	policy             allocationPolicy
 	constraints        allocationConstraints
 }
 
@@ -42,6 +50,7 @@ func newPackedAllocationRequest(topo *topology.CPUTopology, availableCPUs cpuset
 		availableCPUs:      availableCPUs,
 		numCPUs:            numCPUs,
 		cpuSortingStrategy: cpuSortingStrategy,
+		policy:             allocationPolicyPacked,
 		constraints: allocationConstraints{
 			preferAlignByUncoreCache: preferAlignByUncoreCache,
 		},
@@ -54,6 +63,7 @@ func newDistributedAllocationRequest(topo *topology.CPUTopology, availableCPUs c
 		availableCPUs:      availableCPUs,
 		numCPUs:            numCPUs,
 		cpuSortingStrategy: cpuSortingStrategy,
+		policy:             allocationPolicyDistributed,
 		constraints: allocationConstraints{
 			cpuGroupSize: cpuGroupSize,
 		},
