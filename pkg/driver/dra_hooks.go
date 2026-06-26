@@ -23,6 +23,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/go-logr/logr"
 	opaqueapi "github.com/kubernetes-sigs/dra-driver-cpu/api"
@@ -30,6 +31,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpumanager"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
@@ -315,12 +317,18 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 	}
 
 	for _, claim := range claims {
+		start := time.Now()
 		cLogger := logger.WithValues("claim", ctxlog.KObj(claim), "claimUID", claim.UID)
 		if cp.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
 			result[claim.UID] = cp.prepareGroupedResourceClaim(cLogger, claim)
 		} else {
 			result[claim.UID] = cp.prepareResourceClaim(cLogger, claim)
 		}
+		prepareResult := cpumetrics.ResultSuccess
+		if result[claim.UID].Err != nil {
+			prepareResult = cpumetrics.ResultError
+		}
+		cp.metricsRecorder().RecordPrepare(prepareResult, time.Since(start))
 	}
 	return result, nil
 }
@@ -418,6 +426,8 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		return result
 	}
 	cp.cpuAllocationStore.AddResourceClaimAllocation(logger, claim.UID, cpuAssignment)
+	cp.metricsRecorder().RecordClaimAllocatedCPUs(cpuAssignment.Size())
+	cp.refreshAllocationMetrics()
 	return result
 }
 
@@ -474,6 +484,8 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 		return result
 	}
 	cp.cpuAllocationStore.AddResourceClaimAllocation(logger, claim.UID, claimCPUSet)
+	cp.metricsRecorder().RecordClaimAllocatedCPUs(claimCPUSet.Size())
+	cp.refreshAllocationMetrics()
 	return result
 }
 
@@ -529,9 +541,33 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 		result[claim.UID] = err
 		if err != nil {
 			cLogger.Error(err, "error unpreparing resources for claim")
+			cp.metricsRecorder().RecordUnprepare(cpumetrics.ResultError)
+		} else {
+			cp.metricsRecorder().RecordUnprepare(cpumetrics.ResultSuccess)
+			cp.refreshAllocationMetrics()
 		}
 	}
 	return result, nil
+}
+
+func (cp *CPUDriver) metricsRecorder() cpumetrics.Recorder {
+	if cp.metrics == nil {
+		return cpumetrics.Noop()
+	}
+	return cp.metrics
+}
+
+func (cp *CPUDriver) refreshAllocationMetrics() {
+	if cp.cpuAllocationStore == nil {
+		return
+	}
+	snapshot := cp.cpuAllocationStore.Snapshot()
+	cp.metricsRecorder().SetAllocationState(cpumetrics.AllocationState{
+		AllocatedCPUs:        snapshot.AllocatedCPUs,
+		AvailableCPUs:        snapshot.AvailableCPUs,
+		ReservedCPUs:         snapshot.ReservedCPUs,
+		ActiveResourceClaims: snapshot.ActiveResourceClaims,
+	})
 }
 
 func (cp *CPUDriver) unprepareResourceClaim(logger logr.Logger, claim kubeletplugin.NamespacedObject) error {

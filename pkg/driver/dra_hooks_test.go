@@ -470,6 +470,7 @@ func TestPublishResourcesGroupedModeInitializesLookupMaps(t *testing.T) {
 				CPUInfo: &cpuinfo.MockCPUInfoProvider{
 					CPUInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 				},
+				SysFS: testSysFS(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
 			}
 			conf := Config{
 				DriverName:       testDriverName,

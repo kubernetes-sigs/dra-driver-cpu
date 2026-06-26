@@ -29,6 +29,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -104,6 +105,7 @@ type CPUDriver struct {
 	claimTracker            *store.ClaimTracker
 	pcieRootMapper          *store.PCIeRootMapper
 	devicesPerResourceSlice int
+	metrics                 cpumetrics.Recorder
 }
 
 // Providers group the interfaces the CPUDriver depends on
@@ -135,6 +137,7 @@ type Config struct {
 	CPUDeviceMode    string
 	CPUDeviceGroupBy string
 	ExposePCIeRoots  bool
+	Metrics          cpumetrics.Recorder
 }
 
 func (cfg Config) DevicesPerResourceSlice() int {
@@ -151,6 +154,10 @@ func (cfg Config) DevicesPerResourceSlice() int {
 func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, error) {
 	logger = logger.WithValues("driver", config.DriverName)
 
+	metricsRecorder := config.Metrics
+	if metricsRecorder == nil {
+		metricsRecorder = cpumetrics.Noop()
+	}
 	plugin := &CPUDriver{
 		driverName:              config.DriverName,
 		nodeName:                config.NodeName,
@@ -164,6 +171,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		claimTracker:            store.NewClaimTracker(),
 		pcieRootMapper:          store.NewPCIeRootMapper(),
 		devicesPerResourceSlice: config.DevicesPerResourceSlice(),
+		metrics:                 metricsRecorder,
 	}
 	sysfs := providers.EnsureSysFS()
 
@@ -190,6 +198,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	}
 
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.cpuTopology, config.ReservedCPUs)
+	plugin.refreshAllocationMetrics()
 	plugin.podConfigStore = store.NewPodConfig()
 
 	if plugin.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
