@@ -381,7 +381,7 @@ func (a *cpuAccumulator) freeUncoreCache() []int {
 	return free
 }
 
-// Returns free core IDs as a slice sorted by sortAvailableCores().
+// Returns free core keys as a slice sorted by sortAvailableCores().
 func (a *cpuAccumulator) freeCores() []topology.CoreKey {
 	free := []topology.CoreKey{}
 	for _, core := range a.sortAvailableCores() {
