@@ -134,8 +134,8 @@ func TestMetricsPrepareResults(t *testing.T) {
 	require.NoError(t, prepared["claim-success"].Err)
 	require.Error(t, prepared["claim-error"].Err)
 
-	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_prepare_claims_total", map[string]string{"result": cpumetrics.ResultSuccess}))
-	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_prepare_claims_total", map[string]string{"result": cpumetrics.ResultError}))
+	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_prepare_claims_total", map[string]string{"result": cpumetrics.ResultSuccess.String()}))
+	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_prepare_claims_total", map[string]string{"result": cpumetrics.ResultError.String()}))
 	require.Equal(t, float64(2), metricValue(t, reg, "dra_cpu_prepare_claim_duration_seconds", nil))
 }
 
@@ -174,7 +174,7 @@ func TestMetricsUnprepareResults(t *testing.T) {
 	unprepared, err := driver.UnprepareResourceClaims(context.Background(), []kubeletplugin.NamespacedObject{{UID: claimUID}})
 	require.NoError(t, err)
 	require.NoError(t, unprepared[claimUID])
-	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_unprepare_claims_total", map[string]string{"result": cpumetrics.ResultSuccess}))
+	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_unprepare_claims_total", map[string]string{"result": cpumetrics.ResultSuccess.String()}))
 	require.Equal(t, float64(0), metricValue(t, reg, "dra_cpu_allocated_cpus", nil))
 	require.Equal(t, float64(4), metricValue(t, reg, "dra_cpu_available_cpus", nil))
 	require.Equal(t, float64(0), metricValue(t, reg, "dra_cpu_resource_claims_active", nil))
@@ -183,5 +183,5 @@ func TestMetricsUnprepareResults(t *testing.T) {
 	unprepared, err = driver.UnprepareResourceClaims(context.Background(), []kubeletplugin.NamespacedObject{{UID: "claim-error"}})
 	require.NoError(t, err)
 	require.Error(t, unprepared["claim-error"])
-	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_unprepare_claims_total", map[string]string{"result": cpumetrics.ResultError}))
+	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_unprepare_claims_total", map[string]string{"result": cpumetrics.ResultError.String()}))
 }

@@ -82,15 +82,52 @@ func TestMetricsRecordsCollectors(t *testing.T) {
 	require.InDelta(t, 6, testutil.ToFloat64(m.availableCPUs), 0.01)
 	require.InDelta(t, 1, testutil.ToFloat64(m.reservedCPUs), 0.01)
 	require.InDelta(t, 1, testutil.ToFloat64(m.activeResourceClaims), 0.01)
-	require.InDelta(t, 1, testutil.ToFloat64(m.prepareClaims.WithLabelValues(ResultSuccess)), 0.01)
-	require.InDelta(t, 1, testutil.ToFloat64(m.prepareClaims.WithLabelValues(ResultError)), 0.01)
-	require.InDelta(t, 1, testutil.ToFloat64(m.unprepareClaims.WithLabelValues(ResultSuccess)), 0.01)
+	require.InDelta(t, 1, testutil.ToFloat64(m.prepareClaims.WithLabelValues(ResultSuccess.String())), 0.01)
+	require.InDelta(t, 1, testutil.ToFloat64(m.prepareClaims.WithLabelValues(ResultError.String())), 0.01)
+	require.InDelta(t, 1, testutil.ToFloat64(m.unprepareClaims.WithLabelValues(ResultSuccess.String())), 0.01)
 
 	families, err := reg.Gather()
 	require.NoError(t, err)
 	require.NotEmpty(t, families)
 	require.Equal(t, 1, testutil.CollectAndCount(m.prepareClaimDuration))
 	require.Equal(t, 1, testutil.CollectAndCount(m.claimAllocatedCPUs))
+}
+
+func TestDescriptorsMatchRegisteredCollectors(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := New(reg)
+	m.SetAllocationState(AllocationState{})
+	m.RecordPrepare(ResultSuccess, time.Second)
+	m.RecordPrepare(ResultError, time.Second)
+	m.RecordUnprepare(ResultSuccess)
+	m.RecordUnprepare(ResultError)
+	m.RecordClaimAllocatedCPUs(1)
+
+	families, err := reg.Gather()
+	require.NoError(t, err)
+	gotNames := make([]string, 0, len(families))
+	for _, family := range families {
+		gotNames = append(gotNames, family.GetName())
+	}
+
+	wantNames := make([]string, 0, len(Descriptors()))
+	for _, descriptor := range Descriptors() {
+		wantNames = append(wantNames, descriptor.Name)
+	}
+	require.ElementsMatch(t, wantNames, gotNames)
+}
+
+func TestMetricsRejectsUnboundedResultLabels(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := New(reg)
+
+	m.RecordPrepare(Result("timeout"), time.Second)
+	m.RecordUnprepare(Result("permission-denied"))
+
+	require.InDelta(t, 1, testutil.ToFloat64(m.prepareClaims.WithLabelValues(ResultError.String())), 0.01)
+	require.InDelta(t, 1, testutil.ToFloat64(m.unprepareClaims.WithLabelValues(ResultError.String())), 0.01)
+	requireMetricLabelValueAbsent(t, reg, "dra_cpu_prepare_claims_total", "result", "timeout")
+	requireMetricLabelValueAbsent(t, reg, "dra_cpu_unprepare_claims_total", "result", "permission-denied")
 }
 
 func TestNoopRecorder(t *testing.T) {
@@ -102,4 +139,21 @@ func TestNoopRecorder(t *testing.T) {
 		recorder.RecordUnprepare(ResultError)
 		recorder.RecordClaimAllocatedCPUs(4)
 	})
+}
+
+func requireMetricLabelValueAbsent(t *testing.T, reg *prometheus.Registry, metricName, labelName, labelValue string) {
+	t.Helper()
+	families, err := reg.Gather()
+	require.NoError(t, err)
+	for _, family := range families {
+		if family.GetName() != metricName {
+			continue
+		}
+		for _, metric := range family.Metric {
+			for _, label := range metric.Label {
+				require.False(t, label.GetName() == labelName && label.GetValue() == labelValue,
+					"metric %s has unexpected label %s=%q", metricName, labelName, labelValue)
+			}
+		}
+	}
 }

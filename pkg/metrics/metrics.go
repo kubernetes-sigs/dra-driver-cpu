@@ -24,12 +24,26 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-const (
-	subsystem = "dra_cpu"
+const stability = "ALPHA"
 
-	ResultSuccess = "success"
-	ResultError   = "error"
+// Result is the bounded label domain for operation result metrics.
+type Result string
+
+const (
+	ResultSuccess Result = "success"
+	ResultError   Result = "error"
 )
+
+func (r Result) String() string {
+	switch r {
+	case ResultSuccess:
+		return string(ResultSuccess)
+	case ResultError:
+		return string(ResultError)
+	default:
+		return string(ResultError)
+	}
+}
 
 // Descriptor describes a custom driver metric for programmatic introspection.
 type Descriptor struct {
@@ -51,8 +65,8 @@ type AllocationState struct {
 // Recorder records driver metrics.
 type Recorder interface {
 	SetAllocationState(AllocationState)
-	RecordPrepare(result string, duration time.Duration)
-	RecordUnprepare(result string)
+	RecordPrepare(result Result, duration time.Duration)
+	RecordUnprepare(result Result)
 	RecordClaimAllocatedCPUs(cpus int)
 }
 
@@ -68,65 +82,91 @@ type Metrics struct {
 	claimAllocatedCPUs   prometheus.Histogram
 }
 
-var descriptors = []Descriptor{
-	{
-		Name:      "dra_cpu_allocated_cpus",
-		Type:      "gauge",
-		Stability: "ALPHA",
-		Help:      "Number of CPUs currently allocated to prepared resource claims.",
-	},
-	{
-		Name:      "dra_cpu_available_cpus",
-		Type:      "gauge",
-		Stability: "ALPHA",
-		Help:      "Number of CPUs available for allocation after reserved and active claim CPUs are excluded.",
-	},
-	{
-		Name:      "dra_cpu_reserved_cpus",
-		Type:      "gauge",
-		Stability: "ALPHA",
-		Help:      "Number of CPUs reserved and excluded from DRA management.",
-	},
-	{
-		Name:      "dra_cpu_resource_claims_active",
-		Type:      "gauge",
-		Stability: "ALPHA",
-		Help:      "Number of resource claims currently recorded as active by the allocation store.",
-	},
-	{
-		Name:      "dra_cpu_prepare_claims_total",
-		Type:      "counter",
-		Stability: "ALPHA",
-		Help:      "Total number of per-claim PrepareResourceClaims results.",
-		Labels:    []string{"result"},
-	},
-	{
-		Name:      "dra_cpu_unprepare_claims_total",
-		Type:      "counter",
-		Stability: "ALPHA",
-		Help:      "Total number of per-claim UnprepareResourceClaims results.",
-		Labels:    []string{"result"},
-	},
-	{
-		Name:      "dra_cpu_prepare_claim_duration_seconds",
-		Type:      "histogram",
-		Stability: "ALPHA",
-		Help:      "Duration of per-claim prepare operations in seconds.",
-	},
-	{
-		Name:      "dra_cpu_claim_allocated_cpus",
-		Type:      "histogram",
-		Stability: "ALPHA",
-		Help:      "Number of CPUs allocated for each newly successful claim allocation.",
-	},
+type metricKind string
+
+const (
+	metricGauge     metricKind = "gauge"
+	metricCounter   metricKind = "counter"
+	metricHistogram metricKind = "histogram"
+)
+
+type metricSpec struct {
+	name    string
+	kind    metricKind
+	help    string
+	labels  []string
+	buckets []float64
+}
+
+var (
+	allocatedCPUsSpec = metricSpec{
+		name: "dra_cpu_allocated_cpus",
+		kind: metricGauge,
+		help: "Number of CPUs currently allocated to prepared resource claims.",
+	}
+	availableCPUsSpec = metricSpec{
+		name: "dra_cpu_available_cpus",
+		kind: metricGauge,
+		help: "Number of CPUs available for allocation after reserved and active claim CPUs are excluded.",
+	}
+	reservedCPUsSpec = metricSpec{
+		name: "dra_cpu_reserved_cpus",
+		kind: metricGauge,
+		help: "Number of CPUs reserved and excluded from DRA management.",
+	}
+	activeResourceClaimsSpec = metricSpec{
+		name: "dra_cpu_resource_claims_active",
+		kind: metricGauge,
+		help: "Number of resource claims currently recorded as active by the allocation store.",
+	}
+	prepareClaimsSpec = metricSpec{
+		name:   "dra_cpu_prepare_claims_total",
+		kind:   metricCounter,
+		help:   "Total number of per-claim PrepareResourceClaims results.",
+		labels: []string{"result"},
+	}
+	unprepareClaimsSpec = metricSpec{
+		name:   "dra_cpu_unprepare_claims_total",
+		kind:   metricCounter,
+		help:   "Total number of per-claim UnprepareResourceClaims results.",
+		labels: []string{"result"},
+	}
+	prepareClaimDurationSpec = metricSpec{
+		name:    "dra_cpu_prepare_claim_duration_seconds",
+		kind:    metricHistogram,
+		help:    "Duration of per-claim prepare operations in seconds.",
+		buckets: prometheus.DefBuckets,
+	}
+	claimAllocatedCPUsSpec = metricSpec{
+		name:    "dra_cpu_claim_allocated_cpus",
+		kind:    metricHistogram,
+		help:    "Number of CPUs allocated for each newly successful claim allocation.",
+		buckets: []float64{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024},
+	}
+)
+
+var metricSpecs = []metricSpec{
+	allocatedCPUsSpec,
+	availableCPUsSpec,
+	reservedCPUsSpec,
+	activeResourceClaimsSpec,
+	prepareClaimsSpec,
+	unprepareClaimsSpec,
+	prepareClaimDurationSpec,
+	claimAllocatedCPUsSpec,
 }
 
 // Descriptors returns metadata for custom CPU driver metrics.
 func Descriptors() []Descriptor {
-	out := make([]Descriptor, len(descriptors))
-	for i, descriptor := range descriptors {
-		out[i] = descriptor
-		out[i].Labels = append([]string{}, descriptor.Labels...)
+	out := make([]Descriptor, len(metricSpecs))
+	for i, spec := range metricSpecs {
+		out[i] = Descriptor{
+			Name:      spec.name,
+			Type:      string(spec.kind),
+			Stability: stability,
+			Help:      spec.help,
+			Labels:    append([]string{}, spec.labels...),
+		}
 	}
 	return out
 }
@@ -145,48 +185,14 @@ func New(reg prometheus.Registerer) *Metrics {
 	}
 
 	m := &Metrics{
-		allocatedCPUs: prometheus.NewGauge(prometheus.GaugeOpts{
-			Subsystem: subsystem,
-			Name:      "allocated_cpus",
-			Help:      descriptors[0].Help,
-		}),
-		availableCPUs: prometheus.NewGauge(prometheus.GaugeOpts{
-			Subsystem: subsystem,
-			Name:      "available_cpus",
-			Help:      descriptors[1].Help,
-		}),
-		reservedCPUs: prometheus.NewGauge(prometheus.GaugeOpts{
-			Subsystem: subsystem,
-			Name:      "reserved_cpus",
-			Help:      descriptors[2].Help,
-		}),
-		activeResourceClaims: prometheus.NewGauge(prometheus.GaugeOpts{
-			Subsystem: subsystem,
-			Name:      "resource_claims_active",
-			Help:      descriptors[3].Help,
-		}),
-		prepareClaims: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Subsystem: subsystem,
-			Name:      "prepare_claims_total",
-			Help:      descriptors[4].Help,
-		}, []string{"result"}),
-		unprepareClaims: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Subsystem: subsystem,
-			Name:      "unprepare_claims_total",
-			Help:      descriptors[5].Help,
-		}, []string{"result"}),
-		prepareClaimDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Subsystem: subsystem,
-			Name:      "prepare_claim_duration_seconds",
-			Help:      descriptors[6].Help,
-			Buckets:   prometheus.DefBuckets,
-		}),
-		claimAllocatedCPUs: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Subsystem: subsystem,
-			Name:      "claim_allocated_cpus",
-			Help:      descriptors[7].Help,
-			Buckets:   []float64{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024},
-		}),
+		allocatedCPUs:        newGauge(allocatedCPUsSpec),
+		availableCPUs:        newGauge(availableCPUsSpec),
+		reservedCPUs:         newGauge(reservedCPUsSpec),
+		activeResourceClaims: newGauge(activeResourceClaimsSpec),
+		prepareClaims:        newCounterVec(prepareClaimsSpec),
+		unprepareClaims:      newCounterVec(unprepareClaimsSpec),
+		prepareClaimDuration: newHistogram(prepareClaimDurationSpec),
+		claimAllocatedCPUs:   newHistogram(claimAllocatedCPUsSpec),
 	}
 
 	reg.MustRegister(
@@ -202,6 +208,28 @@ func New(reg prometheus.Registerer) *Metrics {
 	return m
 }
 
+func newGauge(spec metricSpec) prometheus.Gauge {
+	return prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: spec.name,
+		Help: spec.help,
+	})
+}
+
+func newCounterVec(spec metricSpec) *prometheus.CounterVec {
+	return prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: spec.name,
+		Help: spec.help,
+	}, spec.labels)
+}
+
+func newHistogram(spec metricSpec) prometheus.Histogram {
+	return prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    spec.name,
+		Help:    spec.help,
+		Buckets: spec.buckets,
+	})
+}
+
 func (m *Metrics) SetAllocationState(state AllocationState) {
 	m.allocatedCPUs.Set(float64(state.AllocatedCPUs))
 	m.availableCPUs.Set(float64(state.AvailableCPUs))
@@ -209,13 +237,13 @@ func (m *Metrics) SetAllocationState(state AllocationState) {
 	m.activeResourceClaims.Set(float64(state.ActiveResourceClaims))
 }
 
-func (m *Metrics) RecordPrepare(result string, duration time.Duration) {
-	m.prepareClaims.WithLabelValues(result).Inc()
+func (m *Metrics) RecordPrepare(result Result, duration time.Duration) {
+	m.prepareClaims.WithLabelValues(result.String()).Inc()
 	m.prepareClaimDuration.Observe(duration.Seconds())
 }
 
-func (m *Metrics) RecordUnprepare(result string) {
-	m.unprepareClaims.WithLabelValues(result).Inc()
+func (m *Metrics) RecordUnprepare(result Result) {
+	m.unprepareClaims.WithLabelValues(result.String()).Inc()
 }
 
 func (m *Metrics) RecordClaimAllocatedCPUs(cpus int) {
@@ -230,6 +258,6 @@ func Noop() Recorder {
 }
 
 func (noopRecorder) SetAllocationState(AllocationState)  {}
-func (noopRecorder) RecordPrepare(string, time.Duration) {}
-func (noopRecorder) RecordUnprepare(string)              {}
+func (noopRecorder) RecordPrepare(Result, time.Duration) {}
+func (noopRecorder) RecordUnprepare(Result)              {}
 func (noopRecorder) RecordClaimAllocatedCPUs(int)        {}
