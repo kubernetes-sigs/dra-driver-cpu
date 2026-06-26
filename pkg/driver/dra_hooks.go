@@ -303,20 +303,13 @@ func (cp *CPUDriver) PublishResources(ctx context.Context) {
 	logger.V(4).Info("begin: publishing resources")
 	defer logger.V(4).Info("end: publishing resources")
 
-	var deviceChunks [][]resourceapi.Device
-	if cp.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
-		deviceChunks = cp.createGroupedCPUDeviceSlices(logger)
-	} else {
-		deviceChunks = cp.createCPUDeviceSlices()
-	}
-
-	if deviceChunks == nil {
+	if cp.deviceSlices == nil {
 		logger.Info("no devices to publish or error occurred")
 		return
 	}
 
-	slices := make([]resourceslice.Slice, 0, len(deviceChunks))
-	for _, chunk := range deviceChunks {
+	slices := make([]resourceslice.Slice, 0, len(cp.deviceSlices))
+	for _, chunk := range cp.deviceSlices {
 		slices = append(slices, resourceslice.Slice{Devices: chunk})
 	}
 

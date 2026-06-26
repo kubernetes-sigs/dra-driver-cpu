@@ -448,9 +448,7 @@ func TestPublishResources(t *testing.T) {
 	}
 }
 
-func TestPublishResourcesDoesNotInitializeGroupedLookupMaps(t *testing.T) {
-	logger := testr.New(t)
-
+func TestPublishResourcesGroupedModeInitializesLookupMaps(t *testing.T) {
 	testCases := []struct {
 		name             string
 		cpuDeviceGroupBy string
@@ -468,27 +466,30 @@ func TestPublishResourcesDoesNotInitializeGroupedLookupMaps(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			mockPlugin := &mockKubeletPlugin{}
-			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT}
-			topo, err := mockProvider.GetCPUTopology(logger)
-			require.NoError(t, err)
-
-			cp := &CPUDriver{
-				nodeName:               testNodeName,
-				draPlugin:              mockPlugin,
-				deviceNameToSocketID:   make(map[string]int),
-				deviceNameToNUMANodeID: make(map[string]int),
-				cpuTopology:            topo,
-				cpuDeviceMode:          CPU_DEVICE_MODE_GROUPED,
-				cpuDeviceGroupBy:       tc.cpuDeviceGroupBy,
-				reservedCPUs:           cpuset.New(),
-				pcieRootMapper:         store.NewPCIeRootMapper(),
+			prov := Providers{
+				CPUInfo: &cpuinfo.MockCPUInfoProvider{
+					CPUInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+				},
 			}
+			conf := Config{
+				DriverName:       testDriverName,
+				NodeName:         testNodeName,
+				CPUDeviceMode:    CPU_DEVICE_MODE_GROUPED,
+				CPUDeviceGroupBy: tc.cpuDeviceGroupBy,
+			}
+			cp, err := New(testr.New(t), prov, &conf)
+			require.NoError(t, err)
+			cp.draPlugin = mockPlugin
 
 			cp.PublishResources(context.Background())
 
 			require.NotNil(t, mockPlugin.publishedResources)
-			require.Empty(t, cp.deviceNameToSocketID)
-			require.Empty(t, cp.deviceNameToNUMANodeID)
+			switch tc.cpuDeviceGroupBy {
+			case GROUP_BY_SOCKET:
+				require.NotEmpty(t, cp.deviceNameToSocketID)
+			case GROUP_BY_NUMA_NODE:
+				require.NotEmpty(t, cp.deviceNameToNUMANodeID)
+			}
 		})
 	}
 }

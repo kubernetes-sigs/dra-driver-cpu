@@ -94,6 +94,7 @@ type CPUDriver struct {
 	deviceNameToCPUID       map[string]int
 	deviceNameToSocketID    map[string]int
 	deviceNameToNUMANodeID  map[string]int
+	deviceSlices            [][]resourceapi.Device
 	reservedCPUs            cpuset.CPUSet
 	onlineCPUs              cpuset.CPUSet
 	cpuDeviceMode           string
@@ -189,6 +190,12 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.cpuTopology, config.ReservedCPUs)
 	plugin.podConfigStore = store.NewPodConfig()
 	plugin.initializeDeviceLookupMaps()
+
+	if plugin.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
+		plugin.deviceSlices = plugin.createGroupedCPUDeviceSlices(logger)
+	} else {
+		plugin.deviceSlices = plugin.createCPUDeviceSlices()
+	}
 
 	return plugin, nil
 }
