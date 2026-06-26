@@ -19,8 +19,10 @@ package driver
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/testr"
@@ -43,6 +45,22 @@ const (
 	testNodeName   = "test-node"
 	testDriverName = "dra-driver-cpu.k8s.io"
 )
+
+// testSysFS enables full isolation and full mocking from the host filesystem.
+// It is not strictly speaking needed by the current tests, but it is added for better hygiene.
+func testSysFS(infos []cpuinfo.CPUInfo) fstest.MapFS {
+	cpuIDs := make([]int, 0, len(infos))
+	for _, info := range infos {
+		cpuIDs = append(cpuIDs, info.CpuID)
+	}
+	onlineRange := cpuset.New(cpuIDs...).String()
+	// this is coupled with what New() reads - online online CPUs for now
+	return fstest.MapFS{
+		filepath.Join("devices", "system", "cpu", "online"): &fstest.MapFile{
+			Data: []byte(onlineRange),
+		},
+	}
+}
 
 type mockKubeletPlugin struct {
 	publishedResources *resourceslice.DriverResources
@@ -171,7 +189,6 @@ var (
 )
 
 func TestPublishResources(t *testing.T) {
-	logger := testr.New(t)
 	testCases := []struct {
 		name                       string
 		config                     Config
@@ -310,17 +327,26 @@ func TestPublishResources(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			mockPlugin := &mockKubeletPlugin{publishError: tc.publishError}
-			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: tc.cpuInfos, Err: tc.cpuInfoErr}
-			topo, _ := mockProvider.GetCPUTopology(logger)
-			cp := &CPUDriver{
-				nodeName:                testNodeName,
-				draPlugin:               mockPlugin,
-				deviceNameToCPUID:       make(map[string]int),
-				cpuTopology:             topo,
-				reservedCPUs:            tc.reservedCPUs,
-				pcieRootMapper:          store.NewPCIeRootMapper(),
-				devicesPerResourceSlice: tc.config.DevicesPerResourceSlice(),
+			prov := Providers{
+				CPUInfo: &cpuinfo.MockCPUInfoProvider{
+					CPUInfos: tc.cpuInfos,
+					Err:      tc.cpuInfoErr,
+				},
+				SysFS: testSysFS(tc.cpuInfos),
 			}
+			conf := Config{
+				DriverName:      testDriverName,
+				NodeName:        testNodeName,
+				ReservedCPUs:    tc.reservedCPUs,
+				ExposePCIeRoots: tc.config.ExposePCIeRoots,
+			}
+			cp, err := New(testr.New(t), prov, &conf)
+			if tc.cpuInfoErr != nil {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			cp.draPlugin = mockPlugin
 
 			cp.PublishResources(context.Background())
 
@@ -353,7 +379,7 @@ func TestPublishResources(t *testing.T) {
 				totalDevices += len(s.Devices)
 			}
 			require.Equal(t, tc.expectedDevices, totalDevices)
-			require.Empty(t, cp.deviceNameToCPUID)
+			require.Len(t, cp.deviceNameToCPUID, tc.expectedDevices)
 
 			// Verify device attributes
 			cpuInfosMap := make(map[int]cpuinfo.CPUInfo)
@@ -422,81 +448,7 @@ func TestPublishResources(t *testing.T) {
 	}
 }
 
-func TestInitializeDeviceLookupMaps(t *testing.T) {
-	logger := testr.New(t)
-
-	testCases := []struct {
-		name                       string
-		cpuDeviceMode              string
-		cpuDeviceGroupBy           string
-		cpuInfos                   []cpuinfo.CPUInfo
-		reservedCPUs               cpuset.CPUSet
-		expectedDeviceNameToCPUID  map[string]int
-		expectedDeviceNameToSocket map[string]int
-		expectedDeviceNameToNUMA   map[string]int
-	}{
-		{
-			name:          "individual mode",
-			cpuDeviceMode: CPU_DEVICE_MODE_INDIVIDUAL,
-			cpuInfos:      mockCPUInfos_SingleSocket_4CPUS_HT,
-			reservedCPUs:  cpuset.New(1),
-			expectedDeviceNameToCPUID: map[string]int{
-				"cpudev000": 0,
-				"cpudev001": 2,
-				"cpudev002": 3,
-			},
-		},
-		{
-			name:                       "grouped by socket",
-			cpuDeviceMode:              CPU_DEVICE_MODE_GROUPED,
-			cpuDeviceGroupBy:           GROUP_BY_SOCKET,
-			cpuInfos:                   mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
-			reservedCPUs:               cpuset.New(0, 1, 4, 5),
-			expectedDeviceNameToSocket: map[string]int{"cpudevsocket001": 1},
-		},
-		{
-			name:                     "grouped by numa node",
-			cpuDeviceMode:            CPU_DEVICE_MODE_GROUPED,
-			cpuDeviceGroupBy:         GROUP_BY_NUMA_NODE,
-			cpuInfos:                 mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
-			reservedCPUs:             cpuset.New(2, 3, 6, 7),
-			expectedDeviceNameToNUMA: map[string]int{"cpudevnuma000": 0},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: tc.cpuInfos}
-			topo, err := mockProvider.GetCPUTopology(logger)
-			require.NoError(t, err)
-
-			cp := &CPUDriver{
-				cpuTopology:      topo,
-				reservedCPUs:     tc.reservedCPUs,
-				cpuDeviceMode:    tc.cpuDeviceMode,
-				cpuDeviceGroupBy: tc.cpuDeviceGroupBy,
-			}
-			cp.initializeDeviceLookupMaps()
-
-			if tc.expectedDeviceNameToCPUID == nil {
-				tc.expectedDeviceNameToCPUID = map[string]int{}
-			}
-			if tc.expectedDeviceNameToSocket == nil {
-				tc.expectedDeviceNameToSocket = map[string]int{}
-			}
-			if tc.expectedDeviceNameToNUMA == nil {
-				tc.expectedDeviceNameToNUMA = map[string]int{}
-			}
-			require.Equal(t, tc.expectedDeviceNameToCPUID, cp.deviceNameToCPUID)
-			require.Equal(t, tc.expectedDeviceNameToSocket, cp.deviceNameToSocketID)
-			require.Equal(t, tc.expectedDeviceNameToNUMA, cp.deviceNameToNUMANodeID)
-		})
-	}
-}
-
-func TestPublishResourcesDoesNotInitializeGroupedLookupMaps(t *testing.T) {
-	logger := testr.New(t)
-
+func TestPublishResourcesGroupedModeInitializesLookupMaps(t *testing.T) {
 	testCases := []struct {
 		name             string
 		cpuDeviceGroupBy string
@@ -514,33 +466,35 @@ func TestPublishResourcesDoesNotInitializeGroupedLookupMaps(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			mockPlugin := &mockKubeletPlugin{}
-			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT}
-			topo, err := mockProvider.GetCPUTopology(logger)
-			require.NoError(t, err)
-
-			cp := &CPUDriver{
-				nodeName:               testNodeName,
-				draPlugin:              mockPlugin,
-				deviceNameToSocketID:   make(map[string]int),
-				deviceNameToNUMANodeID: make(map[string]int),
-				cpuTopology:            topo,
-				cpuDeviceMode:          CPU_DEVICE_MODE_GROUPED,
-				cpuDeviceGroupBy:       tc.cpuDeviceGroupBy,
-				reservedCPUs:           cpuset.New(),
-				pcieRootMapper:         store.NewPCIeRootMapper(),
+			prov := Providers{
+				CPUInfo: &cpuinfo.MockCPUInfoProvider{
+					CPUInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+				},
 			}
+			conf := Config{
+				DriverName:       testDriverName,
+				NodeName:         testNodeName,
+				CPUDeviceMode:    CPU_DEVICE_MODE_GROUPED,
+				CPUDeviceGroupBy: tc.cpuDeviceGroupBy,
+			}
+			cp, err := New(testr.New(t), prov, &conf)
+			require.NoError(t, err)
+			cp.draPlugin = mockPlugin
 
 			cp.PublishResources(context.Background())
 
 			require.NotNil(t, mockPlugin.publishedResources)
-			require.Empty(t, cp.deviceNameToSocketID)
-			require.Empty(t, cp.deviceNameToNUMANodeID)
+			switch tc.cpuDeviceGroupBy {
+			case GROUP_BY_SOCKET:
+				require.NotEmpty(t, cp.deviceNameToSocketID)
+			case GROUP_BY_NUMA_NODE:
+				require.NotEmpty(t, cp.deviceNameToNUMANodeID)
+			}
 		})
 	}
 }
 
 func TestPrepareResourceClaimsSucceedsBeforePublishResources(t *testing.T) {
-	logger := testr.New(t)
 	claimUID := types.UID("claim-prepare-before-publish")
 
 	testCases := []struct {
@@ -573,48 +527,52 @@ func TestPrepareResourceClaimsSucceedsBeforePublishResources(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT}
-			topo, err := mockProvider.GetCPUTopology(logger)
+			prov := Providers{
+				CPUInfo: &cpuinfo.MockCPUInfoProvider{
+					CPUInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+				},
+				SysFS: testSysFS(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
+			}
+			conf := Config{
+				DriverName:       testDriverName,
+				NodeName:         testNodeName,
+				CPUDeviceMode:    tc.cpuDeviceMode,
+				CPUDeviceGroupBy: tc.cpuDeviceGroupBy,
+			}
+			driver, err := New(testr.New(t), prov, &conf)
 			require.NoError(t, err)
 
-			cpuStore := store.NewCPUAllocation(topo, cpuset.New())
-
-			driver := &CPUDriver{
-				driverName:         testDriverName,
-				cpuTopology:        topo,
-				cpuAllocationStore: cpuStore,
-				cdiMgr:             newMockCdiMgr(),
-				cpuDeviceMode:      tc.cpuDeviceMode,
-				cpuDeviceGroupBy:   tc.cpuDeviceGroupBy,
-				reservedCPUs:       cpuset.New(),
-			}
-			driver.initializeDeviceLookupMaps()
+			mockCdiMgr := newMockCdiMgr()
+			driver.cdiMgr = mockCdiMgr
 
 			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{tc.claim})
 			require.NoError(t, err)
 			require.NoError(t, preparedClaims[claimUID].Err)
 			require.NotEmpty(t, preparedClaims[claimUID].Devices)
-			require.Len(t, driver.cdiMgr.(*mockCdiMgr).devices, 1)
+			require.Len(t, mockCdiMgr.devices, 1)
 
-			_, ok := cpuStore.GetResourceClaimAllocation(claimUID)
+			_, ok := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
 			require.True(t, ok)
 		})
 	}
 }
 
 func TestPrepareResourceClaims(t *testing.T) {
-	logger := testr.New(t)
-	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
-	topo, _ := mockProvider.GetCPUTopology(logger)
-	baseCPUDriver := func() *CPUDriver {
-		return &CPUDriver{
-			driverName: testDriverName,
-			deviceNameToCPUID: map[string]int{
-				"cpudev0": 0,
-				"cpudev1": 1,
+	baseCPUDriver := func(t *testing.T) *CPUDriver {
+		t.Helper()
+		prov := Providers{
+			CPUInfo: &cpuinfo.MockCPUInfoProvider{
+				CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
 			},
-			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+			SysFS: testSysFS(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
 		}
+		conf := Config{
+			DriverName: testDriverName,
+			NodeName:   testNodeName,
+		}
+		cp, err := New(testr.New(t), prov, &conf)
+		require.NoError(t, err)
+		return cp
 	}
 
 	claimUID := types.UID("claim-1")
@@ -623,7 +581,7 @@ func TestPrepareResourceClaims(t *testing.T) {
 
 	testCases := []struct {
 		name                    string
-		driver                  *CPUDriver
+		setupDriver             func(t *testing.T) *CPUDriver
 		claims                  []*resourceapi.ResourceClaim
 		mockCdiAddError         error
 		expectedResultsCount    int
@@ -634,8 +592,8 @@ func TestPrepareResourceClaims(t *testing.T) {
 		expectedPreparedDevices []kubeletplugin.Device
 	}{
 		{
-			name:   "success",
-			driver: baseCPUDriver(),
+			name:        "success",
+			setupDriver: baseCPUDriver,
 			claims: []*resourceapi.ResourceClaim{
 				{
 					ObjectMeta: metav1.ObjectMeta{UID: claimUID, Name: "my-claim"},
@@ -643,8 +601,8 @@ func TestPrepareResourceClaims(t *testing.T) {
 						Allocation: &resourceapi.AllocationResult{
 							Devices: resourceapi.DeviceAllocationResult{
 								Results: []resourceapi.DeviceRequestAllocationResult{
-									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev0"},
-									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev1"},
+									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev000"},
+									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev002"},
 								},
 							},
 						},
@@ -656,19 +614,19 @@ func TestPrepareResourceClaims(t *testing.T) {
 			expectedCdiDevice:       cdiDeviceName,
 			expectedCdiEnvVar:       fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, "0-1"),
 			expectedPreparedDevices: []kubeletplugin.Device{
-				{PoolName: testNodeName, DeviceName: "cpudev0", CDIDeviceIDs: []string{cdiQualifiedName}},
-				{PoolName: testNodeName, DeviceName: "cpudev1", CDIDeviceIDs: []string{cdiQualifiedName}},
+				{PoolName: testNodeName, DeviceName: "cpudev000", CDIDeviceIDs: []string{cdiQualifiedName}},
+				{PoolName: testNodeName, DeviceName: "cpudev002", CDIDeviceIDs: []string{cdiQualifiedName}},
 			},
 		},
 		{
 			name:                 "no claims",
-			driver:               baseCPUDriver(),
+			setupDriver:          baseCPUDriver,
 			claims:               []*resourceapi.ResourceClaim{},
 			expectedResultsCount: 0,
 		},
 		{
-			name:   "claim with no allocation",
-			driver: baseCPUDriver(),
+			name:        "claim with no allocation",
+			setupDriver: baseCPUDriver,
 			claims: []*resourceapi.ResourceClaim{
 				{ObjectMeta: metav1.ObjectMeta{UID: "claim-no-alloc"}},
 			},
@@ -676,8 +634,8 @@ func TestPrepareResourceClaims(t *testing.T) {
 			expectedError:        true,
 		},
 		{
-			name:   "claim with device from other driver",
-			driver: baseCPUDriver(),
+			name:        "claim with device from other driver",
+			setupDriver: baseCPUDriver,
 			claims: []*resourceapi.ResourceClaim{
 				{
 					ObjectMeta: metav1.ObjectMeta{UID: "claim-other-driver"},
@@ -697,8 +655,8 @@ func TestPrepareResourceClaims(t *testing.T) {
 			expectedPreparedDevices: nil,
 		},
 		{
-			name:   "error - device not found",
-			driver: baseCPUDriver(),
+			name:        "error - device not found",
+			setupDriver: baseCPUDriver,
 			claims: []*resourceapi.ResourceClaim{
 				{
 					ObjectMeta: metav1.ObjectMeta{UID: "claim-dev-not-found"},
@@ -718,7 +676,7 @@ func TestPrepareResourceClaims(t *testing.T) {
 		},
 		{
 			name:            "error - cdi add fails",
-			driver:          baseCPUDriver(),
+			setupDriver:     baseCPUDriver,
 			mockCdiAddError: fmt.Errorf("cdi add error"),
 			claims: []*resourceapi.ResourceClaim{
 				{
@@ -727,7 +685,7 @@ func TestPrepareResourceClaims(t *testing.T) {
 						Allocation: &resourceapi.AllocationResult{
 							Devices: resourceapi.DeviceAllocationResult{
 								Results: []resourceapi.DeviceRequestAllocationResult{
-									{Driver: testDriverName, Device: "cpudev0"},
+									{Driver: testDriverName, Device: "cpudev000"},
 								},
 							},
 						},
@@ -738,8 +696,8 @@ func TestPrepareResourceClaims(t *testing.T) {
 			expectedError:        true,
 		},
 		{
-			name:   "multi-driver claim - only our devices in preparedDevices",
-			driver: baseCPUDriver(),
+			name:        "multi-driver claim - only our devices in preparedDevices",
+			setupDriver: baseCPUDriver,
 			claims: []*resourceapi.ResourceClaim{
 				{
 					ObjectMeta: metav1.ObjectMeta{UID: claimUID, Name: "my-claim"},
@@ -747,7 +705,7 @@ func TestPrepareResourceClaims(t *testing.T) {
 						Allocation: &resourceapi.AllocationResult{
 							Devices: resourceapi.DeviceAllocationResult{
 								Results: []resourceapi.DeviceRequestAllocationResult{
-									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev0"},
+									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev000"},
 									{Driver: "other-driver", Pool: testNodeName, Device: "other-device"},
 								},
 							},
@@ -759,19 +717,18 @@ func TestPrepareResourceClaims(t *testing.T) {
 			expectedCdiDevicesCount: 1,
 			expectedCdiDevice:       cdiDeviceName,
 			expectedCdiEnvVar:       fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, "0"),
-			// only our driver's device should appear in preparedDevices
 			expectedPreparedDevices: []kubeletplugin.Device{
-				{PoolName: testNodeName, DeviceName: "cpudev0", CDIDeviceIDs: []string{cdiQualifiedName}},
+				{PoolName: testNodeName, DeviceName: "cpudev000", CDIDeviceIDs: []string{cdiQualifiedName}},
 			},
 		},
 		{
 			name: "error - overlapping device assignment",
-			driver: func() *CPUDriver {
-				d := baseCPUDriver()
-				// Pre-allocate cpudev0 to an existing claim
-				d.cpuAllocationStore.AddResourceClaimAllocation(logger, "claim0", cpuset.New(0))
+			setupDriver: func(t *testing.T) *CPUDriver {
+				t.Helper()
+				d := baseCPUDriver(t)
+				d.cpuAllocationStore.AddResourceClaimAllocation(testr.New(t), "claim0", cpuset.New(0))
 				return d
-			}(),
+			},
 			claims: []*resourceapi.ResourceClaim{
 				{
 					ObjectMeta: metav1.ObjectMeta{UID: "claim1", Name: "claim1", Namespace: "default"},
@@ -779,7 +736,7 @@ func TestPrepareResourceClaims(t *testing.T) {
 						Allocation: &resourceapi.AllocationResult{
 							Devices: resourceapi.DeviceAllocationResult{
 								Results: []resourceapi.DeviceRequestAllocationResult{
-									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev0"},
+									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev000"},
 								},
 							},
 						},
@@ -793,11 +750,14 @@ func TestPrepareResourceClaims(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			driver := tc.setupDriver(t)
 			mockCdiMgr := newMockCdiMgr()
 			mockCdiMgr.addError = tc.mockCdiAddError
-			tc.driver.cdiMgr = mockCdiMgr
+			// cdiMgr is created in Start(), which does filesystem I/O.
+			// Inject a mock here because we test New()-only paths.
+			driver.cdiMgr = mockCdiMgr
 
-			preparedClaims, err := tc.driver.PrepareResourceClaims(context.Background(), tc.claims)
+			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
 			require.NoError(t, err)
 			require.Len(t, preparedClaims, tc.expectedResultsCount)
 
@@ -943,35 +903,25 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 }
 
 func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
-	logger := testr.New(t)
-
-	baseCPUDriver := func(groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet) *CPUDriver {
-		driver := &CPUDriver{}
-		driver.driverName = testDriverName
-		driver.cpuDeviceMode = CPU_DEVICE_MODE_GROUPED
-		driver.cpuDeviceGroupBy = groupBy
-		driver.deviceNameToSocketID = make(map[string]int)
-		driver.deviceNameToNUMANodeID = make(map[string]int)
-		mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
-		driver.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
-		driver.onlineCPUs = driver.cpuTopology.CPUDetails.CPUs()
-		driver.cpuAllocationStore = store.NewCPUAllocation(driver.cpuTopology, reservedCPUs)
-		for claimUID, cpus := range initialAllocations {
-			driver.cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, cpus)
+	baseCPUDriver := func(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet) *CPUDriver {
+		t.Helper()
+		prov := Providers{
+			CPUInfo: &cpuinfo.MockCPUInfoProvider{
+				CPUInfos: cpuInfos,
+			},
+			SysFS: testSysFS(cpuInfos),
 		}
-
-		topo, err := mockProvider.GetCPUTopology(logger)
-		require.NoError(t, err) // We don't expect errors in test setup
-
-		switch driver.cpuDeviceGroupBy {
-		case GROUP_BY_SOCKET:
-			for i := 0; i < topo.NumSockets; i++ {
-				driver.deviceNameToSocketID[fmt.Sprintf("%s%d", cpuDeviceSocketGroupedPrefix, i)] = i
-			}
-		case GROUP_BY_NUMA_NODE:
-			for i := 0; i < topo.NumNUMANodes; i++ {
-				driver.deviceNameToNUMANodeID[fmt.Sprintf("%snuma%d", cpuDevicePrefix, i)] = i
-			}
+		conf := Config{
+			DriverName:       testDriverName,
+			NodeName:         testNodeName,
+			CPUDeviceMode:    CPU_DEVICE_MODE_GROUPED,
+			CPUDeviceGroupBy: groupBy,
+			ReservedCPUs:     reservedCPUs,
+		}
+		driver, err := New(testr.New(t), prov, &conf)
+		require.NoError(t, err)
+		for claimUID, cpus := range initialAllocations {
+			driver.cpuAllocationStore.AddResourceClaimAllocation(testr.New(t), claimUID, cpus)
 		}
 		return driver
 	}
@@ -996,7 +946,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			name:     "SocketGrouped_TopoSingleSocketHT_Alloc2CPU",
 			cpuInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
 			groupBy:  GROUP_BY_SOCKET,
-			claims:   []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2})},
+			claims:   []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket000": 2})},
 			// 2 hyperthreads from the same core is allocated
 			expectedCPUSet: cpuset.New(0, 2),
 		},
@@ -1004,7 +954,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			name:     "NUMAGrouped_TopoSingleSocketHT_Alloc2CPU",
 			cpuInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
 			groupBy:  GROUP_BY_NUMA_NODE,
-			claims:   []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2})},
+			claims:   []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma000": 2})},
 			// 2 hyperthreads from the same core is allocated
 			expectedCPUSet: cpuset.New(0, 2),
 		},
@@ -1012,7 +962,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			name:     "SocketGrouped_DualSocketHT_Alloc4CPU",
 			cpuInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 			groupBy:  GROUP_BY_SOCKET,
-			claims:   []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 4})},
+			claims:   []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket000": 4})},
 			// hyperthreads from the same core is allocated
 			expectedCPUSet: cpuset.New(0, 4, 1, 5),
 		},
@@ -1020,7 +970,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			name:           "NUMAGrouped_DualSocketHT_Alloc4CPUFromNUMANode1",
 			cpuInfos:       mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 			groupBy:        GROUP_BY_NUMA_NODE,
-			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma1": 4})},
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma001": 4})},
 			expectedCPUSet: cpuset.New(2, 6, 3, 7),
 		},
 		{
@@ -1028,7 +978,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			cpuInfos:     mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 			groupBy:      GROUP_BY_SOCKET,
 			reservedCPUs: cpuset.New(0, 4),
-			claims:       []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2})},
+			claims:       []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket000": 2})},
 			// prefer hyperthreads on same core over lower numbered CPUs
 			expectedCPUSet: cpuset.New(1, 5),
 		},
@@ -1037,7 +987,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			cpuInfos:     mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 			groupBy:      GROUP_BY_NUMA_NODE,
 			reservedCPUs: cpuset.New(2, 6),
-			claims:       []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma1": 2})},
+			claims:       []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma001": 2})},
 			// prefer hyperthreads on same core over lower numbered CPUs
 			expectedCPUSet: cpuset.New(3, 7),
 			expectedError:  false,
@@ -1046,28 +996,28 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			name:          "SocketGrouped_DualSocketHT_DeviceNotFound_Socket",
 			cpuInfos:      mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 			groupBy:       GROUP_BY_SOCKET,
-			claims:        []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket99": 2})},
+			claims:        []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket099": 2})},
 			expectedError: true,
 		},
 		{
 			name:          "NUMAGrouped_DualSocketHT_DeviceNotFound_NUMA",
 			cpuInfos:      mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 			groupBy:       GROUP_BY_NUMA_NODE,
-			claims:        []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma99": 2})},
+			claims:        []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma099": 2})},
 			expectedError: true,
 		},
 		{
 			name:           "SocketGrouped_DualSocketHT_MultiSocketRequest",
 			cpuInfos:       mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 			groupBy:        GROUP_BY_SOCKET,
-			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2, "cpudevsocket1": 2})},
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket000": 2, "cpudevsocket001": 2})},
 			expectedCPUSet: cpuset.New(0, 2, 4, 6),
 		},
 		{
 			name:           "NUMAGrouped_DualSocketHT_MultiNumaRequest",
 			cpuInfos:       mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 			groupBy:        GROUP_BY_NUMA_NODE,
-			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2, "cpudevnuma1": 2})},
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma000": 2, "cpudevnuma001": 2})},
 			expectedCPUSet: cpuset.New(0, 2, 4, 6),
 		},
 		{
@@ -1079,14 +1029,14 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 					{
 						Driver:           testDriverName,
 						Pool:             testNodeName,
-						Device:           "cpudevsocket0",
+						Device:           "cpudevsocket000",
 						Request:          "req-0",
 						ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{cpuResourceQualifiedName: *resource.NewQuantity(1, resource.DecimalSI)},
 					},
 					{
 						Driver:           testDriverName,
 						Pool:             testNodeName,
-						Device:           "cpudevsocket0",
+						Device:           "cpudevsocket000",
 						Request:          "req-1",
 						ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{cpuResourceQualifiedName: *resource.NewQuantity(1, resource.DecimalSI)},
 					},
@@ -1104,14 +1054,14 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 					{
 						Driver:           testDriverName,
 						Pool:             testNodeName,
-						Device:           "cpudevnuma0",
+						Device:           "cpudevnuma000",
 						Request:          "req-0",
 						ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{cpuResourceQualifiedName: *resource.NewQuantity(1, resource.DecimalSI)},
 					},
 					{
 						Driver:           testDriverName,
 						Pool:             testNodeName,
-						Device:           "cpudevnuma0",
+						Device:           "cpudevnuma000",
 						Request:          "req-1",
 						ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{cpuResourceQualifiedName: *resource.NewQuantity(1, resource.DecimalSI)},
 					},
@@ -1125,35 +1075,35 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			cpuInfos:           mockCPUInfos_SingleSocket_4CPUS_HT,
 			groupBy:            GROUP_BY_SOCKET,
 			initialAllocations: map[types.UID]cpuset.CPUSet{"other-claim": cpuset.New(0, 2)},
-			claims:             []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2})},
+			claims:             []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket000": 2})},
 			expectedCPUSet:     cpuset.New(1, 3),
 		},
 		{
 			name:           "SocketGrouped_SingleSocketHT_AllocAllCPU",
 			cpuInfos:       mockCPUInfos_SingleSocket_4CPUS_HT,
 			groupBy:        GROUP_BY_SOCKET,
-			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 4})},
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket000": 4})},
 			expectedCPUSet: cpuset.New(0, 1, 2, 3),
 		},
 		{
 			name:           "NUMAGrouped_DualSocketHT_AllocAllCPU_NUMA0",
 			cpuInfos:       mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 			groupBy:        GROUP_BY_NUMA_NODE,
-			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 4})},
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma000": 4})},
 			expectedCPUSet: cpuset.New(0, 1, 4, 5),
 		},
 		{
 			name:          "SocketGrouped_DualSocketHT_MoreThanAvailable",
 			cpuInfos:      mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 			groupBy:       GROUP_BY_SOCKET,
-			claims:        []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 5})},
+			claims:        []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket000": 5})},
 			expectedError: true,
 		},
 		{
 			name:            "SocketGrouped_DualSocketHT_CDIError",
 			cpuInfos:        mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 			groupBy:         GROUP_BY_SOCKET,
-			claims:          []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2})},
+			claims:          []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket000": 2})},
 			mockCdiAddError: fmt.Errorf("cdi error"),
 			expectedError:   true,
 		},
@@ -1161,28 +1111,28 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			name:           "SocketGrouped_TopoSingleSocketHT_Off_Alloc2CPU",
 			cpuInfos:       mockCPUInfos_SingleSocket_4CPUs_HT_Off,
 			groupBy:        GROUP_BY_SOCKET,
-			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2})},
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket000": 2})},
 			expectedCPUSet: cpuset.New(0, 1),
 		},
 		{
 			name:           "NUMAGrouped_TopoSingleSocketHT_Off_Alloc2CPU",
 			cpuInfos:       mockCPUInfos_SingleSocket_4CPUs_HT_Off,
 			groupBy:        GROUP_BY_NUMA_NODE,
-			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2})},
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma000": 2})},
 			expectedCPUSet: cpuset.New(0, 1),
 		},
 		{
 			name:           "SocketGrouped_TopoSingleSocketHT_Off_AllocAllCPU",
 			cpuInfos:       mockCPUInfos_SingleSocket_4CPUs_HT_Off,
 			groupBy:        GROUP_BY_SOCKET,
-			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 4})},
+			claims:         []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket000": 4})},
 			expectedCPUSet: cpuset.New(0, 1, 2, 3),
 		},
 		{
 			name:          "SocketGrouped_TopoSingleSocketHT_Off_MoreThanAvailable",
 			cpuInfos:      mockCPUInfos_SingleSocket_4CPUs_HT_Off,
 			groupBy:       GROUP_BY_SOCKET,
-			claims:        []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 5})},
+			claims:        []*resourceapi.ResourceClaim{testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket000": 5})},
 			expectedError: true,
 		},
 		{
@@ -1218,9 +1168,11 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			driver := baseCPUDriver(tc.groupBy, tc.cpuInfos, tc.initialAllocations, tc.reservedCPUs)
+			driver := baseCPUDriver(t, tc.groupBy, tc.cpuInfos, tc.initialAllocations, tc.reservedCPUs)
 			mockCdiMgr := newMockCdiMgr()
 			mockCdiMgr.addError = tc.mockCdiAddError
+			// cdiMgr is created in Start(), which does filesystem I/O.
+			// Inject a mock here because we test New()-only paths.
 			driver.cdiMgr = mockCdiMgr
 
 			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
@@ -1280,7 +1232,6 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 }
 
 func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
-	logger := testr.New(t)
 	claimUID := types.UID("claim-1")
 	cdiDeviceName := getCDIDeviceName(claimUID)
 
@@ -1294,16 +1245,16 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 	}{
 		{
 			name:           "individual mode - same devices repeated",
-			firstDevices:   []string{"cpudev0", "cpudev1"},
-			secondDevices:  []string{"cpudev0", "cpudev1"},
+			firstDevices:   []string{"cpudev000", "cpudev002"},
+			secondDevices:  []string{"cpudev000", "cpudev002"},
 			expectedCPUSet: cpuset.New(0, 1),
 			expectedShared: cpuset.New(2, 3),
 			expectError:    false,
 		},
 		{
 			name:           "individual mode - different devices repeated",
-			firstDevices:   []string{"cpudev0", "cpudev1"},
-			secondDevices:  []string{"cpudev2", "cpudev3"},
+			firstDevices:   []string{"cpudev000", "cpudev002"},
+			secondDevices:  []string{"cpudev001", "cpudev003"},
 			expectedCPUSet: cpuset.New(0, 1),
 			expectedShared: cpuset.New(2, 3),
 			expectError:    true,
@@ -1312,21 +1263,20 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
-			topo, _ := mockProvider.GetCPUTopology(logger)
-			cpuStore := store.NewCPUAllocation(topo, cpuset.New())
-			cdiMgr := newMockCdiMgr()
-			driver := &CPUDriver{
-				driverName: testDriverName,
-				deviceNameToCPUID: map[string]int{
-					"cpudev0": 0,
-					"cpudev1": 1,
-					"cpudev2": 2,
-					"cpudev3": 3,
+			mockCdiMgr := newMockCdiMgr()
+			prov := Providers{
+				CPUInfo: &cpuinfo.MockCPUInfoProvider{
+					CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
 				},
-				cpuAllocationStore: cpuStore,
-				cdiMgr:             cdiMgr,
+				SysFS: testSysFS(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
 			}
+			conf := Config{
+				DriverName: testDriverName,
+				NodeName:   testNodeName,
+			}
+			driver, err := New(testr.New(t), prov, &conf)
+			require.NoError(t, err)
+			driver.cdiMgr = mockCdiMgr
 
 			makeClaim := func(devices []string) []*resourceapi.ResourceClaim {
 				results := make([]resourceapi.DeviceRequestAllocationResult, len(devices))
@@ -1345,7 +1295,7 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 				}
 			}
 
-			_, err := driver.PrepareResourceClaims(context.Background(), makeClaim(tc.firstDevices))
+			_, err = driver.PrepareResourceClaims(context.Background(), makeClaim(tc.firstDevices))
 			require.NoError(t, err)
 
 			prepareResults, err := driver.PrepareResourceClaims(context.Background(), makeClaim(tc.secondDevices))
@@ -1359,12 +1309,12 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 			} else {
 				require.NoError(t, claimResult.Err)
 
-				gotCPUs, ok := cpuStore.GetResourceClaimAllocation(claimUID)
+				gotCPUs, ok := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
 				require.True(t, ok)
 				require.True(t, tc.expectedCPUSet.Equals(gotCPUs), "claim cpus: got %s, want %s", gotCPUs, tc.expectedCPUSet)
-				require.True(t, tc.expectedShared.Equals(cpuStore.GetSharedCPUs()), "shared cpus: got %s, want %s", cpuStore.GetSharedCPUs(), tc.expectedShared)
+				require.True(t, tc.expectedShared.Equals(driver.cpuAllocationStore.GetSharedCPUs()), "shared cpus: got %s, want %s", driver.cpuAllocationStore.GetSharedCPUs(), tc.expectedShared)
 
-				envVar := cdiMgr.devices[cdiDeviceName]
+				envVar := mockCdiMgr.devices[cdiDeviceName]
 				parts := strings.SplitN(envVar, "=", 2)
 				require.Len(t, parts, 2)
 				actualCPUSet, err := cpuset.Parse(parts[1])
@@ -1491,7 +1441,6 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 }
 
 func TestUnprepareResourceClaims(t *testing.T) {
-	logger := testr.New(t)
 	claimUID := types.UID("test-claim-uid")
 
 	testCases := []struct {
@@ -1522,14 +1471,23 @@ func TestUnprepareResourceClaims(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			prov := Providers{
+				CPUInfo: &cpuinfo.MockCPUInfoProvider{
+					CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
+				},
+				SysFS: testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
+			}
+			conf := Config{
+				DriverName: testDriverName,
+				NodeName:   testNodeName,
+			}
+			cp, err := New(testr.New(t), prov, &conf)
+			require.NoError(t, err)
 			mockCdiMgr := newMockCdiMgr()
 			mockCdiMgr.removeError = tc.cdiRemoveError
-			mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
-			topo, _ := mockProvider.GetCPUTopology(logger)
-			cp := &CPUDriver{
-				cdiMgr:             mockCdiMgr,
-				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
-			}
+			// cdiMgr is created in Start(), which does filesystem I/O.
+			// Inject a mock here because we test New()-only paths.
+			cp.cdiMgr = mockCdiMgr
 
 			unpreparedClaims, err := cp.UnprepareResourceClaims(context.Background(), tc.claims)
 			require.NoError(t, err)

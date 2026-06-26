@@ -94,6 +94,9 @@ type CPUDriver struct {
 	deviceNameToCPUID       map[string]int
 	deviceNameToSocketID    map[string]int
 	deviceNameToNUMANodeID  map[string]int
+	individualDeviceInfos   []cpuDeviceInfo
+	groupedDeviceInfos      []groupedCPUDeviceInfo
+	deviceSlices            [][]resourceapi.Device
 	reservedCPUs            cpuset.CPUSet
 	onlineCPUs              cpuset.CPUSet
 	cpuDeviceMode           string
@@ -101,6 +104,27 @@ type CPUDriver struct {
 	claimTracker            *store.ClaimTracker
 	pcieRootMapper          *store.PCIeRootMapper
 	devicesPerResourceSlice int
+}
+
+// Providers group the interfaces the CPUDriver depends on
+type Providers struct {
+	CPUInfo   CPUInfoProvider
+	SysFS     device.SysFS
+	K8SClient kubernetes.Interface
+}
+
+func (pr Providers) EnsureCPUInfo() CPUInfoProvider {
+	if pr.CPUInfo == nil {
+		return cpuinfo.NewSystemCPUInfo()
+	}
+	return pr.CPUInfo
+}
+
+func (pr Providers) EnsureSysFS() device.SysFS {
+	if pr.SysFS == nil {
+		return os.DirFS(device.SysfsRoot).(device.SysFS)
+	}
+	return pr.SysFS
 }
 
 // Config is the configuration for the CPUDriver.
@@ -122,16 +146,15 @@ func (cfg Config) DevicesPerResourceSlice() int {
 	return resourceapi.ResourceSliceMaxDevices
 }
 
-// Start creates and starts a new CPUDriver.
-func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) (*CPUDriver, <-chan error, error) {
-	var logger logr.Logger
-	ctx, logger = ctxlog.WithValues(ctx, "driver", config.DriverName)
+// New creates and initializes a CPUDriver, preparing all internal state.
+// No external listeners or goroutines are started; call Start to begin serving.
+func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, error) {
+	logger = logger.WithValues("driver", config.DriverName)
 
-	asyncErr := make(chan error, 1)
 	plugin := &CPUDriver{
 		driverName:              config.DriverName,
 		nodeName:                config.NodeName,
-		kubeClient:              clientset,
+		kubeClient:              providers.K8SClient,
 		deviceNameToCPUID:       make(map[string]int),
 		deviceNameToSocketID:    make(map[string]int),
 		deviceNameToNUMANodeID:  make(map[string]int),
@@ -142,56 +165,83 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		pcieRootMapper:          store.NewPCIeRootMapper(),
 		devicesPerResourceSlice: config.DevicesPerResourceSlice(),
 	}
-	sysfs := os.DirFS(device.SysfsRoot).(device.SysFS)
+	sysfs := providers.EnsureSysFS()
 
 	onlineCPUs, err := cpuinfo.OnlineCPUs(logger, sysfs)
 	if err != nil {
-		return nil, asyncErr, fmt.Errorf("failed to get online CPUs: %w", err)
+		return nil, fmt.Errorf("failed to get online CPUs: %w", err)
 	}
 	logger.V(2).Info("detected online CPUs", "cpus", onlineCPUs.String())
 	plugin.onlineCPUs = onlineCPUs
 
-	cpuInfoProvider := cpuinfo.NewSystemCPUInfo()
-	topo, err := cpuInfoProvider.GetCPUTopology(logger)
+	topo, err := providers.EnsureCPUInfo().GetCPUTopology(logger)
 	if err != nil {
-		return nil, asyncErr, fmt.Errorf("failed to get CPU topology: %w", err)
+		return nil, fmt.Errorf("failed to get CPU topology: %w", err)
 	}
 	if topo == nil {
-		return nil, asyncErr, fmt.Errorf("failed to get CPU topology: topology is nil")
+		return nil, fmt.Errorf("failed to get CPU topology: topology is nil")
 	}
 	plugin.cpuTopology = topo
 
 	if config.ExposePCIeRoots {
 		if err := plugin.pcieRootMapper.Probe(logger, sysfs, onlineCPUs); err != nil {
-			return nil, asyncErr, fmt.Errorf("failed to list PCIe domains: %w", err)
+			return nil, fmt.Errorf("failed to list PCIe domains: %w", err)
 		}
 	}
 
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.cpuTopology, config.ReservedCPUs)
 	plugin.podConfigStore = store.NewPodConfig()
-	plugin.initializeDeviceLookupMaps()
 
-	driverPluginPath := filepath.Join(kubeletPluginPath, config.DriverName)
+	if plugin.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
+		plugin.groupedDeviceInfos = plugin.groupedCPUDeviceInfos()
+		for _, dev := range plugin.groupedDeviceInfos {
+			switch plugin.cpuDeviceGroupBy {
+			case GROUP_BY_SOCKET:
+				plugin.deviceNameToSocketID[dev.name] = dev.socketID
+			case GROUP_BY_NUMA_NODE:
+				plugin.deviceNameToNUMANodeID[dev.name] = dev.numaNodeID
+			}
+		}
+		plugin.deviceSlices = plugin.createGroupedCPUDeviceSlices(logger)
+	} else {
+		plugin.individualDeviceInfos = plugin.cpuDeviceInfos()
+		for _, dev := range plugin.individualDeviceInfos {
+			plugin.deviceNameToCPUID[dev.name] = dev.cpu.CpuID
+		}
+		plugin.deviceSlices = plugin.createCPUDeviceSlices()
+	}
+
+	return plugin, nil
+}
+
+// Start registers the plugin with kubelet, starts the NRI plugin, and begins
+// async resource publication. Setup must have been called first.
+func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
+	_, logger := ctxlog.WithValues(ctx, "driver", cp.driverName)
+
+	asyncErr := make(chan error, 1)
+
+	driverPluginPath := filepath.Join(kubeletPluginPath, cp.driverName)
 	if err := os.MkdirAll(driverPluginPath, 0750); err != nil {
-		return nil, asyncErr, fmt.Errorf("failed to create plugin path %s: %w", driverPluginPath, err)
+		return asyncErr, fmt.Errorf("failed to create plugin path %s: %w", driverPluginPath, err)
 	}
 
-	cdiMgr, err := NewCdiManager(logger, config.DriverName, cdiSpecDir)
+	cdiMgr, err := NewCdiManager(logger, cp.driverName, cdiSpecDir)
 	if err != nil {
-		return nil, asyncErr, fmt.Errorf("failed to create CDI manager: %w", err)
+		return asyncErr, fmt.Errorf("failed to create CDI manager: %w", err)
 	}
-	plugin.cdiMgr = cdiMgr
+	cp.cdiMgr = cdiMgr
 
 	kubeletOpts := []kubeletplugin.Option{
-		kubeletplugin.DriverName(config.DriverName),
-		kubeletplugin.NodeName(config.NodeName),
-		kubeletplugin.KubeClient(clientset),
+		kubeletplugin.DriverName(cp.driverName),
+		kubeletplugin.NodeName(cp.nodeName),
+		kubeletplugin.KubeClient(cp.kubeClient),
 	}
-	d, err := kubeletplugin.Start(ctx, plugin, kubeletOpts...)
+	d, err := kubeletplugin.Start(ctx, cp, kubeletOpts...)
 	if err != nil {
-		return nil, asyncErr, fmt.Errorf("start kubelet plugin: %w", err)
+		return asyncErr, fmt.Errorf("start kubelet plugin: %w", err)
 	}
-	plugin.draPlugin = d
+	cp.draPlugin = d
 	err = wait.PollUntilContextTimeout(ctx, 1*time.Second, 30*time.Second, true, func(context.Context) (bool, error) {
 		status := d.RegistrationStatus()
 		if status == nil {
@@ -200,12 +250,12 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 		return status.PluginRegistered, nil
 	})
 	if err != nil {
-		return nil, asyncErr, err
+		return asyncErr, err
 	}
 
 	// register the NRI plugin
 	nriOpts := []stub.Option{
-		stub.WithPluginName(config.DriverName),
+		stub.WithPluginName(cp.driverName),
 		stub.WithPluginIdx("00"),
 		// https://github.com/containerd/nri/pull/173
 		// Otherwise it silently exits the program
@@ -213,23 +263,23 @@ func Start(ctx context.Context, clientset kubernetes.Interface, config *Config) 
 			logger.Info("NRI plugin closed")
 		}),
 	}
-	stub, err := stub.New(plugin, nriOpts...)
+	stub, err := stub.New(cp, nriOpts...)
 	if err != nil {
-		return nil, asyncErr, fmt.Errorf("failed to create plugin stub: %w", err)
+		return asyncErr, fmt.Errorf("failed to create plugin stub: %w", err)
 	}
-	plugin.nriPlugin = stub
+	cp.nriPlugin = stub
 
 	go func() {
-		if err := runNRIPluginWithRetry(ctx, plugin.nriPlugin, maxAttempts); err != nil && ctx.Err() == nil {
+		if err := runNRIPluginWithRetry(ctx, cp.nriPlugin, maxAttempts); err != nil && ctx.Err() == nil {
 			logger.Error(err, "NRI plugin failed to be restarted", "maxAttempts", maxAttempts)
 			asyncErr <- err
 		}
 	}()
 
 	// publish available resources
-	go plugin.PublishResources(ctx)
+	go cp.PublishResources(ctx)
 
-	return plugin, asyncErr, nil
+	return asyncErr, nil
 }
 
 // Stop stops the CPUDriver.

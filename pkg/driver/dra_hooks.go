@@ -172,37 +172,12 @@ func (cp *CPUDriver) cpuDeviceInfos() []cpuDeviceInfo {
 	return devices
 }
 
-// initializeDeviceLookupMaps builds the indexes used by PrepareResourceClaims
-// before kubelet can call into the plugin. ResourceSlice publication must not
-// be required to populate these maps.
-func (cp *CPUDriver) initializeDeviceLookupMaps() {
-	cp.deviceNameToCPUID = make(map[string]int)
-	cp.deviceNameToSocketID = make(map[string]int)
-	cp.deviceNameToNUMANodeID = make(map[string]int)
-
-	if cp.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
-		for _, device := range cp.groupedCPUDeviceInfos() {
-			switch cp.cpuDeviceGroupBy {
-			case GROUP_BY_SOCKET:
-				cp.deviceNameToSocketID[device.name] = device.socketID
-			case GROUP_BY_NUMA_NODE:
-				cp.deviceNameToNUMANodeID[device.name] = device.numaNodeID
-			}
-		}
-		return
-	}
-
-	for _, device := range cp.cpuDeviceInfos() {
-		cp.deviceNameToCPUID[device.name] = device.cpu.CpuID
-	}
-}
-
 // createGroupedCPUDeviceSlices creates Device objects based on the CPU topology, grouped by a specific criteria.
 func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resourceapi.Device {
 	logger.V(4).Info("creating grouped CPU devices")
 	var devices []resourceapi.Device
 
-	for _, deviceInfo := range cp.groupedCPUDeviceInfos() {
+	for _, deviceInfo := range cp.groupedDeviceInfos {
 		availableCPUs := int64(deviceInfo.cpus.Size())
 		deviceCapacity := map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
 			cpuResourceQualifiedName: {Value: *resource.NewQuantity(availableCPUs, resource.DecimalSI)},
@@ -266,7 +241,7 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 // to co-locate workloads on hyperthreads of the same core.
 func (cp *CPUDriver) createCPUDeviceSlices() [][]resourceapi.Device {
 	var allDevices []resourceapi.Device
-	for _, deviceInfo := range cp.cpuDeviceInfos() {
+	for _, deviceInfo := range cp.individualDeviceInfos {
 		cpu := deviceInfo.cpu
 		deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 			AttributeNUMANodeID: {IntValue: new(int64(cpu.NUMANodeID))},
@@ -303,20 +278,13 @@ func (cp *CPUDriver) PublishResources(ctx context.Context) {
 	logger.V(4).Info("begin: publishing resources")
 	defer logger.V(4).Info("end: publishing resources")
 
-	var deviceChunks [][]resourceapi.Device
-	if cp.cpuDeviceMode == CPU_DEVICE_MODE_GROUPED {
-		deviceChunks = cp.createGroupedCPUDeviceSlices(logger)
-	} else {
-		deviceChunks = cp.createCPUDeviceSlices()
-	}
-
-	if deviceChunks == nil {
+	if cp.deviceSlices == nil {
 		logger.Info("no devices to publish or error occurred")
 		return
 	}
 
-	slices := make([]resourceslice.Slice, 0, len(deviceChunks))
-	for _, chunk := range deviceChunks {
+	slices := make([]resourceslice.Slice, 0, len(cp.deviceSlices))
+	for _, chunk := range cp.deviceSlices {
 		slices = append(slices, resourceslice.Slice{Devices: chunk})
 	}
 
