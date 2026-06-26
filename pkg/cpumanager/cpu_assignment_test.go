@@ -139,9 +139,12 @@ func TestCPUAccumulatorFreeSockets(t *testing.T) {
 
 func TestCPUAccumulatorFreeCoresWithRepeatedCoreIDs(t *testing.T) {
 	logger := klog.Background()
-	acc := newCPUAccumulator(logger, topoRepeatedCoreIDs, cpuset.New(0, 1), 2, CPUSortingStrategyPacked)
+	acc := newCPUAccumulator(logger, topoRepeatedCoreIDs, cpuset.New(0, 1, 2, 3), 2, CPUSortingStrategyPacked)
 
-	if got, want := acc.freeCores(), []topology.CoreKey{{SocketID: 0, ClusterID: 0, CoreID: 0}}; !reflect.DeepEqual(got, want) {
+	if got, want := acc.freeCores(), []topology.CoreKey{
+		{SocketID: 0, ClusterID: 0, CoreID: 0},
+		{SocketID: 1, ClusterID: 0, CoreID: 0},
+	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("freeCores() = %v, want %v", got, want)
 	}
 }
