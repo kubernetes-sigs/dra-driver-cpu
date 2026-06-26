@@ -36,6 +36,7 @@ func TestDescriptors(t *testing.T) {
 		names = append(names, desc.Name)
 		require.Equal(t, "ALPHA", desc.Stability)
 		require.NotEmpty(t, desc.Help)
+		require.NotNil(t, desc.Labels)
 	}
 
 	require.Equal(t, []string{

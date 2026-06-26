@@ -124,7 +124,10 @@ var descriptors = []Descriptor{
 // Descriptors returns metadata for custom CPU driver metrics.
 func Descriptors() []Descriptor {
 	out := make([]Descriptor, len(descriptors))
-	copy(out, descriptors)
+	for i, descriptor := range descriptors {
+		out[i] = descriptor
+		out[i].Labels = append([]string{}, descriptor.Labels...)
+	}
 	return out
 }
 
