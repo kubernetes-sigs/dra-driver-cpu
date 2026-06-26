@@ -263,14 +263,23 @@ func detectDriverConfig(defaults driverconfig.Config, driverCmdlinePath string) 
 	fs := flag.NewFlagSet("detect-driver-config", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	cfg.AddFlags(fs)
-	// The driver command line can include logging and other shared flags.
-	// Re-parse only the driver config flags so those unrelated flags do not
-	// make diagnostics fall back to defaults.
+	var configFile string
+	fs.StringVar(&configFile, "config", "", "")
+	// Filter to flags known to this FlagSet; unrecognised flags (e.g. logging
+	// flags) would cause Parse to fail and fall back to defaults.
 	if err := fs.Parse(knownConfigArgs(fs, cmdline[1:])); err != nil {
 		return defaults
 	}
 
-	return cfg
+	if configFile == "" {
+		return cfg
+	}
+	// If the file can't be read (e.g. run outside the driver container), fall back to CLI-parsed config.
+	loaded, err := driverconfig.Load(cfg, configFile, fs)
+	if err != nil {
+		return cfg
+	}
+	return loaded
 }
 
 func readCmdlineFile(path string) ([]string, error) {
