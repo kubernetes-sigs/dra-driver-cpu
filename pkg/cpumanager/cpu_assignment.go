@@ -301,21 +301,25 @@ type cpuAccumulator struct {
 }
 
 func newCPUAccumulator(logger logr.Logger, topo *topology.CPUTopology, availableCPUs cpuset.CPUSet, numCPUs int, cpuSortingStrategy CPUSortingStrategy) *cpuAccumulator {
+	return newCPUAccumulatorForRequest(logger, newPackedAllocationRequest(topo, availableCPUs, numCPUs, cpuSortingStrategy, false))
+}
+
+func newCPUAccumulatorForRequest(logger logr.Logger, request allocationRequest) *cpuAccumulator {
 	acc := &cpuAccumulator{
 		logger:        logger,
-		topo:          topo,
-		details:       topo.CPUDetails.KeepOnly(availableCPUs),
-		numCPUsNeeded: numCPUs,
+		topo:          request.topology,
+		details:       request.topology.CPUDetails.KeepOnly(request.availableCPUs),
+		numCPUsNeeded: request.numCPUs,
 		result:        cpuset.New(),
 	}
 
-	if topo.NumSockets >= topo.NumNUMANodes {
+	if request.topology.NumSockets >= request.topology.NumNUMANodes {
 		acc.numaOrSocketsFirst = &numaFirst{acc}
 	} else {
 		acc.numaOrSocketsFirst = &socketsFirst{acc}
 	}
 
-	if cpuSortingStrategy == CPUSortingStrategyPacked {
+	if request.cpuSortingStrategy == CPUSortingStrategyPacked {
 		acc.availableCPUSorter = &sortCPUsPacked{acc}
 	} else {
 		acc.availableCPUSorter = &sortCPUsSpread{acc}
@@ -777,12 +781,16 @@ func (a *cpuAccumulator) iterateCombinations(n []int, k int, f func([]int) LoopC
 // order of free CPUs). For any NUMA node, the cores are selected from the ones in the socket with
 // the least amount of free CPUs to the one with the highest amount of free CPUs.
 func TakeByTopologyNUMAPacked(logger logr.Logger, topo *topology.CPUTopology, availableCPUs cpuset.CPUSet, numCPUs int, cpuSortingStrategy CPUSortingStrategy, preferAlignByUncoreCache bool) (cpuset.CPUSet, error) {
-	acc := newCPUAccumulator(logger, topo, availableCPUs, numCPUs, cpuSortingStrategy)
+	return takeByTopologyNUMAPackedRequest(logger, newPackedAllocationRequest(topo, availableCPUs, numCPUs, cpuSortingStrategy, preferAlignByUncoreCache))
+}
+
+func takeByTopologyNUMAPackedRequest(logger logr.Logger, request allocationRequest) (cpuset.CPUSet, error) {
+	acc := newCPUAccumulatorForRequest(logger, request)
 	if acc.isSatisfied() {
 		return acc.result, nil
 	}
 	if acc.isFailed() {
-		return cpuset.New(), fmt.Errorf("not enough cpus available to satisfy request: requested=%d, available=%d", numCPUs, availableCPUs.Size())
+		return cpuset.New(), fmt.Errorf("not enough cpus available to satisfy request: requested=%d, available=%d", request.numCPUs, request.availableCPUs.Size())
 	}
 
 	// Algorithm: topology-aware best-fit
@@ -802,7 +810,7 @@ func TakeByTopologyNUMAPacked(logger logr.Logger, topo *topology.CPUTopology, av
 	// 2. If PreferAlignByUncoreCache is enabled, acquire whole UncoreCaches
 	//    if available and the container requires at least a UncoreCache's-worth
 	//    of CPUs. Otherwise, acquire CPUs from the least amount of UncoreCaches.
-	if preferAlignByUncoreCache {
+	if request.constraints.preferAlignByUncoreCache {
 		acc.takeUncoreCache()
 		if acc.isSatisfied() {
 			return acc.result, nil
@@ -812,7 +820,7 @@ func TakeByTopologyNUMAPacked(logger logr.Logger, topo *topology.CPUTopology, av
 	// 3. Acquire whole cores, if available and the container requires at least
 	//    a core's-worth of CPUs.
 	//    If `CPUSortingStrategySpread` is specified, skip taking the whole core.
-	if cpuSortingStrategy != CPUSortingStrategySpread {
+	if request.cpuSortingStrategy != CPUSortingStrategySpread {
 		acc.takeFullCores()
 		if acc.isSatisfied() {
 			return acc.result, nil
@@ -899,17 +907,18 @@ func takeByTopologyNUMADistributed(logger logr.Logger, topo *topology.CPUTopolog
 	// can't distribute CPUs in this chunk size.
 	// PreferAlignByUncoreCache feature not implemented here yet and set to false.
 	// Support for PreferAlignByUncoreCache to be done at beta release.
+	request := newPackedAllocationRequest(topo, availableCPUs, numCPUs, cpuSortingStrategy, false)
 	if (numCPUs % cpuGroupSize) != 0 {
-		return TakeByTopologyNUMAPacked(logger, topo, availableCPUs, numCPUs, cpuSortingStrategy, false)
+		return takeByTopologyNUMAPackedRequest(logger, request)
 	}
 
 	// Otherwise build an accumulator to start allocating CPUs from.
-	acc := newCPUAccumulator(logger, topo, availableCPUs, numCPUs, cpuSortingStrategy)
+	acc := newCPUAccumulatorForRequest(logger, request)
 	if acc.isSatisfied() {
 		return acc.result, nil
 	}
 	if acc.isFailed() {
-		return cpuset.New(), fmt.Errorf("not enough cpus available to satisfy request: requested=%d, available=%d", numCPUs, availableCPUs.Size())
+		return cpuset.New(), fmt.Errorf("not enough cpus available to satisfy request: requested=%d, available=%d", request.numCPUs, request.availableCPUs.Size())
 	}
 
 	// Get the list of NUMA nodes represented by the set of CPUs in 'availableCPUs'.
@@ -1122,5 +1131,5 @@ func takeByTopologyNUMADistributed(logger logr.Logger, topo *topology.CPUTopolog
 
 	// If we never found a combination of NUMA nodes that we could properly
 	// distribute CPUs across, fall back to the packing algorithm.
-	return TakeByTopologyNUMAPacked(logger, topo, availableCPUs, numCPUs, cpuSortingStrategy, false)
+	return takeByTopologyNUMAPackedRequest(logger, request)
 }
