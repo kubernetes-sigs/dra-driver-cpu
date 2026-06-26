@@ -54,3 +54,76 @@ honor these settings, where applicable.
   makes the tests which verify the contextual logging integrity dump the full raw captured logs
   before to run any actual test. Useful for troubleshooting and test fixing/tuning.
   NOTE: setting this value will make the test output significantly larger.
+
+## how to run
+
+The simplest way is from your terminal:
+
+```bash
+make test-e2e-kind
+```
+
+This creates a kind cluster from scratch, deploys the driver, and runs the full suite.
+
+To run against an existing cluster with the driver already deployed:
+
+```bash
+make test-e2e
+```
+
+Note: `make test-e2e` does not build or load the test image; it only runs the Go e2e suite.
+The `make test-e2e-kind` target builds and loads the image
+automatically into a kind cluster, but for an arbitrary cluster the default `IMAGE_TEST` value
+points at the local CI image name and will not be pullable. Either make sure the
+test image is available to the cluster, or override the image explicitly:
+
+```bash
+DRACPU_E2E_TEST_IMAGE=<image> make test-e2e
+```
+
+### troubleshooting
+
+- **Kubelet fails with `unknown service runtime.v1.RuntimeService`**
+
+  The real error is in the containerd logs: `failed to create fsnotify watcher: too many open files`.
+  The host's `fs.inotify.max_user_instances` (default 128) is exhausted.
+
+  Fix: `sudo sysctl fs.inotify.max_user_instances=1024`, then recreate the cluster.
+
+- **`kind load docker-image` fails with `no unpack platforms defined`**
+
+  Happens with fuse-overlayfs storage driver and kind < v0.32.0
+  ([kind#3945](https://github.com/kubernetes-sigs/kind/issues/3945).
+
+  Fix: upgrade kind and rebuild the node image:
+
+  ```bash
+  go install sigs.k8s.io/kind@v0.32.0
+  docker rmi kindest/node:<version>
+  ```
+
+- **Pods fail with `openat2 .../cpuset.cpus: no such file or directory`**
+
+  When running kind with rootless Docker, the `cpuset` cgroup controller is not
+  delegated to user sessions by default. The NRI hook sets `cpuset.cpus` on every
+  container, so all pods (including CoreDNS) crash on startup.
+
+  Verify by checking inside a kind node:
+
+  ```bash
+  docker exec <kind-node> cat /sys/fs/cgroup/cgroup.controllers
+  # If "cpuset" is missing from the output, this is the issue.
+  ```
+
+  Fix:
+
+  ```bash
+  sudo mkdir -p /etc/systemd/system/user@.service.d
+  sudo tee /etc/systemd/system/user@.service.d/delegate-cpuset.conf <<EOF
+  [Service]
+  Delegate=cpuset cpu io memory pids
+  EOF
+  sudo systemctl daemon-reload
+  ```
+
+  Then recreate the kind cluster.
