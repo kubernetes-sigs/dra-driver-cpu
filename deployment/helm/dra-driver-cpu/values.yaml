@@ -20,7 +20,7 @@ fullnameOverride: ""
 # @schema additionalProperties:false
 image:
   # -- Container image repository
-  repository: us-central1-docker.pkg.dev/k8s-staging-images/dra-driver-cpu/dra-driver-cpu # @schema required:true
+  repository: registry.k8s.io/dra-driver-cpu/dra-driver-cpu # @schema required:true
   # -- Image tag; defaults to `.Chart.AppVersion` when empty, which is set to the release tag at package time
   tag: ""
   # -- Image pull policy

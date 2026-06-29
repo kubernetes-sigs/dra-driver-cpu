@@ -39,7 +39,7 @@ helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system -f m
 | healthzPath | string | `"/healthz"` | Path for liveness and readiness probes |
 | healthzPort | int | `8080` | Port the HTTP server binds to; used for the container port and probes |
 | image.pullPolicy | string | `"IfNotPresent"` | Image pull policy |
-| image.repository | string | `"us-central1-docker.pkg.dev/k8s-staging-images/dra-driver-cpu/dra-driver-cpu"` | Container image repository |
+| image.repository | string | `"registry.k8s.io/dra-driver-cpu/dra-driver-cpu"` | Container image repository |
 | image.tag | string | `""` | Image tag; defaults to `.Chart.AppVersion` when empty, which is set to the release tag at package time |
 | imagePullSecrets | list | `[]` | List of image pull secrets |
 | nameOverride | string | `""` | Override the chart name |
