@@ -53,8 +53,8 @@
     },
     "driverConfig": {
       "description": "Driver config file contents. When non-empty, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. CLI flags (args.*) always take priority over values set here. Example: driverConfig: cpuDeviceMode: grouped groupBy: numanode reservedCPUs: \"0-3\"",
-      "type": "object",
-      "additionalProperties": true
+      "$ref": "driverconfig.schema.json",
+      "type": "object"
     },
     "fullnameOverride": {
       "description": "Override the full release name",
@@ -186,6 +186,50 @@
           }
         }
       }
+    }
+  },
+  "$defs": {
+    "driverconfig.schema.json": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "driverconfig.schema.json",
+      "$comment": "Schema for driverConfig values. Mirrors internal/driverconfig/config.go Config struct, except bindAddress which is intentionally excluded — use the healthzPort Helm value instead. Update this file when fields are added or removed from Config.",
+      "type": "object",
+      "properties": {
+        "apiVersion": {
+          "type": "string",
+          "enum": [
+            "v1alpha1"
+          ]
+        },
+        "cpuDeviceMode": {
+          "type": "string",
+          "enum": [
+            "grouped",
+            "individual"
+          ]
+        },
+        "exposePCIeRoots": {
+          "type": "boolean"
+        },
+        "groupBy": {
+          "type": "string",
+          "enum": [
+            "numanode",
+            "socket",
+            "machine"
+          ]
+        },
+        "hostnameOverride": {
+          "type": "string"
+        },
+        "kubeconfig": {
+          "type": "string"
+        },
+        "reservedCPUs": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

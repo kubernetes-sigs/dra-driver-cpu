@@ -93,4 +93,4 @@ healthzPort: 8080 # @schema type:integer;minimum:1;maximum:65535
 #     cpuDeviceMode: grouped
 #     groupBy: numanode
 #     reservedCPUs: "0-3"
-driverConfig: {} # @schema type:object;additionalProperties:true
+driverConfig: {} # @schema $ref: ./driverconfig.schema.json
