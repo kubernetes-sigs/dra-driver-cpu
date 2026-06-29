@@ -17,6 +17,7 @@ limitations under the License.
 package driverconfig
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -74,13 +75,16 @@ func mergeMap(dst, src map[string]any) {
 }
 
 // applyMap applies only the keys present in m to cfg; absent keys are
-// untouched (encoding/json.Unmarshal semantics).
+// untouched (encoding/json.Unmarshal semantics). Unknown keys are rejected
+// to catch typos early rather than silently ignoring them.
 func applyMap(cfg *Config, m map[string]any) error {
 	data, err := json.Marshal(m)
 	if err != nil {
 		return fmt.Errorf("marshaling config map: %w", err)
 	}
-	if err := json.Unmarshal(data, cfg); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(cfg); err != nil {
 		return fmt.Errorf("applying config map: %w", err)
 	}
 	return nil
