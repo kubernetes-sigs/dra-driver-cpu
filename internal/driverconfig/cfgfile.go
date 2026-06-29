@@ -19,6 +19,7 @@ package driverconfig
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 
 	"sigs.k8s.io/yaml"
@@ -26,7 +27,7 @@ import (
 
 // buildConfMap loads the config file at filePath into confMap.
 // It validates and strips "apiVersion" before returning.
-func buildConfMap(confMap map[string]interface{}, filePath string) error {
+func buildConfMap(confMap map[string]any, filePath string) error {
 	if err := loadAndMerge(confMap, filePath); err != nil {
 		return err
 	}
@@ -40,13 +41,13 @@ func buildConfMap(confMap map[string]interface{}, filePath string) error {
 }
 
 // loadAndMerge reads the YAML file at path and merges it into dst.
-func loadAndMerge(dst map[string]interface{}, path string) error {
+func loadAndMerge(dst map[string]any, path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", path, err)
 	}
 
-	src := map[string]interface{}{}
+	src := map[string]any{}
 	if err := yaml.Unmarshal(data, &src); err != nil {
 		return fmt.Errorf("parsing %s: %w", path, err)
 	}
@@ -56,7 +57,7 @@ func loadAndMerge(dst map[string]interface{}, path string) error {
 }
 
 // validateAPIVersion checks confMap["apiVersion"] when present.
-func validateAPIVersion(confMap map[string]interface{}) error {
+func validateAPIVersion(confMap map[string]any) error {
 	raw, ok := confMap["apiVersion"]
 	if !ok {
 		return nil
@@ -68,15 +69,13 @@ func validateAPIVersion(confMap map[string]interface{}) error {
 	return nil
 }
 
-func mergeMap(dst, src map[string]interface{}) {
-	for k, v := range src {
-		dst[k] = v
-	}
+func mergeMap(dst, src map[string]any) {
+	maps.Copy(dst, src)
 }
 
 // applyMap applies only the keys present in m to cfg; absent keys are
 // untouched (encoding/json.Unmarshal semantics).
-func applyMap(cfg *Config, m map[string]interface{}) error {
+func applyMap(cfg *Config, m map[string]any) error {
 	data, err := json.Marshal(m)
 	if err != nil {
 		return fmt.Errorf("marshaling config map: %w", err)

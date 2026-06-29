@@ -48,7 +48,7 @@ func Load(base Config, filePath string, fs *flag.FlagSet) (Config, error) {
 		}
 	})
 
-	confMap := map[string]interface{}{}
+	confMap := map[string]any{}
 	if err := buildConfMap(confMap, filePath); err != nil {
 		return Config{}, fmt.Errorf("config file %q: %w", filePath, err)
 	}
