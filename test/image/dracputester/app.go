@@ -25,11 +25,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-logr/logr"
 	"github.com/go-logr/stdr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
-	"golang.org/x/sys/unix"
 	"k8s.io/utils/cpuset"
 )
 
@@ -83,19 +81,6 @@ func affinityScanBoundFromTopology(topo *cpuinfo.CPUTopology) int {
 	}
 	list := cpus.List()
 	return list[len(list)-1] + 1
-}
-
-func getAffinity(logger logr.Logger) (cpuset.CPUSet, error) {
-	var unixCS unix.CPUSet
-	err := unix.SchedGetaffinity(os.Getpid(), &unixCS)
-	if err != nil {
-		return cpuset.New(), err
-	}
-	maxCPUID := 0
-	if topo, err := cpuinfo.NewSystemCPUInfo().GetCPUTopology(logger); err == nil {
-		maxCPUID = affinityScanBoundFromTopology(topo)
-	}
-	return affinityFromMask(&unixCS, maxCPUID), nil
 }
 
 func main() {
