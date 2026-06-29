@@ -17,6 +17,7 @@ limitations under the License.
 package cpuinfo
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -107,6 +108,14 @@ func TestCPUsInCoreKeys(t *testing.T) {
 	assert.True(t, cpuset.New(0, 1).Equals(details.CPUsInCoreKeys(CoreKey{SocketID: 0, ClusterID: 0, CoreID: 0})))
 	assert.True(t, cpuset.New(2, 3).Equals(details.CPUsInCoreKeys(CoreKey{SocketID: 1, ClusterID: 0, CoreID: 0})))
 	assert.True(t, cpuset.New(4).Equals(details.CPUsInCoreKeys(CoreKey{SocketID: 1, ClusterID: 1, CoreID: 0})))
+}
+
+func TestCoreKeyString(t *testing.T) {
+	assert.Equal(t, "socket=1,cluster=2,core=3", fmt.Sprint(CoreKey{
+		SocketID:  1,
+		ClusterID: 2,
+		CoreID:    3,
+	}))
 }
 
 func TestCPUsInSockets(t *testing.T) {

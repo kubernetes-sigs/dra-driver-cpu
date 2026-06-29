@@ -17,6 +17,7 @@ limitations under the License.
 package cpuinfo
 
 import (
+	"fmt"
 	"sort"
 
 	"k8s.io/utils/cpuset"
@@ -48,6 +49,10 @@ func (k CoreKey) Less(other CoreKey) bool {
 		return k.SocketID < other.SocketID
 	}
 	return k.ClusterID < other.ClusterID
+}
+
+func (k CoreKey) String() string {
+	return fmt.Sprintf("socket=%d,cluster=%d,core=%d", k.SocketID, k.ClusterID, k.CoreID)
 }
 
 func (i CPUInfo) CoreKey() CoreKey {
