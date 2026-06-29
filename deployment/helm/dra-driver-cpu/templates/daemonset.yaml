@@ -34,10 +34,13 @@ spec:
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.podAnnotations }}
       annotations:
+        {{- if .Values.driverConfig }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
     spec:
       hostNetwork: true
       priorityClassName: system-node-critical
@@ -75,6 +78,9 @@ spec:
           {{- if .Values.args.exposePCIeRoots }}
           - --expose-pcie-roots
           {{- end }}
+          {{- if .Values.driverConfig }}
+          - --config=/etc/dracpu/config.yaml
+          {{- end }}
         image: {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         ports:
@@ -109,6 +115,11 @@ spec:
           mountPath: /var/run/nri
         - name: cdi-dir
           mountPath: /var/run/cdi
+        {{- if .Values.driverConfig }}
+        - name: driver-config
+          mountPath: /etc/dracpu
+          readOnly: true
+        {{- end }}
       volumes:
       - name: device-plugin
         hostPath:
@@ -123,3 +134,8 @@ spec:
         hostPath:
           path: /var/run/cdi
           type: DirectoryOrCreate
+      {{- if .Values.driverConfig }}
+      - name: driver-config
+        configMap:
+          name: {{ include "dra-driver-cpu.fullname" . }}-config
+      {{- end }}

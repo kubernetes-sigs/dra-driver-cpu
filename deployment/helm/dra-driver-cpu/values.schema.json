@@ -51,6 +51,11 @@
       },
       "additionalProperties": false
     },
+    "driverConfig": {
+      "description": "Driver config file contents. When non-empty, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. CLI flags (args.*) always take priority over values set here. Example: driverConfig: cpuDeviceMode: grouped groupBy: numanode reservedCPUs: \"0-3\"",
+      "type": "object",
+      "additionalProperties": true
+    },
     "fullnameOverride": {
       "description": "Override the full release name",
       "type": "string"

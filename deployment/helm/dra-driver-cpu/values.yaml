@@ -84,3 +84,13 @@ args:
 healthzPath: /healthz
 # -- Port the HTTP server binds to; used for the container port and probes
 healthzPort: 8080 # @schema type:integer;minimum:1;maximum:65535
+
+# -- Driver config file contents. When non-empty, a ConfigMap is created and
+# mounted into the driver container as /etc/dracpu/config.yaml. CLI flags
+# (args.*) always take priority over values set here.
+# Example:
+#   driverConfig:
+#     cpuDeviceMode: grouped
+#     groupBy: numanode
+#     reservedCPUs: "0-3"
+driverConfig: {} # @schema type:object;additionalProperties:true

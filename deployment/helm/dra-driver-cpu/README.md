@@ -41,6 +41,7 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
 | args.hostnameOverride | string | `""` | Override the node name the driver registers under; omitted when empty |
 | args.logLevel | int | `4` | Log verbosity level passed as `--v` |
 | args.reservedCPUs | string | `""` | CPUs reserved for the OS and kubelet, excluded from DRA management (e.g. `"0-1"`); omitted when empty |
+| driverConfig | object | `{}` | Driver config file contents. When non-empty, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. CLI flags (args.*) always take priority over values set here. Example:   driverConfig:     cpuDeviceMode: grouped     groupBy: numanode     reservedCPUs: "0-3" |
 | fullnameOverride | string | `""` | Override the full release name |
 | healthzPath | string | `"/healthz"` | Path for liveness and readiness probes |
 | healthzPort | int | `8080` | Port the HTTP server binds to; used for the container port and probes |
