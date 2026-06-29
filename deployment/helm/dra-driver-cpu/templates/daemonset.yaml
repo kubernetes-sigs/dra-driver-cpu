@@ -64,8 +64,12 @@ spec:
         args:
           - /dracpu
           - --v={{ .Values.args.logLevel }}
+          {{- if .Values.args.cpuDeviceMode }}
           - --cpu-device-mode={{ .Values.args.cpuDeviceMode }}
+          {{- end }}
+          {{- if .Values.args.groupBy }}
           - --group-by={{ .Values.args.groupBy }}
+          {{- end }}
           {{- if .Values.healthzPort }}
           - --bind-address=:{{ .Values.healthzPort }}
           {{- end }}

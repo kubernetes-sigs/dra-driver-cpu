@@ -15,9 +15,10 @@
       ],
       "properties": {
         "cpuDeviceMode": {
-          "description": "CPU exposure mode: `grouped` (expose NUMA nodes or sockets as devices) or `individual` (expose each CPU as a device)",
+          "description": "CPU exposure mode: `grouped` (expose NUMA nodes or sockets as devices) or `individual` (expose each CPU as a device); when empty, defers to `driverConfig.cpuDeviceMode` or the built-in default (`grouped`)",
           "type": "string",
           "enum": [
+            "",
             "grouped",
             "individual"
           ]
@@ -27,9 +28,10 @@
           "type": "boolean"
         },
         "groupBy": {
-          "description": "Grouping criteria when `cpuDeviceMode=grouped`: `numanode`, `socket` or `machine`",
+          "description": "Grouping criteria when `cpuDeviceMode=grouped`: `numanode`, `socket` or `machine`; when empty, defers to `driverConfig.groupBy` or the built-in default (`numanode`)",
           "type": "string",
           "enum": [
+            "",
             "numanode",
             "socket",
             "machine"
@@ -52,7 +54,7 @@
       "additionalProperties": false
     },
     "driverConfig": {
-      "description": "Driver config file contents. When non-empty, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. CLI flags (args.*) always take priority over values set here. Example: driverConfig: cpuDeviceMode: grouped groupBy: numanode reservedCPUs: \"0-3\"",
+      "description": "Driver config file contents. When non-empty, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. Fields in `args.*` that are non-empty always take priority over values set here. Example: driverConfig: cpuDeviceMode: individual groupBy: socket reservedCPUs: \"0-3\"",
       "$ref": "driverconfig.schema.json",
       "type": "object"
     },
