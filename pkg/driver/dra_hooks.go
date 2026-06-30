@@ -219,6 +219,7 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 				AttributeSMTEnabled: {BoolValue: new(cp.cpuTopology.SMTEnabled)},
 				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
 			}
+			addMachineTopologyAttributes(deviceAttrs, cp.cpuTopology)
 			cp.setPCIeRootsAttribute(deviceAttrs, deviceInfo.cpus.UnsortedList()...)
 			devices = append(devices, resourceapi.Device{
 				Name:                     deviceInfo.name,
@@ -233,6 +234,23 @@ func (cp *CPUDriver) createGroupedCPUDeviceSlices(logger logr.Logger) [][]resour
 		return nil
 	}
 	return [][]resourceapi.Device{devices}
+}
+
+func addMachineTopologyAttributes(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, topo *cpuinfo.CPUTopology) {
+	for _, numaNodeID := range topo.CPUDetails.NUMANodes().List() {
+		attrName := resourceapi.QualifiedName(fmt.Sprintf("%s%d", AttributePrefixNUMA, numaNodeID))
+		numaNodeCPUs := topo.CPUDetails.CPUsInNUMANodes(numaNodeID)
+		attrs[attrName] = resourceapi.DeviceAttribute{
+			StringValue: new(numaNodeCPUs.String()),
+		}
+	}
+	for _, socketID := range topo.CPUDetails.Sockets().List() {
+		attrName := resourceapi.QualifiedName(fmt.Sprintf("%s%d", AttributePrefixSocket, socketID))
+		socketCPUs := topo.CPUDetails.CPUsInSockets(socketID)
+		attrs[attrName] = resourceapi.DeviceAttribute{
+			StringValue: new(socketCPUs.String()),
+		}
+	}
 }
 
 // CreateCPUDeviceSlices creates Device objects based on the CPU topology.

@@ -371,6 +371,16 @@ The driver allocates the specified cores directly (after validating that they ar
 >   - The cores are not reserved using the driver's `--reserved-cpus` configuration flag.
 > - **Error Handling**: If validation fails (e.g. core conflict, size mismatch, duplicate target, or offline cores), the driver returns a failure immediately in Kubelet's `PrepareResourceClaims` hook, causing pod startup to fail.
 
+### Getting topology information
+
+In order to enable external scheduler to make decisions about placement, the `ResourceSlice` must still expose topological information.
+The driver reports the following attributes when operating in `machine` grouping mode:
+
+- `dra.cpu/numa{id}: <cpuset>` (`{id}` being a non-negative integer) - all online CPUs on NUMA node `{id}`, including reserved ones, expressed in the [linux cpuset list notation](https://man7.org/linux/man-pages/man7/cpuset.7.html).
+- `dra.cpu/socket{id}: <cpuset>` (`{id}` being a non-negative integer) - all online CPUs on Socket `{id}`, including reserved ones, expressed in the [linux cpuset list notation](https://man7.org/linux/man-pages/man7/cpuset.7.html).
+
+The driver will report entries for all the NUMA nodes and all the Sockets detected in the system.
+
 ## Prerequisites
 
 The driver relies on [NRI (Node Resource Interface)](https://github.com/containerd/nri) to pin containers to their
