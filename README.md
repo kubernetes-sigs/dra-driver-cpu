@@ -392,8 +392,8 @@ The command prints JSON metadata for custom `dra_cpu_*` metrics only. It does no
 | `dra_cpu_available_cpus`                 | Gauge     | none     | CPUs still available for allocation after reserved and active claim CPUs are excluded. |
 | `dra_cpu_reserved_cpus`                  | Gauge     | none     | CPUs excluded from DRA management by driver configuration.                             |
 | `dra_cpu_resource_claims_active`         | Gauge     | none     | Resource claims currently recorded as active by the allocation store.                  |
-| `dra_cpu_prepare_claims_total`           | Counter   | `result` | Per-claim `PrepareResourceClaims` results. `result` is `success` or `error`.           |
-| `dra_cpu_unprepare_claims_total`         | Counter   | `result` | Per-claim `UnprepareResourceClaims` results. `result` is `success` or `error`.         |
+| `dra_cpu_prepare_claims_total`           | Counter   | `result` | Per-claim `PrepareResourceClaims` results. `result` is `success`, `error`, or `unknown`. |
+| `dra_cpu_unprepare_claims_total`         | Counter   | `result` | Per-claim `UnprepareResourceClaims` results. `result` is `success`, `error`, or `unknown`. |
 | `dra_cpu_prepare_claim_duration_seconds` | Histogram | none     | Per-claim prepare latency in seconds.                                                  |
 | `dra_cpu_claim_allocated_cpus`           | Histogram | none     | CPUs allocated for each newly successful claim allocation.                             |
 

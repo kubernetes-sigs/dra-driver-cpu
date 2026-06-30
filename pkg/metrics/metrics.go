@@ -32,6 +32,7 @@ type Result string
 const (
 	ResultSuccess Result = "success"
 	ResultError   Result = "error"
+	ResultUnknown Result = "unknown"
 )
 
 func (r Result) String() string {
@@ -40,8 +41,10 @@ func (r Result) String() string {
 		return string(ResultSuccess)
 	case ResultError:
 		return string(ResultError)
+	case ResultUnknown:
+		return string(ResultUnknown)
 	default:
-		return string(ResultError)
+		return string(ResultUnknown)
 	}
 }
 
@@ -205,6 +208,10 @@ func New(reg prometheus.Registerer) *Metrics {
 		m.prepareClaimDuration,
 		m.claimAllocatedCPUs,
 	)
+	for _, result := range []Result{ResultSuccess, ResultError, ResultUnknown} {
+		m.prepareClaims.WithLabelValues(result.String())
+		m.unprepareClaims.WithLabelValues(result.String())
+	}
 	return m
 }
 

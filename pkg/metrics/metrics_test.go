@@ -19,6 +19,7 @@ package metrics
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -61,6 +62,31 @@ func TestWriteJSON(t *testing.T) {
 	var descriptors []Descriptor
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &descriptors))
 	require.Equal(t, Descriptors(), descriptors)
+}
+
+func TestNewRegistersExpectedMetricFamilies(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	New(reg)
+
+	families, err := reg.Gather()
+	require.NoError(t, err)
+
+	names := make([]string, 0, len(families))
+	for _, family := range families {
+		names = append(names, family.GetName())
+	}
+	slices.Sort(names)
+
+	require.Equal(t, []string{
+		"dra_cpu_allocated_cpus",
+		"dra_cpu_available_cpus",
+		"dra_cpu_claim_allocated_cpus",
+		"dra_cpu_prepare_claim_duration_seconds",
+		"dra_cpu_prepare_claims_total",
+		"dra_cpu_reserved_cpus",
+		"dra_cpu_resource_claims_active",
+		"dra_cpu_unprepare_claims_total",
+	}, names)
 }
 
 func TestMetricsRecordsCollectors(t *testing.T) {
@@ -124,8 +150,8 @@ func TestMetricsRejectsUnboundedResultLabels(t *testing.T) {
 	m.RecordPrepare(Result("timeout"), time.Second)
 	m.RecordUnprepare(Result("permission-denied"))
 
-	require.InDelta(t, 1, testutil.ToFloat64(m.prepareClaims.WithLabelValues(ResultError.String())), 0.01)
-	require.InDelta(t, 1, testutil.ToFloat64(m.unprepareClaims.WithLabelValues(ResultError.String())), 0.01)
+	require.InDelta(t, 1, testutil.ToFloat64(m.prepareClaims.WithLabelValues(ResultUnknown.String())), 0.01)
+	require.InDelta(t, 1, testutil.ToFloat64(m.unprepareClaims.WithLabelValues(ResultUnknown.String())), 0.01)
 	requireMetricLabelValueAbsent(t, reg, "dra_cpu_prepare_claims_total", "result", "timeout")
 	requireMetricLabelValueAbsent(t, reg, "dra_cpu_unprepare_claims_total", "result", "permission-denied")
 }
