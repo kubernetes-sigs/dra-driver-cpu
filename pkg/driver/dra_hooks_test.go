@@ -448,6 +448,109 @@ func TestPublishResources(t *testing.T) {
 	}
 }
 
+func TestPublishResourcesGroupedMachine(t *testing.T) {
+	testCases := []struct {
+		name          string
+		cpuInfos      []cpuinfo.CPUInfo
+		reservedCPUs  cpuset.CPUSet
+		expectPublish bool
+		expectedAttrs map[string]string
+	}{
+		{
+			name:          "no cpu data",
+			cpuInfos:      []cpuinfo.CPUInfo{},
+			reservedCPUs:  cpuset.New(),
+			expectPublish: true,
+			expectedAttrs: map[string]string{},
+		},
+		{
+			name:          "8 CPUs, 2 Sockets, HT",
+			cpuInfos:      mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
+			reservedCPUs:  cpuset.New(0, 2), // no special meaning, just different sockets
+			expectPublish: true,
+			expectedAttrs: map[string]string{
+				"dra.cpu/numa0":   "0,1,4,5",
+				"dra.cpu/numa1":   "2,3,6,7",
+				"dra.cpu/socket0": "0,1,4,5",
+				"dra.cpu/socket1": "2,3,6,7",
+			},
+		},
+		{
+			name:          "4 CPUs, 1 Socket",
+			cpuInfos:      mockCPUInfos_SingleSocket_4CPUS_HT,
+			reservedCPUs:  cpuset.New(0),
+			expectPublish: true,
+			expectedAttrs: map[string]string{
+				"dra.cpu/numa0":   "0-3",
+				"dra.cpu/socket0": "0-3",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockPlugin := &mockKubeletPlugin{}
+			prov := Providers{
+				CPUInfo: &cpuinfo.MockCPUInfoProvider{
+					CPUInfos: tc.cpuInfos,
+				},
+				SysFS: testSysFS(tc.cpuInfos),
+			}
+			conf := Config{
+				DriverName:       testDriverName,
+				NodeName:         testNodeName,
+				CPUDeviceMode:    CPU_DEVICE_MODE_GROUPED,
+				CPUDeviceGroupBy: GROUP_BY_MACHINE,
+				ReservedCPUs:     tc.reservedCPUs,
+			}
+			cp, err := New(testr.New(t), prov, &conf)
+			require.NoError(t, err)
+			cp.draPlugin = mockPlugin
+
+			cp.PublishResources(context.Background())
+
+			if !tc.expectPublish {
+				require.Nil(t, mockPlugin.publishedResources)
+				return
+			}
+
+			require.NotNil(t, mockPlugin.publishedResources)
+			require.Len(t, mockPlugin.publishedResources.Pools, 1)
+			pool, ok := mockPlugin.publishedResources.Pools[testNodeName]
+			require.True(t, ok)
+
+			require.Len(t, pool.Slices, 1, "machine mode should produce a single slice")
+			devices := pool.Slices[0].Devices
+			require.Len(t, devices, 1, "machine mode should produce a single device")
+
+			dev := devices[0]
+			assert.Equal(t, dev.Name, cpuDeviceMachineGrouped)
+			assert.True(t, *dev.AllowMultipleAllocations)
+
+			// TODO: MockCPUInfoProvider does not set SMTEnabled (no sysfs to read)
+			expectedNumCPUs := int64(len(tc.cpuInfos)) - int64(tc.reservedCPUs.Size())
+			assert.Equal(t, expectedNumCPUs, *dev.Attributes[AttributeNumCPUs].IntValue)
+
+			devCap, ok := dev.Capacity[cpuResourceQualifiedName]
+			require.True(t, ok)
+			assert.Equal(t, expectedNumCPUs, devCap.Value.Value())
+
+			for attrName, expectedCPUs := range tc.expectedAttrs {
+				attr, ok := dev.Attributes[resourceapi.QualifiedName(attrName)]
+				assert.True(t, ok, "missing topology attribute %s", attrName)
+				if !ok {
+					continue // prevent nil pointer deference
+				}
+				wantCPUSet, err := cpuset.Parse(expectedCPUs)
+				assert.NoError(t, err, "parsing expected CPUs")
+				gotCPUSet, err := cpuset.Parse(*attr.StringValue)
+				assert.NoError(t, err, "parsing actual CPUs")
+				assert.True(t, wantCPUSet.Equals(gotCPUSet), "wrong cpuset for %s", attrName)
+			}
+		})
+	}
+}
+
 func TestPublishResourcesGroupedModeInitializesLookupMaps(t *testing.T) {
 	testCases := []struct {
 		name             string

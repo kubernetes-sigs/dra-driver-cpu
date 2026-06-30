@@ -101,6 +101,10 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 				checks = []attrCheck{
 					{driver.AttributeSMTEnabled, isBool},
 					{driver.AttributeNumCPUs, isInt},
+					// we are sure that at least these will be present,
+					// TODO: introspect and validate all.
+					{resourcev1.QualifiedName(driver.AttributePrefixNUMA + "0"), isString},
+					{resourcev1.QualifiedName(driver.AttributePrefixSocket + "0"), isString},
 				}
 			case driver.GROUP_BY_NUMA_NODE:
 				checks = []attrCheck{
