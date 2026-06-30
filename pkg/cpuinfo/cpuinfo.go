@@ -330,8 +330,8 @@ func populateTopologyInfo(cpuInfo *CPUInfo, logger logr.Logger) error {
 
 	foundNode := false
 	for _, file := range files {
-		if strings.HasPrefix(file.Name(), "node") {
-			nodeID, err := strconv.Atoi(strings.TrimPrefix(file.Name(), "node"))
+		if nodeName, ok := strings.CutPrefix(file.Name(), "node"); ok {
+			nodeID, err := strconv.Atoi(nodeName)
 			if err != nil {
 				logger.V(2).Info("could not parse sysfs data for NUMA node ID", "entry", file.Name(), "err", err)
 				continue

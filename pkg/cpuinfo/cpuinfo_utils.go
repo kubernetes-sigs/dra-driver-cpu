@@ -18,6 +18,7 @@ package cpuinfo
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 
 	"k8s.io/utils/cpuset"
@@ -222,12 +223,7 @@ func (d CPUDetails) CoresInSockets(ids ...int) cpuset.CPUSet {
 // socket IDs.
 func (d CPUDetails) CoreKeysInSockets(ids ...int) []CoreKey {
 	return d.coreKeysFor(func(info CPUInfo) bool {
-		for _, id := range ids {
-			if info.SocketID == id {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(ids, info.SocketID)
 	})
 }
 
@@ -263,12 +259,7 @@ func (d CPUDetails) CoresInNUMANodes(ids ...int) cpuset.CPUSet {
 // NUMA node IDs.
 func (d CPUDetails) CoreKeysInNUMANodes(ids ...int) []CoreKey {
 	return d.coreKeysFor(func(info CPUInfo) bool {
-		for _, id := range ids {
-			if info.NUMANodeID == id {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(ids, info.NUMANodeID)
 	})
 }
 
@@ -311,12 +302,7 @@ func (d CPUDetails) coresInUncoreCache(ids ...int) cpuset.CPUSet {
 
 func (d CPUDetails) coreKeysInUncoreCache(ids ...int) []CoreKey {
 	return d.coreKeysFor(func(info CPUInfo) bool {
-		for _, id := range ids {
-			if info.UncoreCacheID == id {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(ids, info.UncoreCacheID)
 	})
 }
 
