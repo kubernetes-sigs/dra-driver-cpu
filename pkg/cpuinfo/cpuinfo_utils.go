@@ -327,17 +327,6 @@ func (d CPUDetails) coresInUncoreCache(ids ...int) cpuset.CPUSet {
 	return cpuset.New(coreIDs...)
 }
 
-func (d CPUDetails) coreKeysInUncoreCache(ids ...int) []CoreKey {
-	return d.coreKeysFor(func(info CPUInfo) bool {
-		for _, id := range ids {
-			if info.UncoreCacheID == id {
-				return true
-			}
-		}
-		return false
-	})
-}
-
 func (d CPUDetails) coreKeysFor(include func(CPUInfo) bool) []CoreKey {
 	seen := map[CoreKey]struct{}{}
 	for _, info := range d {
