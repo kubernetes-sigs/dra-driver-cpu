@@ -316,6 +316,8 @@ func newCPUAccumulatorForRequest(logger logr.Logger, request allocationRequest) 
 		numCPUsNeeded: request.numCPUs,
 		result:        cpuset.New(),
 	}
+	// Keep topology queries attached to the accumulator field itself so take()
+	// can replace acc.details and queries still see the latest available CPUs.
 	acc.queries = newTopologyQueries(request.topology, &acc.details)
 
 	if request.topology.NumSockets >= request.topology.NumNUMANodes {

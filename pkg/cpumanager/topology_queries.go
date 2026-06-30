@@ -23,7 +23,9 @@ import (
 
 // topologyQueries keeps exact topology queries in one place while preserving
 // the distinction between the full topology and the accumulator's currently
-// available CPUs.
+// available CPUs. availableCPUs points at cpuAccumulator.details itself, not a
+// copied map, so queries continue to observe take() replacing that field with a
+// freshly filtered CPUDetails.
 type topologyQueries struct {
 	topology      *topology.CPUTopology
 	availableCPUs *topology.CPUDetails

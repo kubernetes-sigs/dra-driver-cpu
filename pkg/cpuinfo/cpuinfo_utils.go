@@ -40,6 +40,9 @@ type CoreKey struct {
 	CoreID    int
 }
 
+// Less keeps CoreID as the primary key because cpumanager sorts core keys only
+// after it has already partitioned them by higher-level topology (socket or
+// NUMA). Changing this order changes packed-allocation decisions.
 func (k CoreKey) Less(other CoreKey) bool {
 	if k.CoreID != other.CoreID {
 		return k.CoreID < other.CoreID
@@ -281,10 +284,30 @@ func (d CPUDetails) CoresNeededInUncoreCache(numCoresNeeded int, ids ...int) cpu
 // CoreKeysNeededForCPUsInUncoreCache returns the smallest ordered set of core
 // keys from the given UncoreCache IDs whose CPUs can satisfy numCPUsNeeded.
 func (d CPUDetails) CoreKeysNeededForCPUsInUncoreCache(numCPUsNeeded int, ids ...int) []CoreKey {
+	counts := map[CoreKey]int{}
+	for _, info := range d {
+		for _, id := range ids {
+			if info.UncoreCacheID == id {
+				counts[info.CoreKey()]++
+				break
+			}
+		}
+	}
+
+	coreKeys := make([]CoreKey, 0, len(counts))
+	for key := range counts {
+		coreKeys = append(coreKeys, key)
+	}
+	sort.Slice(coreKeys, func(i, j int) bool {
+		return coreKeys[i].Less(coreKeys[j])
+	})
+
 	var result []CoreKey
-	for _, key := range d.coreKeysInUncoreCache(ids...) {
+	cpuCount := 0
+	for _, key := range coreKeys {
 		result = append(result, key)
-		if d.CPUsInCoreKeys(result...).Size() >= numCPUsNeeded {
+		cpuCount += counts[key]
+		if cpuCount >= numCPUsNeeded {
 			return result
 		}
 	}

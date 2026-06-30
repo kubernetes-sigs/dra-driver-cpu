@@ -18,6 +18,7 @@ package cpuinfo
 
 import (
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -109,6 +110,26 @@ func TestCPUsInCoreKeys(t *testing.T) {
 	assert.True(t, cpuset.New(4).Equals(details.CPUsInCoreKeys(CoreKey{SocketID: 1, ClusterID: 1, CoreID: 0})))
 }
 
+func TestCoreKeyLessOrdersByCoreThenSocketThenCluster(t *testing.T) {
+	keys := []CoreKey{
+		{SocketID: 1, ClusterID: 0, CoreID: 0},
+		{SocketID: 0, ClusterID: 1, CoreID: 0},
+		{SocketID: 0, ClusterID: 0, CoreID: 1},
+		{SocketID: 0, ClusterID: 0, CoreID: 0},
+	}
+
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i].Less(keys[j])
+	})
+
+	assert.Equal(t, []CoreKey{
+		{SocketID: 0, ClusterID: 0, CoreID: 0},
+		{SocketID: 0, ClusterID: 1, CoreID: 0},
+		{SocketID: 1, ClusterID: 0, CoreID: 0},
+		{SocketID: 0, ClusterID: 0, CoreID: 1},
+	}, keys)
+}
+
 func TestCPUsInSockets(t *testing.T) {
 	assert.True(t, cpuset.New(0, 1, 2, 3).Equals(testCPUDetails.CPUsInSockets(0)))
 	assert.True(t, cpuset.New(4, 5, 6, 7).Equals(testCPUDetails.CPUsInSockets(1)))
@@ -183,6 +204,18 @@ func TestCoreKeysNeededForCPUsInUncoreCache(t *testing.T) {
 	}, details.CoreKeysNeededForCPUsInUncoreCache(1, 0))
 	assert.Equal(t, []CoreKey{
 		{SocketID: 0, ClusterID: 0, CoreID: 0},
+		{SocketID: 1, ClusterID: 0, CoreID: 0},
+	}, details.CoreKeysNeededForCPUsInUncoreCache(3, 0))
+
+	details = CPUDetails{
+		0: {CpuID: 0, SocketID: 0, ClusterID: 0, CoreID: 1, UncoreCacheID: 0},
+		1: {CpuID: 1, SocketID: 0, ClusterID: 0, CoreID: 1, UncoreCacheID: 0},
+		2: {CpuID: 2, SocketID: 1, ClusterID: 0, CoreID: 0, UncoreCacheID: 0},
+		3: {CpuID: 3, SocketID: 1, ClusterID: 0, CoreID: 0, UncoreCacheID: 0},
+		4: {CpuID: 4, SocketID: 0, ClusterID: 1, CoreID: 0, UncoreCacheID: 0},
+	}
+	assert.Equal(t, []CoreKey{
+		{SocketID: 0, ClusterID: 1, CoreID: 0},
 		{SocketID: 1, ClusterID: 0, CoreID: 0},
 	}, details.CoreKeysNeededForCPUsInUncoreCache(3, 0))
 }

@@ -167,6 +167,23 @@ func TestTopologyQueriesTrackAllAndAvailableCoreCPUs(t *testing.T) {
 	}
 }
 
+func TestTopologyQueriesTrackAvailableCPUsAfterTake(t *testing.T) {
+	logger := klog.Background()
+	acc := newCPUAccumulator(logger, topoRepeatedCoreIDs, cpuset.New(0, 1, 2, 3), 0, CPUSortingStrategyPacked)
+
+	socket1Core0 := topology.CoreKey{SocketID: 1, ClusterID: 0, CoreID: 0}
+
+	if got, want := acc.queries.availableCPUsInCoreKeys(socket1Core0), cpuset.New(2, 3); !got.Equals(want) {
+		t.Fatalf("availableCPUsInCoreKeys(socket1Core0) before take = %s, want %s", got.String(), want.String())
+	}
+
+	acc.take(cpuset.New(2, 3))
+
+	if got := acc.queries.availableCPUsInCoreKeys(socket1Core0); !got.Equals(cpuset.New()) {
+		t.Fatalf("availableCPUsInCoreKeys(socket1Core0) after take = %s, want empty set", got.String())
+	}
+}
+
 func TestCPUAccumulatorFreeNUMANodes(t *testing.T) {
 	logger := klog.Background()
 	testCases := []struct {
