@@ -42,6 +42,10 @@ type CoreKey struct {
 	CoreID    int
 }
 
+// Less provides a deterministic tie-breaker for sorted CoreKey slices. The
+// ordering is CoreID-first to stay aligned with the existing CPUManager-style
+// traversal, where callers already group by socket or NUMA before ordering
+// cores.
 func (k CoreKey) Less(other CoreKey) bool {
 	if k.CoreID != other.CoreID {
 		return k.CoreID < other.CoreID
@@ -274,8 +278,10 @@ func (d CPUDetails) CoresNeededInUncoreCache(numCoresNeeded int, ids ...int) cpu
 	return cpuset.New(tmpCoreIDs[:numCoresNeeded]...)
 }
 
-// CoreKeysNeededForCPUsInUncoreCache returns the smallest ordered set of core
-// keys from the given UncoreCache IDs whose CPUs can satisfy numCPUsNeeded.
+// CoreKeysNeededForCPUsInUncoreCache returns the ordered prefix of core keys
+// from the given UncoreCache IDs whose CPUs first satisfy numCPUsNeeded. This
+// is a deterministic best-effort heuristic, not a search for the globally
+// smallest-cardinality subset of cores.
 func (d CPUDetails) CoreKeysNeededForCPUsInUncoreCache(numCPUsNeeded int, ids ...int) []CoreKey {
 	var result []CoreKey
 	for _, key := range d.coreKeysInUncoreCache(ids...) {

@@ -118,6 +118,20 @@ func TestCoreKeyString(t *testing.T) {
 	}))
 }
 
+func TestCoreKeyLess(t *testing.T) {
+	left := CoreKey{SocketID: 1, ClusterID: 1, CoreID: 2}
+	right := CoreKey{SocketID: 0, ClusterID: 0, CoreID: 3}
+	assert.True(t, left.Less(right), "CoreID should take precedence over socket/cluster ordering")
+
+	left = CoreKey{SocketID: 0, ClusterID: 1, CoreID: 2}
+	right = CoreKey{SocketID: 1, ClusterID: 0, CoreID: 2}
+	assert.True(t, left.Less(right), "SocketID should break ties before ClusterID")
+
+	left = CoreKey{SocketID: 0, ClusterID: 0, CoreID: 2}
+	right = CoreKey{SocketID: 0, ClusterID: 1, CoreID: 2}
+	assert.True(t, left.Less(right), "ClusterID should break ties when core and socket match")
+}
+
 func TestCPUsInSockets(t *testing.T) {
 	assert.True(t, cpuset.New(0, 1, 2, 3).Equals(testCPUDetails.CPUsInSockets(0)))
 	assert.True(t, cpuset.New(4, 5, 6, 7).Equals(testCPUDetails.CPUsInSockets(1)))
@@ -194,4 +208,20 @@ func TestCoreKeysNeededForCPUsInUncoreCache(t *testing.T) {
 		{SocketID: 0, ClusterID: 0, CoreID: 0},
 		{SocketID: 1, ClusterID: 0, CoreID: 0},
 	}, details.CoreKeysNeededForCPUsInUncoreCache(3, 0))
+}
+
+func TestCoreKeysNeededForCPUsInUncoreCacheUsesOrderedPrefix(t *testing.T) {
+	details := CPUDetails{
+		0: {CpuID: 0, SocketID: 0, ClusterID: 0, CoreID: 0, UncoreCacheID: 0},
+		1: {CpuID: 1, SocketID: 0, ClusterID: 0, CoreID: 1, UncoreCacheID: 0},
+		2: {CpuID: 2, SocketID: 0, ClusterID: 0, CoreID: 1, UncoreCacheID: 0},
+	}
+
+	// The helper intentionally returns the first ordered prefix whose CPUs satisfy
+	// the request. It does not search for the globally smallest-cardinality subset
+	// of cores.
+	assert.Equal(t, []CoreKey{
+		{SocketID: 0, ClusterID: 0, CoreID: 0},
+		{SocketID: 0, ClusterID: 0, CoreID: 1},
+	}, details.CoreKeysNeededForCPUsInUncoreCache(2, 0))
 }
