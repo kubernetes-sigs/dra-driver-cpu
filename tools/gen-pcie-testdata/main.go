@@ -189,7 +189,7 @@ func detectCPUModel() string {
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		name, value, ok := strings.Cut(line, ":")
 		if !ok {
 			continue

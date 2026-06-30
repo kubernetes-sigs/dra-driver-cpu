@@ -163,7 +163,12 @@ func (s *SystemCPUInfo) GetCPUTopology(logger logr.Logger) (*CPUTopology, error)
 	cpuDetails := make(CPUDetails)
 	sockets := sets.NewInt()
 	numaNodes := sets.NewInt()
-	cores := sets.New[CoreKey]()
+	type coreIdent struct {
+		SocketID  int
+		ClusterID int
+		CoreID    int
+	}
+	cores := sets.New[coreIdent]()
 	uncoreCaches := sets.NewInt()
 
 	for i := range cpuInfos {
@@ -171,7 +176,9 @@ func (s *SystemCPUInfo) GetCPUTopology(logger logr.Logger) (*CPUTopology, error)
 		cpuDetails[info.CpuID] = info
 		sockets.Insert(info.SocketID)
 		numaNodes.Insert(info.NUMANodeID)
-		cores.Insert(info.CoreKey())
+		// A core is unique by socket, cluster, and core id
+		coreKey := coreIdent{SocketID: info.SocketID, ClusterID: info.ClusterID, CoreID: info.CoreID}
+		cores.Insert(coreKey)
 		if info.UncoreCacheID != -1 {
 			uncoreCaches.Insert(info.UncoreCacheID)
 		}
@@ -330,8 +337,8 @@ func populateTopologyInfo(cpuInfo *CPUInfo, logger logr.Logger) error {
 
 	foundNode := false
 	for _, file := range files {
-		if nodeName, ok := strings.CutPrefix(file.Name(), "node"); ok {
-			nodeID, err := strconv.Atoi(nodeName)
+		if after, ok := strings.CutPrefix(file.Name(), "node"); ok {
+			nodeID, err := strconv.Atoi(after)
 			if err != nil {
 				logger.V(2).Info("could not parse sysfs data for NUMA node ID", "entry", file.Name(), "err", err)
 				continue
@@ -424,10 +431,17 @@ func populateTopologyInfo(cpuInfo *CPUInfo, logger logr.Logger) error {
 
 // TODO: Handle more complex sibling relationships (e.g. 4-way SMT) if needed in the future. For now we only handle 2-way hyperthreading which is the most common case.
 func populateCpuSiblings(cpuInfos []CPUInfo) {
+	// Define a key struct to identify a unique physical core.
+	type coreLocation struct {
+		socket  int
+		cluster int
+		core    int
+	}
+
 	// Map each physical core to the list of logical CPUs (siblings) on it.
-	coreToCPU := make(map[CoreKey][]int)
+	coreToCPU := make(map[coreLocation][]int)
 	for _, info := range cpuInfos {
-		key := info.CoreKey()
+		key := coreLocation{socket: info.SocketID, cluster: info.ClusterID, core: info.CoreID}
 		coreToCPU[key] = append(coreToCPU[key], info.CpuID)
 	}
 
@@ -504,9 +518,9 @@ func combinePath(value string, combineWith ...string) string {
 	}
 }
 
-// These helpers assume symmetric CPU distributions. Allocation code should
-// prefer exact CPUDetails queries because CPUs can be offlined asymmetrically
-// or grouped unevenly on heterogeneous systems.
+// TODO: Refactor topology representation to handle asymmetric CPU distributions.
+// The current funcs CPUsPerCore, CPUsPerSocket, CPUsPerUncore assume symmetry
+// and would be inaccurate if CPUs are offlined asymmetrically or on heterogeneous systems.
 // See https://github.com/kubernetes-sigs/dra-driver-cpu/pull/16#discussion_r2588301122
 func (t *CPUTopology) CPUsPerCore() int {
 	if t.NumCores == 0 {

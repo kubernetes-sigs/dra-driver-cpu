@@ -25,6 +25,7 @@ import (
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
+	cpusetmatchers "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/matchers/cpuset"
 	e2enode "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/node"
 	e2epod "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/pod"
 	"github.com/onsi/ginkgo/v2"
@@ -107,7 +108,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 			groupBy = val
 		}
 		rootFxt.Log.Info("daemonset --reserved-cpus configuration", "cpus", dsReservedCPUs.String())
-		gomega.Expect(dsReservedCPUs.Equals(reservedCPUs)).To(gomega.BeTrue(), "daemonset reserved cpus %v do not match test reserved cpus %v", dsReservedCPUs.String(), reservedCPUs.String())
+		gomega.Expect(dsReservedCPUs).To(cpusetmatchers.Equal(reservedCPUs), "daemonset reserved cpus do not match test reserved cpus")
 		rootFxt.Log.Info("daemonset --cpu-device-mode configuration", "mode", cpuDeviceMode, "groupBy", groupBy)
 
 		targetNode, err = e2enode.PickWorker(ctx, rootFxt.K8SClientset, 5*time.Second, 1*time.Minute, rootFxt.Log)
@@ -125,7 +126,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		allocatableCPUs := makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
 		availableCPUs = allocatableCPUs.Difference(reservedCPUs)
 		if reservedCPUs.Size() > 0 {
-			gomega.Expect(availableCPUs.Intersection(reservedCPUs).Size()).To(gomega.BeZero(), "available cpus %v overlap with reserved cpus %v", availableCPUs.String(), reservedCPUs.String())
+			gomega.Expect(availableCPUs).To(cpusetmatchers.HaveNoOverlapWith(reservedCPUs))
 		}
 		rootFxt.Log.Info("checking worker node", "nodeName", infoPod.Spec.NodeName, "coreCount", len(targetNodeCPUInfo.CPUs), "allocatableCPUs", allocatableCPUs.String(), "reservedCPUs", reservedCPUs.String(), "availableCPUs", availableCPUs.String())
 	})
@@ -140,6 +141,20 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 		ginkgo.AfterEach(func(ctx context.Context) {
 			gomega.Expect(fxt.Teardown(ctx)).To(gomega.Succeed())
+		})
+
+		ginkgo.It("should fail to create a container with malformed DRA_CPUSET env", ginkgo.Label("negative"), func(ctx context.Context) {
+			pod := makeTesterPodBestEffort(fxt.Namespace.Name, dracpuTesterImage)
+			pod.GenerateName = "tester-pod-malformed-dra-cpuset-"
+			pod.Spec.RestartPolicy = v1.RestartPolicyNever
+			pod.Spec.Containers[0].Env = []v1.EnvVar{
+				{Name: "DRA_CPUSET_malformed_claim", Value: "a-b"},
+			}
+			pod = e2epod.PinToNode(pod, targetNode.Name)
+
+			createdPod, err := fxt.K8SClientset.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			EventuallyFailedToCreate(ctx, fxt, createdPod)
 		})
 
 		ginkgo.Context("for exclusive CPU allocation", func() {
@@ -166,14 +181,8 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 				numCPUs := availableCPUs.Size()
 				// Ensure at least 1 CPU is available for the shared pool
-				maxExclusiveCpus := numCPUs - 1
-				if maxExclusiveCpus < 0 {
-					maxExclusiveCpus = 0
-				}
-				numPods := maxExclusiveCpus / cpusPerClaim
-				if numPods > maxExclusivePods {
-					numPods = maxExclusivePods
-				}
+				maxExclusiveCpus := max(numCPUs-1, 0)
+				numPods := min(maxExclusiveCpus/cpusPerClaim, maxExclusivePods)
 
 				fxt.Log.Info("Creating pods requesting exclusive CPUs", "numPods", numPods, "cpusPerClaim", cpusPerClaim)
 				var exclPods []*v1.Pod
@@ -188,7 +197,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					},
 				}
 				createdClaimTemplate, err := fxt.K8SClientset.ResourceV1().ResourceClaimTemplates(fxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
-				for i := 0; i < numPods; i++ {
+				for i := range numPods {
 					gomega.Expect(err).ToNot(gomega.HaveOccurred())
 					pod := makeTesterPodWithExclusiveCPUClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, int64(cpusPerClaim), targetNode.Name)
 					createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
@@ -200,12 +209,12 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				for i, pod := range exclPods {
 					alloc := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, pod)
 					fxt.Log.Info("Checking exclusive CPU allocation", "pod", e2epod.Identify(pod), "cpuAllocated", alloc.CPUAssigned.String())
-					gomega.Expect(alloc.CPUAssigned.Size()).To(gomega.Equal(cpusPerClaim), "Pod %d did not get %d CPUs", i, cpusPerClaim)
-					gomega.Expect(alloc.CPUAssigned.IsSubsetOf(availableCPUs)).To(gomega.BeTrue(), "Pod %d got CPUs outside available set", i)
-					gomega.Expect(allAllocatedCPUs.Intersection(alloc.CPUAssigned).Size()).To(gomega.Equal(0), "Pod %d has overlapping CPUs", i)
+					gomega.Expect(alloc.CPUAssigned).To(cpusetmatchers.HaveSize(cpusPerClaim), "Pod %d did not get %d CPUs", i, cpusPerClaim)
+					gomega.Expect(alloc.CPUAssigned).To(cpusetmatchers.BeSubsetOf(availableCPUs), "Pod %d got CPUs outside available set", i)
+					gomega.Expect(alloc.CPUAssigned).To(cpusetmatchers.HaveNoOverlapWith(allAllocatedCPUs), "Pod %d has overlapping CPUs", i)
 					allAllocatedCPUs = allAllocatedCPUs.Union(alloc.CPUAssigned)
 				}
-				gomega.Expect(allAllocatedCPUs.Size()).To(gomega.Equal(numPods * cpusPerClaim))
+				gomega.Expect(allAllocatedCPUs).To(cpusetmatchers.HaveSize(numPods * cpusPerClaim))
 				rootFxt.Log.Info("All exclusive allocation", "pod", "exclusive CPUs", allAllocatedCPUs.String(), "expected Shared CPUs", availableCPUs.Difference(allAllocatedCPUs).String())
 
 				fixture.By("checking the shared pool does not include anymore the exclusively allocated CPUs")
@@ -284,8 +293,8 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				fixture.By("verifying the pod got 2 distinct CPUs with no overlap")
 				alloc := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, createdPod)
 				fxt.Log.Info("multi-request claim allocation", "cpuAssigned", alloc.CPUAssigned.String())
-				gomega.Expect(alloc.CPUAssigned.Size()).To(gomega.Equal(2), "expected 2 distinct CPUs allocated")
-				gomega.Expect(alloc.CPUAssigned.IsSubsetOf(availableCPUs)).To(gomega.BeTrue(), "allocated CPUs must be within available set")
+				gomega.Expect(alloc.CPUAssigned).To(cpusetmatchers.HaveSize(2), "expected 2 distinct CPUs allocated")
+				gomega.Expect(alloc.CPUAssigned).To(cpusetmatchers.BeSubsetOf(availableCPUs), "allocated CPUs must be within available set")
 
 			})
 
@@ -342,7 +351,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					alloc := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, pod)
 					expectedSet := claimsAndCPUSets[i].cpuset
 					fxt.Log.Info("pod allocation verification", "pod", pod.Name, "assigned", alloc.CPUAssigned.String(), "expected", expectedSet.String())
-					gomega.Expect(alloc.CPUAssigned.Equals(expectedSet)).To(gomega.BeTrue(), "assigned CPU set %s does not match expected %s", alloc.CPUAssigned.String(), expectedSet.String())
+					gomega.Expect(alloc.CPUAssigned).To(cpusetmatchers.Equal(expectedSet))
 				}
 
 				fixture.By("creating a second best-effort pod")

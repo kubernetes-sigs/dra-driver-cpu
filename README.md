@@ -51,6 +51,7 @@ The driver is deployed as a DaemonSet which contains two core components:
 
   - A CDI JSON spec file is created or updated for the allocated claim.
   - This spec instructs the runtime to inject an environment variable (e.g., `DRA_CPUSET_<claimUID>=<cpuset>`) into the container.
+  - The `DRA_CPUSET_*` environment variable prefix is reserved for the driver. Containers with malformed `DRA_CPUSET_*` values are rejected during creation.
   - The driver includes mechanisms for thread-safe and atomic updates to the CDI spec files.
 
 - **NRI Plugin**: This component integrates with the container runtime via the Node Resource Interface (NRI).
@@ -439,7 +440,8 @@ make kind-cluster
 The recommended way to install the driver is via the provided Helm chart:
 
 ```bash
-helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system
+helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu -n kube-system
+
 ```
 
 See the [Helm chart README](deployment/helm/dra-driver-cpu/README.md) for the full list of configuration options.
@@ -465,7 +467,7 @@ in-place migration is not possible. The only practical migration path is a delet
 kubectl delete -f dist/install.yaml
 
 # Step 2: install the Helm-managed release
-helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system
+helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu -n kube-system
 ```
 
 **Disruption:** Deleting the DaemonSet terminates the driver pods on all nodes simultaneously. During

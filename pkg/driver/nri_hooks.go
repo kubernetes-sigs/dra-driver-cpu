@@ -39,6 +39,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 
 	cpuAllocationStore := store.NewCPUAllocation(cp.cpuTopology, cp.reservedCPUs)
 	podConfigStore := store.NewPodConfig()
+	claimTracker := store.NewClaimTracker()
 	var containerUpdates []*api.ContainerUpdate
 
 	for _, pod := range pods {
@@ -53,7 +54,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			claimAllocations, err := parseDRAEnvToClaimAllocations(cLogger, container.Env)
 			if err != nil {
 				cLogger.Error(err, "error parsing DRA env for container")
-				continue
+				return nil, err
 			}
 			containerUID := types.UID(container.GetId())
 			var state *store.ContainerState
@@ -64,7 +65,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				allGuaranteedCPUs := cpuset.New()
 				for uid, cpus := range claimAllocations {
 					caLogger := cLogger.WithValues("claimUID", uid)
-					err := cp.claimTracker.SetOwner(caLogger, uid, types.UID(pod.Uid), container.Name)
+					err := claimTracker.SetOwner(caLogger, uid, types.UID(pod.Uid), container.Name)
 					if err != nil {
 						return nil, err
 					}
@@ -89,6 +90,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 
 	cp.podConfigStore = podConfigStore
 	cp.cpuAllocationStore = cpuAllocationStore
+	cp.claimTracker = claimTracker
 
 	// Reconcile container CPU masks to handle cases where the NRI plugin might have crashed
 	// or restarted and missed updating the cgroup settings.
@@ -111,8 +113,8 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 		}
 		key, value := parts[0], parts[1]
 		var claimUID types.UID
-		if strings.HasPrefix(key, cdiEnvVarPrefix+"_") {
-			uidStr := strings.TrimPrefix(key, cdiEnvVarPrefix+"_")
+		if after, ok := strings.CutPrefix(key, cdiEnvVarPrefix+"_"); ok {
+			uidStr := after
 			claimUID = types.UID(uidStr)
 		} else {
 			continue
@@ -160,6 +162,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 	claimAllocations, err := parseDRAEnvToClaimAllocations(logger, ctr.Env)
 	if err != nil {
 		logger.Error(err, "error parsing DRA env for container")
+		return nil, nil, err
 	}
 
 	containerId := types.UID(ctr.GetId())

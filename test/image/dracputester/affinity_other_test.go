@@ -1,3 +1,5 @@
+//go:build !linux
+
 /*
 Copyright The Kubernetes Authors.
 
@@ -14,15 +16,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package device
+package main
 
 import (
-	resourceapi "k8s.io/api/resource/v1"
+	"log"
+	"strings"
+	"testing"
+
+	"github.com/go-logr/stdr"
 )
 
-// SetCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other
-// DRA resource drivers leveraging attributes which are not kubernetes standard.
-// This is the "staging area" which enables attribute sharing until (or before) they become standard.
-func SetCompatibilityAttributes(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, numaID int64) {
-	attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: new(numaID)}
+func TestGetAffinityUnsupportedPlatform(t *testing.T) {
+	_, err := getAffinity(stdr.New(log.Default()))
+	if err == nil {
+		t.Fatal("getAffinity() error = nil, want unsupported platform error")
+	}
+	if !strings.Contains(err.Error(), "linux") {
+		t.Fatalf("getAffinity() error = %q, want message mentioning linux", err)
+	}
 }

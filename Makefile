@@ -27,6 +27,7 @@ GOLANGCI_LINT_VERSION ?= 2.12.2
 HELM_DOCS_VERSION ?= 1.14.2
 HELM_SCHEMA_VERSION ?= 2.3.1
 KIND_K8S_VERSION ?= v1.36.0
+GOPLS_VERSION ?= v0.22.0
 # paths
 YQ = $(OUT_DIR)/yq
 GOLANGCI_LINT = $(OUT_DIR)/golangci-lint
@@ -79,7 +80,7 @@ $(OUT_DIR):  ## creates the output directory (used internally)
 CLUSTER_NAME=dra-driver-cpu
 IMAGE_NAME=dra-driver-cpu
 # docker image registry, default to upstream
-REGISTRY ?= us-central1-docker.pkg.dev/k8s-staging-images
+REGISTRY ?= registry.k8s.io/k8s-staging-images
 # this is an intentionally non-existent registry to be used only by local CI using the local image loading
 REGISTRY_CI := dev.kind.local/ci
 IMAGE_REPO := ${REGISTRY}/${IMAGE_NAME}/${IMAGE_NAME}
@@ -233,6 +234,12 @@ test-e2e-kind: ci-kind-setup test-e2e ## run e2e test against a purpose-built ki
 
 lint:  ## run the linter against the codebase
 	$(GOLANGCI_LINT) run ./... $(GOLANGCI_LINT_EXTRA_ARGS)
+
+modernize: ## run modernize to report suggested code modernizations
+	go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@$(GOPLS_VERSION) -diff ./...
+
+modernize-fix: ## apply modernize suggestions
+	go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@$(GOPLS_VERSION) -fix ./...
 
 # dependencies
 .PHONY: install-yq

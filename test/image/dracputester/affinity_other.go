@@ -1,3 +1,5 @@
+//go:build !linux
+
 /*
 Copyright The Kubernetes Authors.
 
@@ -14,15 +16,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package device
+package main
 
 import (
-	resourceapi "k8s.io/api/resource/v1"
+	"fmt"
+	"runtime"
+
+	"github.com/go-logr/logr"
+	"k8s.io/utils/cpuset"
 )
 
-// SetCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other
-// DRA resource drivers leveraging attributes which are not kubernetes standard.
-// This is the "staging area" which enables attribute sharing until (or before) they become standard.
-func SetCompatibilityAttributes(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, numaID int64) {
-	attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: new(numaID)}
+func getAffinity(logger logr.Logger) (cpuset.CPUSet, error) {
+	_ = logger
+	return cpuset.New(), fmt.Errorf("CPU affinity detection requires linux, current platform is %s", runtime.GOOS)
 }

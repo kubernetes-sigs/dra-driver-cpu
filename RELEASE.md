@@ -24,7 +24,7 @@ The automation will:
 
 1. Validate the semantic version format.
 1. Create and push a git tag `vX.Y.Z` at the merged commit.
-1. If it is a minor or major release (e.g. `v0.2.0`), it will automatically branch off `release-vX.Y.Z` and push it to the repository.
+1. If it is a minor or major release (e.g. `v0.2.0`), it will automatically branch off `release-vX.Y` and push it to the repository.
 
 ## 3. Promote the Images
 

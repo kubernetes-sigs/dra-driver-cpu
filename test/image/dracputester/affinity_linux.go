@@ -1,3 +1,5 @@
+//go:build linux
+
 /*
 Copyright The Kubernetes Authors.
 
@@ -14,15 +16,26 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package device
+package main
 
 import (
-	resourceapi "k8s.io/api/resource/v1"
+	"os"
+
+	"github.com/go-logr/logr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"golang.org/x/sys/unix"
+	"k8s.io/utils/cpuset"
 )
 
-// SetCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other
-// DRA resource drivers leveraging attributes which are not kubernetes standard.
-// This is the "staging area" which enables attribute sharing until (or before) they become standard.
-func SetCompatibilityAttributes(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, numaID int64) {
-	attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: new(numaID)}
+func getAffinity(logger logr.Logger) (cpuset.CPUSet, error) {
+	var unixCS unix.CPUSet
+	err := unix.SchedGetaffinity(os.Getpid(), &unixCS)
+	if err != nil {
+		return cpuset.New(), err
+	}
+	maxCPUID := 0
+	if topo, err := cpuinfo.NewSystemCPUInfo().GetCPUTopology(logger); err == nil {
+		maxCPUID = affinityScanBoundFromTopology(topo)
+	}
+	return affinityFromMask(&unixCS, maxCPUID), nil
 }
