@@ -823,6 +823,9 @@ func TestTakeByTopologyNUMAPacked(t *testing.T) {
 			mustParseCPUSet(t, "0-5"),
 			3,
 			"",
+			// This documents the current best-effort heuristic on asymmetric uncore
+			// topology; it is not asserting a stronger "stay within one uncore if
+			// possible" guarantee.
 			cpuset.New(0, 2, 5),
 		},
 	}...)
