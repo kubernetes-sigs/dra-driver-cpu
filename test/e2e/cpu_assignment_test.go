@@ -74,8 +74,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
 		// early cheap check before to create the Fixture, so we use GinkgoLogr directly
-		dracpuTesterImage = os.Getenv("DRACPU_E2E_TEST_IMAGE")
-		gomega.Expect(dracpuTesterImage).ToNot(gomega.BeEmpty(), "missing environment variable DRACPU_E2E_TEST_IMAGE")
+		dracpuTesterImage = requireEnvOrSkip("DRACPU_E2E_TEST_IMAGE")
 		ginkgo.GinkgoLogr.Info("discovery image", "pullSpec", dracpuTesterImage)
 
 		var err error
@@ -85,8 +84,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 			ginkgo.GinkgoLogr.Info("reserved CPUs", "value", reservedCPUs.String())
 		}
 
-		rootFxt, err = fixture.ForGinkgo()
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create root fixture: %v", err)
+		rootFxt = mustCreateFixture()
 		infraFxt := rootFxt.WithPrefix("infra")
 		gomega.Expect(infraFxt.Setup(ctx)).To(gomega.Succeed())
 		ginkgo.DeferCleanup(infraFxt.Teardown)

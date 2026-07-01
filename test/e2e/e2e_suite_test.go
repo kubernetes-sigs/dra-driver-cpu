@@ -19,12 +19,15 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/api/v1alpha1"
+	e2eclient "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/client"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	podmatchers "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/matchers/pod"
@@ -45,6 +48,33 @@ func TestE2E(t *testing.T) {
 	klog.SetLoggerWithOptions(ginkgo.GinkgoLogr, klog.ContextualLogger(true))
 	gomega.RegisterFailHandler(ginkgo.Fail)
 	ginkgo.RunSpecs(t, "DRA CPU Driver E2E Suite")
+}
+
+func requireEnvOrSkip(name string) string {
+	ginkgo.GinkgoHelper()
+
+	value, ok := os.LookupEnv(name)
+	if !ok || value == "" {
+		ginkgo.Skip("missing environment variable " + name)
+	}
+	return value
+}
+
+func skipIfMissingKubeconfig(err error) {
+	ginkgo.GinkgoHelper()
+
+	if errors.Is(err, e2eclient.ErrMissingKubeconfig) {
+		ginkgo.Skip(err.Error())
+	}
+}
+
+func mustCreateFixture() *fixture.Fixture {
+	ginkgo.GinkgoHelper()
+
+	fxt, err := fixture.ForGinkgo()
+	skipIfMissingKubeconfig(err)
+	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create fixture")
+	return fxt
 }
 
 // shared code which is not ready yet to be moved into a test/pkg/... package

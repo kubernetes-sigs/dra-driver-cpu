@@ -59,9 +59,7 @@ var _ = ginkgo.Describe("dra-driver-cpu HTTP health endpoints", ginkgo.Ordered, 
 	var fxt *fixture.Fixture
 
 	ginkgo.BeforeAll(func() {
-		var err error
-		fxt, err = fixture.ForGinkgo()
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create fixture")
+		fxt = mustCreateFixture()
 	})
 
 	ginkgo.Context("when the driver DaemonSet is deployed and running", func() {

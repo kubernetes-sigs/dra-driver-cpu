@@ -63,8 +63,7 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
 		var err error
-		fxt, err = fixture.ForGinkgo()
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create fixture")
+		fxt = mustCreateFixture()
 
 		ginkgo.By("reading daemonset configuration")
 		daemonSet, err := fxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, "dracpu", metav1.GetOptions{})
