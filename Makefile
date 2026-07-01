@@ -101,6 +101,7 @@ PLATFORMS?=linux/amd64,linux/arm64
 LOCAL_PLATFORM?=linux/$(ARCH)
 
 # set convenient defaults for user variables
+DRACPU_E2E_TEST_IMAGE ?= $(IMAGE_TEST)
 DRACPU_E2E_CPU_DEVICE_MODE ?= grouped
 DRACPU_E2E_CPU_GROUP_BY ?= numanode
 DRACPU_E2E_RESERVED_CPUS ?= 0
@@ -228,7 +229,10 @@ build-test-dracpuinfo: ## build helper to expose hardware info in the internal d
 	go build -v -o "$(OUT_DIR)/dracpuinfo" ./test/image/dracpuinfo
 
 test-e2e: ## run e2e test against an existing configured cluster
-	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) go test -v ./test/e2e/ --ginkgo.v
+	@test -n "$(DRACPU_E2E_TEST_IMAGE)" || { echo "DRACPU_E2E_TEST_IMAGE must be set for make test-e2e"; exit 1; }
+	@test -n "$(KUBECONFIG)" || { echo "KUBECONFIG must be set for make test-e2e"; exit 1; }
+	@test -f "$(KUBECONFIG)" || { echo "KUBECONFIG does not exist: $(KUBECONFIG)"; exit 1; }
+	env KUBECONFIG=$(KUBECONFIG) DRACPU_E2E_TEST_IMAGE=$(DRACPU_E2E_TEST_IMAGE) DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) go test -v ./test/e2e/ --ginkgo.v
 
 test-e2e-kind: ci-kind-setup test-e2e ## run e2e test against a purpose-built kind cluster
 
