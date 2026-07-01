@@ -69,6 +69,9 @@ clean: ## clean
 test-unit: ## run tests
 	CGO_ENABLED=1 GOTOOLCHAIN=${TOOOLCHAIN_MODE} go test -v -race -count 1 -coverprofile=coverage.out ./pkg/...
 
+test-e2e-local: ## run e2e local tests (binary must be pre-built)
+	go test -v -count 1 ./test/e2e_local/...
+
 update: ## runs go mod tidy and go get -u
 	go get -u ./...
 	go mod tidy
