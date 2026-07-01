@@ -51,6 +51,34 @@
       },
       "additionalProperties": false
     },
+    "extraEnv": {
+      "description": "Additional environment variables for the dracpu container",
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "extraInitContainers": {
+      "description": "Additional init containers for the DaemonSet pod",
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "extraVolumeMounts": {
+      "description": "Additional volume mounts for the dracpu container",
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "extraVolumes": {
+      "description": "Additional volumes for the DaemonSet pod",
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
     "fullnameOverride": {
       "description": "Override the full release name",
       "type": "string"

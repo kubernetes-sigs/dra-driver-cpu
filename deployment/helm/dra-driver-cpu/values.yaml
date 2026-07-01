@@ -43,6 +43,15 @@ podAnnotations: {}
 # -- Extra labels to add to pods
 podLabels: {}
 
+# -- Additional environment variables for the dracpu container
+extraEnv: [] # @schema item: object
+# -- Additional init containers for the DaemonSet pod
+extraInitContainers: [] # @schema item: object
+# -- Additional volume mounts for the dracpu container
+extraVolumeMounts: [] # @schema item: object
+# -- Additional volumes for the DaemonSet pod
+extraVolumes: [] # @schema item: object
+
 # @schema additionalProperties:false
 resources:
   # @schema additionalProperties:false
