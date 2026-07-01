@@ -31,6 +31,7 @@ type Config struct {
 	CPUDeviceMode    string `json:"cpuDeviceMode"`
 	GroupBy          string `json:"groupBy,omitempty"`
 	ExposePCIeRoots  bool   `json:"exposePCIeRoots,omitempty"`
+	ShowMetrics      bool   `json:"showMetrics,omitempty"`
 }
 
 func Default() Config {
@@ -51,6 +52,7 @@ func (c *Config) AddFlags(fs *flag.FlagSet) {
 	fs.Var(newCPUDeviceModeValue(&c.CPUDeviceMode, c.CPUDeviceMode), "cpu-device-mode", "Sets the mode for exposing CPU devices. 'grouped' exposes a single device per socket or numa node (based on --group-by). 'individual' exposes each CPU as a separate device.")
 	fs.Var(newGroupByValue(&c.GroupBy, c.GroupBy), "group-by", "When --cpu-device-mode=grouped, sets the criteria for grouping CPUs. Can be set to 'socket', 'numanode', or 'machine' (machine mode requires an external scheduler to include cpuset configuration in claim allocation results).")
 	fs.BoolVar(&c.ExposePCIeRoots, "expose-pcie-roots", c.ExposePCIeRoots, "Discover and expose PCIe roots as device attributes. Requires the DRAListTypeAttributes=true Feature Gate in the cluster.")
+	fs.BoolVar(&c.ShowMetrics, "show-metrics", c.ShowMetrics, "Print custom driver metrics metadata as JSON and exit.")
 }
 
 func (c *Config) applyDefaults() {

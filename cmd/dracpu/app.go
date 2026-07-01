@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -34,6 +35,8 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/gatherinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
+	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sys/unix"
 	"k8s.io/client-go/kubernetes"
@@ -70,6 +73,14 @@ func main() {
 
 	ctxlog.AddFlags(flag.CommandLine)
 	flag.Parse()
+
+	if driverFlags.ShowMetrics {
+		if err := printMetricsMetadata(os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "print metrics metadata: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	logger := ctxlog.Setup()
 
@@ -169,6 +180,7 @@ func run(logger logr.Logger) error {
 		CPUDeviceMode:    driverFlags.CPUDeviceMode,
 		CPUDeviceGroupBy: driverFlags.GroupBy,
 		ExposePCIeRoots:  driverFlags.ExposePCIeRoots,
+		Metrics:          cpumetrics.New(prometheus.DefaultRegisterer),
 	}
 	driverProviders := driver.Providers{
 		K8SClient: clientset,
@@ -213,4 +225,8 @@ func printVersion(logger logr.Logger) {
 		return
 	}
 	logger.Info("dracpu", "goVersion", info.GoVersion, "build", info.VCSRevision, "time", info.VCSTime)
+}
+
+func printMetricsMetadata(w io.Writer) error {
+	return cpumetrics.WriteJSON(w)
 }

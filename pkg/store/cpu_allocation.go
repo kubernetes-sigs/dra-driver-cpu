@@ -34,6 +34,14 @@ type CPUAllocation struct {
 	allocatedCPUs            cpuset.CPUSet
 }
 
+// AllocationSnapshot is a point-in-time summary of CPU allocation state.
+type AllocationSnapshot struct {
+	AllocatedCPUs        int
+	AvailableCPUs        int
+	ReservedCPUs         int
+	ActiveResourceClaims int
+}
+
 // NewCPUAllocation creates a new CPUAllocation.
 func NewCPUAllocation(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUSet) *CPUAllocation {
 	cpuIDs := []int{}
@@ -101,4 +109,16 @@ func (s *CPUAllocation) GetAllocatedCPUs() cpuset.CPUSet {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.allocatedCPUs
+}
+
+// Snapshot returns a point-in-time summary of CPU allocation state.
+func (s *CPUAllocation) Snapshot() AllocationSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return AllocationSnapshot{
+		AllocatedCPUs:        s.allocatedCPUs.Size(),
+		AvailableCPUs:        s.availableCPUs.Difference(s.allocatedCPUs).Size(),
+		ReservedCPUs:         s.reservedCPUs.Size(),
+		ActiveResourceClaims: len(s.resourceClaimAllocations),
+	}
 }
