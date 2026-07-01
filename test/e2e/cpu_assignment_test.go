@@ -19,7 +19,6 @@ package e2e
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"time"
 
@@ -28,7 +27,6 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	cpusetmatchers "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/matchers/cpuset"
 	resourceclaimmatchers "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/matchers/resourceclaim"
-	e2enode "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/node"
 	e2epod "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/pod"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -80,56 +78,34 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		dracpuTesterImage = requireEnvOrSkip("DRACPU_E2E_TEST_IMAGE")
 		ginkgo.GinkgoLogr.Info("discovery image", "pullSpec", dracpuTesterImage)
 
-		var err error
-		if reservedCPUVal := os.Getenv("DRACPU_E2E_RESERVED_CPUS"); len(reservedCPUVal) > 0 {
-			reservedCPUs, err = cpuset.Parse(reservedCPUVal)
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		reservedCPUs = parseOptionalCPUSetEnv("DRACPU_E2E_RESERVED_CPUS")
+		if reservedCPUs.Size() > 0 {
 			ginkgo.GinkgoLogr.Info("reserved CPUs", "value", reservedCPUs.String())
 		}
 
 		rootFxt = mustCreateFixture()
 		infraFxt := rootFxt.WithPrefix("infra")
-		gomega.Expect(infraFxt.Setup(ctx)).To(gomega.Succeed())
+		mustSetupFixture(ctx, infraFxt)
 		ginkgo.DeferCleanup(infraFxt.Teardown)
 
 		ginkgo.By("checking the daemonset configuration matches the test configuration")
-		daemonSet, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, "dracpu", metav1.GetOptions{})
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get dracpu daemonset")
-		gomega.Expect(daemonSet.Spec.Template.Spec.Containers).ToNot(gomega.BeEmpty(), "no containers in dracpu daemonset")
-		cfgValues, err := getDriverConfigValues(ctx, rootFxt.K8SClientset, daemonSetNamespace, daemonSet)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot read dracpu driver config values")
-		var dsReservedCPUs cpuset.CPUSet
-		if len(cfgValues.ReservedCPUs) > 0 {
-			dsReservedCPUs, err = cpuset.Parse(cfgValues.ReservedCPUs)
-			gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse daemonset reserved cpus: %v", err)
-		}
-		cpuDeviceMode = cfgValues.CPUDeviceMode
-		groupBy = cfgValues.GroupBy
-		rootFxt.Log.Info("daemonset --reserved-cpus configuration", "cpus", dsReservedCPUs.String())
-		gomega.Expect(dsReservedCPUs).To(cpusetmatchers.Equal(reservedCPUs), "daemonset reserved cpus do not match test reserved cpus")
+		driverConfig := mustLoadDriverDaemonSetConfig(ctx, rootFxt)
+		cpuDeviceMode = driverConfig.CPUDeviceMode
+		groupBy = driverConfig.GroupBy
+		rootFxt.Log.Info("daemonset --reserved-cpus configuration", "cpus", driverConfig.ReservedCPUs.String())
+		gomega.Expect(driverConfig.ReservedCPUs).To(cpusetmatchers.Equal(reservedCPUs), "daemonset reserved cpus do not match test reserved cpus")
 		rootFxt.Log.Info("daemonset --cpu-device-mode configuration", "mode", cpuDeviceMode, "groupBy", groupBy)
-		driverConfig := getDriverConfig(ctx, rootFxt.K8SClientset)
-		publishNodeAllocatableMapping = driverConfig.PublishNodeAllocatableResourceMapping
+		publishNodeAllocatableMapping = getDriverConfig(ctx, rootFxt.K8SClientset).PublishNodeAllocatableResourceMapping
 		rootFxt.Log.Info("driver node allocatable mapping", "enabled", publishNodeAllocatableMapping)
 
-		targetNode, err = e2enode.PickWorker(ctx, rootFxt.K8SClientset, 5*time.Second, 1*time.Minute, rootFxt.Log)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		rootFxt.Log.Info("using worker node", "nodeName", targetNode.Name)
-
-		infoPod := discovery.MakePod(infraFxt.Namespace.Name, dracpuTesterImage)
-		infoPod = e2epod.PinToNode(infoPod, targetNode.Name)
-		infoPod, err = e2epod.RunToCompletion(ctx, infraFxt.K8SClientset, infoPod)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create discovery pod: %v", err)
-		data, err := e2epod.GetLogs(ctx, infraFxt.K8SClientset, infoPod)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs from discovery pod: %v", err)
-		gomega.Expect(unmarshalLatestReport(data, &targetNodeCPUInfo)).To(gomega.Succeed())
+		targetNode, targetNodeCPUInfo = mustDiscoverTargetNodeCPUInfo(ctx, rootFxt, infraFxt, dracpuTesterImage)
 
 		allocatableCPUs := makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
 		availableCPUs = allocatableCPUs.Difference(reservedCPUs)
 		if reservedCPUs.Size() > 0 {
 			gomega.Expect(availableCPUs).To(cpusetmatchers.HaveNoOverlapWith(reservedCPUs))
 		}
-		rootFxt.Log.Info("checking worker node", "nodeName", infoPod.Spec.NodeName, "coreCount", len(targetNodeCPUInfo.CPUs), "allocatableCPUs", allocatableCPUs.String(), "reservedCPUs", reservedCPUs.String(), "availableCPUs", availableCPUs.String())
+		rootFxt.Log.Info("checking worker node", "nodeName", targetNode.Name, "coreCount", len(targetNodeCPUInfo.CPUs), "allocatableCPUs", allocatableCPUs.String(), "reservedCPUs", reservedCPUs.String(), "availableCPUs", availableCPUs.String())
 	})
 
 	ginkgo.When("setting resource claims", func() {
