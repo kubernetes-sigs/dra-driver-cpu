@@ -1,5 +1,3 @@
-//go:build !amd64
-
 /*
 Copyright The Kubernetes Authors.
 
@@ -16,18 +14,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package device
+package sysfs
 
 import (
-	"github.com/go-logr/logr"
-	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
+	"io/fs"
 )
 
-// IMPORTANT NOTE: the code is functionally identical to the x86_64/amd64 variant,
-// we only scan sysfs and make logic on arch-neutral data; but we don't have yet
-// enough experience on and hw access to arm64 machine to fully support PCIe
-// processing on non-x86_64 hardware.
+const (
+	Root = "/sys"
+)
 
-func PCIeDomainsFromFS(_ logr.Logger, _ sysfs.FS) ([]PCIeDomain, error) {
-	return nil, nil
+type FS interface {
+	fs.ReadLinkFS
+	fs.ReadDirFS
 }

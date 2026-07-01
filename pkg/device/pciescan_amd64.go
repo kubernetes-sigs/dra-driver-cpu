@@ -22,14 +22,15 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
 	"k8s.io/utils/cpuset"
 )
 
-func PCIeDomainsFromFS(logger logr.Logger, sysfs SysFS) ([]PCIeDomain, error) {
+func PCIeDomainsFromFS(logger logr.Logger, sfs sysfs.FS) ([]PCIeDomain, error) {
 	logger.V(6).Info("begin: processing PCIe domains")
 	defer logger.V(6).Info("end: processing PCIe domains")
 
-	entries, err := fs.ReadDir(sysfs, "devices")
+	entries, err := fs.ReadDir(sfs, "devices")
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +44,7 @@ func PCIeDomainsFromFS(logger logr.Logger, sysfs SysFS) ([]PCIeDomain, error) {
 
 		busID := strings.TrimPrefix(entryName, "pci")
 
-		busAffinityData, err := fs.ReadFile(sysfs, filepath.Join("devices", entryName, "pci_bus", busID, "cpulistaffinity"))
+		busAffinityData, err := fs.ReadFile(sfs, filepath.Join("devices", entryName, "pci_bus", busID, "cpulistaffinity"))
 		if err != nil {
 			return nil, err
 		}
