@@ -74,7 +74,7 @@ Before publishing the release, verify the images are available at k8s-registry:
   ```sh
   rm -rf ./dist
   REGISTRY=registry.k8s.io TAG=vX.Y.Z make manifests OVERRIDE_IMAGE=true
-  ls ./dist   # to confirm the generated artifacts
+  ls ./dist   # expect dist/helm-manifest.yaml
   ```
 - Run a local E2E test in Kind (see references in `README.md`) using the generated manifests from the `dist/` directory to ensure they pull the correct images and function as expected.
 
@@ -83,8 +83,9 @@ Before publishing the release, verify the images are available at k8s-registry:
 - Go to the [Releases page](https://github.com/kubernetes-sigs/dra-driver-cpu/releases) on GitHub.
 - Find the new tag and click "Edit tag" (or "Draft a new release" and select the tag).
 - Paste the final changelog into the release description.
-- Upload the generated manifests (`dist/install.yaml`) as release artifacts.
 - Publish the release.
+
+**Note:** The project uses Helm charts for deployment. Release artifacts are automatically published to the Helm chart registry.
 
 ## 5. Post-Release Tasks
 
