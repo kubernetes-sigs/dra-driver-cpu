@@ -20,14 +20,12 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -36,23 +34,14 @@ const (
 	driverHTTPPort = 8080
 )
 
-func getPodHealthzViaAPIProxy(ctx context.Context, client kubernetes.Interface, pod v1.Pod) (int, string, error) {
-	subPath := strings.TrimPrefix(healthzPath, "/")
-	target := net.JoinSchemeNamePort("http", pod.Name, strconv.Itoa(driverHTTPPort))
-
-	request := client.CoreV1().RESTClient().Get().
-		Namespace(pod.Namespace).
-		Resource("pods").
-		SubResource("proxy").
-		Name(target).
-		Suffix(subPath)
-
-	var statusCode int
-	body, err := request.Do(ctx).StatusCode(&statusCode).Raw()
+func getPodHealthzViaAPIProxy(ctx context.Context, client kubernetes.Interface, pod v1.Pod) (string, error) {
+	body, err := client.CoreV1().Pods(pod.Namespace).
+		ProxyGet("http", pod.Name, strconv.Itoa(driverHTTPPort), healthzPath, nil).
+		DoRaw(ctx)
 	if err != nil {
-		return 0, "", err
+		return "", err
 	}
-	return statusCode, string(body), nil
+	return string(body), nil
 }
 
 var _ = ginkgo.Describe("dra-driver-cpu HTTP health endpoints", ginkgo.Ordered, func() {
@@ -75,21 +64,15 @@ var _ = ginkgo.Describe("dra-driver-cpu HTTP health endpoints", ginkgo.Ordered, 
 				ginkgo.By(fmt.Sprintf("GET %s for pod %s (node %s) through the apiserver pod proxy",
 					healthzPath, pod.Name, pod.Spec.NodeName))
 
-				var lastStatus int
 				var lastBody string
 				gomega.Eventually(func(g gomega.Gomega) {
-					statusCode, body, err := getPodHealthzViaAPIProxy(ctx, fxt.K8SClientset, pod)
+					body, err := getPodHealthzViaAPIProxy(ctx, fxt.K8SClientset, pod)
 					g.Expect(err).NotTo(gomega.HaveOccurred(),
 						"GET %s through pod proxy failed for pod %q on node %q", healthzPath, pod.Name, pod.Spec.NodeName)
-					lastStatus = statusCode
 					lastBody = body
-
-					g.Expect(statusCode).To(gomega.Equal(200),
-						"expected HTTP 200 from %s via pod proxy (pod %q, node %q), got %d; body: %s",
-						healthzPath, pod.Name, pod.Spec.NodeName, statusCode, lastBody)
 				}, driverPodPollTimeout, driverPodPollInterval).Should(gomega.Succeed(),
-					"%s via pod proxy for pod %q did not return 200 within timeout (last status=%d, body=%q)",
-					healthzPath, pod.Name, lastStatus, lastBody)
+					"%s via pod proxy for pod %q did not succeed within timeout (last body=%q)",
+					healthzPath, pod.Name, lastBody)
 			}
 		})
 

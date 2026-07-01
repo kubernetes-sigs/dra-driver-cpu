@@ -31,6 +31,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	podmatchers "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/matchers/pod"
+	e2enode "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/node"
 	e2epod "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/pod"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -75,6 +76,16 @@ func mustCreateFixture() *fixture.Fixture {
 	skipIfMissingKubeconfig(err)
 	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create fixture")
 	return fxt
+}
+
+func createFixtureForReport() (*fixture.Fixture, bool) {
+	fxt, err := fixture.ForGinkgo()
+	if errors.Is(err, e2eclient.ErrMissingKubeconfig) {
+		fmt.Fprintln(ginkgo.GinkgoWriter, err.Error())
+		return nil, false
+	}
+	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create fixture")
+	return fxt, true
 }
 
 // shared code which is not ready yet to be moved into a test/pkg/... package
@@ -146,6 +157,77 @@ func makeCPUSetFromDiscoveredCPUInfo(cpuInfo discovery.DRACPUInfo) cpuset.CPUSet
 type CPUAllocation struct {
 	CPUAssigned cpuset.CPUSet
 	CPUAffinity cpuset.CPUSet
+}
+
+type driverDaemonSetConfig struct {
+	ReservedCPUs  cpuset.CPUSet
+	CPUDeviceMode string
+	GroupBy       string
+}
+
+func mustSetupFixture(ctx context.Context, fxt *fixture.Fixture) {
+	ginkgo.GinkgoHelper()
+	gomega.Expect(fxt.Setup(ctx)).To(gomega.Succeed())
+}
+
+func parseOptionalCPUSetEnv(name string) cpuset.CPUSet {
+	ginkgo.GinkgoHelper()
+
+	value, ok := os.LookupEnv(name)
+	if !ok || value == "" {
+		return cpuset.New()
+	}
+
+	parsed, err := cpuset.Parse(value)
+	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse %s: %q", name, value)
+	return parsed
+}
+
+func driverConfigFromContainer(container *v1.Container) driverDaemonSetConfig {
+	ginkgo.GinkgoHelper()
+
+	config := driverDaemonSetConfig{}
+	if val, ok := findArgInContainer(container, argReservedCPUs); ok {
+		var err error
+		config.ReservedCPUs, err = cpuset.Parse(val)
+		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse daemonset reserved cpus: %v", err)
+	}
+	if val, ok := findArgInContainer(container, argCPUDeviceMode); ok {
+		config.CPUDeviceMode = val
+	}
+	if val, ok := findArgInContainer(container, argGroupBy); ok {
+		config.GroupBy = val
+	}
+	return config
+}
+
+func mustLoadDriverDaemonSetConfig(ctx context.Context, fxt *fixture.Fixture) driverDaemonSetConfig {
+	ginkgo.GinkgoHelper()
+
+	daemonSet, err := fxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, "dracpu", metav1.GetOptions{})
+	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get dracpu daemonset")
+	gomega.Expect(daemonSet.Spec.Template.Spec.Containers).ToNot(gomega.BeEmpty(), "no containers in dracpu daemonset")
+	return driverConfigFromContainer(&daemonSet.Spec.Template.Spec.Containers[0])
+}
+
+func mustDiscoverTargetNodeCPUInfo(ctx context.Context, rootFxt, infraFxt *fixture.Fixture, testerImage string) (*v1.Node, discovery.DRACPUInfo) {
+	ginkgo.GinkgoHelper()
+
+	targetNode, err := e2enode.PickWorker(ctx, rootFxt.K8SClientset, 5*time.Second, 1*time.Minute, rootFxt.Log)
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	rootFxt.Log.Info("using worker node", "nodeName", targetNode.Name)
+
+	infoPod := discovery.MakePod(infraFxt.Namespace.Name, testerImage)
+	infoPod = e2epod.PinToNode(infoPod, targetNode.Name)
+	infoPod, err = e2epod.RunToCompletion(ctx, infraFxt.K8SClientset, infoPod)
+	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create discovery pod: %v", err)
+
+	data, err := e2epod.GetLogs(ctx, infraFxt.K8SClientset, infoPod)
+	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs from discovery pod: %v", err)
+
+	var cpuInfo discovery.DRACPUInfo
+	gomega.Expect(json.Unmarshal([]byte(data), &cpuInfo)).To(gomega.Succeed())
+	return targetNode, cpuInfo
 }
 
 func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod *v1.Pod) CPUAllocation {

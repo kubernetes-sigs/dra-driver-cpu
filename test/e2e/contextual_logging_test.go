@@ -18,15 +18,12 @@ package e2e
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 
-	e2eclient "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/client"
-	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/logcheck"
 	e2epod "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/pod"
 	"github.com/onsi/ginkgo/v2"
@@ -47,14 +44,12 @@ var _ = ginkgo.ReportAfterSuite("contextual logging", func(report ginkgo.Report)
 
 	ctx := context.Background()
 
-	rootFxt, err := fixture.ForGinkgo()
-	if errors.Is(err, e2eclient.ErrMissingKubeconfig) {
-		fmt.Fprintln(ginkgo.GinkgoWriter, err.Error())
+	rootFxt, ok := createFixtureForReport()
+	if !ok {
 		return
 	}
-	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create root fixture: %v", err)
 	ctxlogFxt := rootFxt.WithPrefix("ctxlog")
-	gomega.Expect(ctxlogFxt.Setup(ctx)).To(gomega.Succeed())
+	mustSetupFixture(ctx, ctxlogFxt)
 	defer func() { gomega.Expect(ctxlogFxt.Teardown(ctx)).To(gomega.Succeed()) }()
 
 	driverPods, err := listDriverPods(ctx, ctxlogFxt.K8SClientset)
