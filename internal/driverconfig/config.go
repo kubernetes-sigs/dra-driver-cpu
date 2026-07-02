@@ -30,3 +30,15 @@ type Config struct {
 	ExposePCIeRoots  bool   `json:"exposePCIeRoots,omitempty"`
 	ShowMetrics      bool   `json:"showMetrics,omitempty"`
 }
+
+// LogValues returns key-value pairs for structured logging of the config.
+func (c Config) LogValues() []any {
+	return []any{
+		"bindAddress", c.BindAddress,
+		"cpuDeviceMode", c.CPUDeviceMode,
+		"groupBy", c.GroupBy,
+		"reservedCPUs", c.ReservedCPUs,
+		"hostnameOverride", c.HostnameOverride,
+		"exposePCIeRoots", c.ExposePCIeRoots,
+	}
+}

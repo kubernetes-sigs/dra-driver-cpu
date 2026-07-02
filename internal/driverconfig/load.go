@@ -19,6 +19,8 @@ package driverconfig
 import (
 	"flag"
 	"fmt"
+
+	"github.com/go-logr/logr"
 )
 
 // flagToJSONKey maps CLI flag names to their Config JSON keys.
@@ -36,7 +38,9 @@ var flagToJSONKey = map[string]string{
 // Load merges the config file at filePath into base, giving CLI flags that were
 // explicitly set (reported by fs.Visit) priority over file values.
 // If filePath is empty, base is returned unchanged. fs must already be parsed.
-func Load(base Config, filePath string, fs *flag.FlagSet) (Config, error) {
+func Load(base Config, filePath string, fs *flag.FlagSet, logger logr.Logger) (Config, error) {
+	logger.V(6).Info("config: defaults", Default().LogValues()...)
+
 	if filePath == "" {
 		return base, nil
 	}
@@ -62,6 +66,8 @@ func Load(base Config, filePath string, fs *flag.FlagSet) (Config, error) {
 	if err := applyMap(&result, confMap); err != nil {
 		return Config{}, fmt.Errorf("applying config file %q: %w", filePath, err)
 	}
+
+	logger.V(6).Info("config: after file", result.LogValues()...)
 
 	if err := result.Validate(); err != nil {
 		return Config{}, fmt.Errorf("config file %q: %w", filePath, err)

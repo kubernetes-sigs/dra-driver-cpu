@@ -275,7 +275,7 @@ func detectDriverConfig(defaults driverconfig.Config, driverCmdlinePath string) 
 		return cfg
 	}
 	// If the file can't be read (e.g. run outside the driver container), fall back to CLI-parsed config.
-	loaded, err := driverconfig.Load(cfg, configFile, fs)
+	loaded, err := driverconfig.Load(cfg, configFile, fs, logr.Discard())
 	if err != nil {
 		return cfg
 	}

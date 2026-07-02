@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
 	"github.com/stretchr/testify/assert"
@@ -52,7 +53,7 @@ func TestLoad_NoFile(t *testing.T) {
 	cfg := driverconfig.Default()
 	fs := newFlagSet(t, &cfg, nil)
 
-	result, err := driverconfig.Load(cfg, "", fs)
+	result, err := driverconfig.Load(cfg, "", fs, logr.Discard())
 
 	require.NoError(t, err)
 	assert.Equal(t, cfg, result)
@@ -73,7 +74,7 @@ exposePCIeRoots: true
 	cfg := driverconfig.Default()
 	fs := newFlagSet(t, &cfg, nil) // no CLI flags
 
-	result, err := driverconfig.Load(cfg, cfgFile, fs)
+	result, err := driverconfig.Load(cfg, cfgFile, fs, logr.Discard())
 
 	require.NoError(t, err)
 	assert.Equal(t, ":9090", result.BindAddress)
@@ -98,7 +99,7 @@ cpuDeviceMode: individual
 		"--cpu-device-mode=grouped",
 	})
 
-	result, err := driverconfig.Load(cfg, cfgFile, fs)
+	result, err := driverconfig.Load(cfg, cfgFile, fs, logr.Discard())
 
 	require.NoError(t, err)
 	assert.Equal(t, ":7070", result.BindAddress)
@@ -116,7 +117,7 @@ reservedCPUs: "4-7"
 	cfg := driverconfig.Default()
 	fs := newFlagSet(t, &cfg, nil)
 
-	result, err := driverconfig.Load(cfg, cfgFile, fs)
+	result, err := driverconfig.Load(cfg, cfgFile, fs, logr.Discard())
 
 	require.NoError(t, err)
 	assert.Equal(t, "4-7", result.ReservedCPUs)
@@ -135,7 +136,7 @@ bindAddress: ":9191"
 	cfg := driverconfig.Default()
 	fs := newFlagSet(t, &cfg, nil)
 
-	result, err := driverconfig.Load(cfg, cfgFile, fs)
+	result, err := driverconfig.Load(cfg, cfgFile, fs, logr.Discard())
 
 	require.NoError(t, err)
 	assert.Equal(t, ":9191", result.BindAddress)
@@ -152,7 +153,7 @@ bindAddress: ":9090"
 	cfg := driverconfig.Default()
 	fs := newFlagSet(t, &cfg, nil)
 
-	_, err := driverconfig.Load(cfg, cfgFile, fs)
+	_, err := driverconfig.Load(cfg, cfgFile, fs, logr.Discard())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported apiVersion")
@@ -164,7 +165,7 @@ func TestLoad_MissingFileIsError(t *testing.T) {
 	cfg := driverconfig.Default()
 	fs := newFlagSet(t, &cfg, nil)
 
-	_, err := driverconfig.Load(cfg, "/does/not/exist/config.yaml", fs)
+	_, err := driverconfig.Load(cfg, "/does/not/exist/config.yaml", fs, logr.Discard())
 
 	require.Error(t, err)
 }
@@ -194,7 +195,7 @@ cpuDeviceMode: garbage
 	cfg := driverconfig.Default()
 	fs := newFlagSet(t, &cfg, nil)
 
-	_, err := driverconfig.Load(cfg, cfgFile, fs)
+	_, err := driverconfig.Load(cfg, cfgFile, fs, logr.Discard())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid cpuDeviceMode")
@@ -212,7 +213,7 @@ groupBy: garbage
 	cfg := driverconfig.Default()
 	fs := newFlagSet(t, &cfg, nil)
 
-	_, err := driverconfig.Load(cfg, cfgFile, fs)
+	_, err := driverconfig.Load(cfg, cfgFile, fs, logr.Discard())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid groupBy")
