@@ -33,6 +33,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/go-logr/stdr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
 )
 
 const (
@@ -41,7 +42,7 @@ const (
 )
 
 func main() {
-	sysfsRoot := device.SysfsRoot
+	sysfsRoot := sysfs.Root
 	gen := newMapFSGen()
 
 	flag.StringVar(&sysfsRoot, "sysfs-root", sysfsRoot, "sysfs root path")
@@ -56,12 +57,12 @@ func main() {
 		}
 	}
 
-	sysfs := os.DirFS(sysfsRoot).(device.SysFS)
+	sfs := os.DirFS(sysfsRoot).(sysfs.FS)
 	logger := stdr.New(log.Default())
 
 	// need to silence output on the happy path so we can
 	// trivially redirect the output to a file
-	err := gen.Collect(logr.Discard(), sysfs)
+	err := gen.Collect(logr.Discard(), sfs)
 	if err != nil {
 		logger.Error(err, "failed to collect sysfs snapshot")
 		os.Exit(2)
@@ -100,8 +101,8 @@ func newMapFSGen() *mapFSGen {
 	}
 }
 
-func (gen *mapFSGen) ReadDataFrom(sysfs device.SysFS, sysPath string) error {
-	data, err := fs.ReadFile(sysfs, sysPath)
+func (gen *mapFSGen) ReadDataFrom(sfs sysfs.FS, sysPath string) error {
+	data, err := fs.ReadFile(sfs, sysPath)
 	if err != nil {
 		return fmt.Errorf("reading data %q: %w", sysPath, err)
 	}
@@ -120,9 +121,9 @@ func (gen *mapFSGen) Emit(w io.Writer) {
 	fmt.Fprintf(w, "}\n")
 }
 
-func (gen *mapFSGen) Collect(logger logr.Logger, sysfs device.SysFS) error {
+func (gen *mapFSGen) Collect(logger logr.Logger, sfs sysfs.FS) error {
 	devicesDir := "devices"
-	entries, err := fs.ReadDir(sysfs, devicesDir)
+	entries, err := fs.ReadDir(sfs, devicesDir)
 	if err != nil {
 		return fmt.Errorf("reading %q: %w", devicesDir, err)
 	}
@@ -133,14 +134,14 @@ func (gen *mapFSGen) Collect(logger logr.Logger, sysfs device.SysFS) error {
 		}
 		busID := strings.TrimPrefix(entry.Name(), "pci")
 		affinityPath := filepath.Join(devicesDir, entry.Name(), "pci_bus", busID, "cpulistaffinity")
-		if err := gen.ReadDataFrom(sysfs, affinityPath); err != nil {
+		if err := gen.ReadDataFrom(sfs, affinityPath); err != nil {
 			return err
 		}
 		logger.Info("collected PCIe root", "root", entry.Name(), "path", affinityPath)
 	}
 
 	cpuOnlinePath := filepath.Join(devicesDir, "system", "cpu", "online")
-	if err := gen.ReadDataFrom(sysfs, cpuOnlinePath); err != nil {
+	if err := gen.ReadDataFrom(sfs, cpuOnlinePath); err != nil {
 		return err
 	}
 

@@ -28,9 +28,9 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
-	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -111,7 +111,7 @@ type CPUDriver struct {
 // Providers group the interfaces the CPUDriver depends on
 type Providers struct {
 	CPUInfo   CPUInfoProvider
-	SysFS     device.SysFS
+	SysFS     sysfs.FS
 	K8SClient kubernetes.Interface
 }
 
@@ -122,9 +122,9 @@ func (pr Providers) EnsureCPUInfo() CPUInfoProvider {
 	return pr.CPUInfo
 }
 
-func (pr Providers) EnsureSysFS() device.SysFS {
+func (pr Providers) EnsureSysFS() sysfs.FS {
 	if pr.SysFS == nil {
-		return os.DirFS(device.SysfsRoot).(device.SysFS)
+		return os.DirFS(sysfs.Root).(sysfs.FS)
 	}
 	return pr.SysFS
 }
@@ -173,9 +173,9 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		devicesPerResourceSlice: config.DevicesPerResourceSlice(),
 		metrics:                 metricsRecorder,
 	}
-	sysfs := providers.EnsureSysFS()
+	sfs := providers.EnsureSysFS()
 
-	onlineCPUs, err := cpuinfo.OnlineCPUs(logger, sysfs)
+	onlineCPUs, err := cpuinfo.OnlineCPUs(logger, sfs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get online CPUs: %w", err)
 	}
@@ -192,7 +192,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	plugin.cpuTopology = topo
 
 	if config.ExposePCIeRoots {
-		if err := plugin.pcieRootMapper.Probe(logger, sysfs, onlineCPUs); err != nil {
+		if err := plugin.pcieRootMapper.Probe(logger, sfs, onlineCPUs); err != nil {
 			return nil, fmt.Errorf("failed to list PCIe domains: %w", err)
 		}
 	}

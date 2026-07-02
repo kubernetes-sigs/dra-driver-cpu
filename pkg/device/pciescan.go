@@ -18,13 +18,8 @@ package device
 
 import (
 	"fmt"
-	"io/fs"
 
 	"k8s.io/utils/cpuset"
-)
-
-const (
-	SysfsRoot = "/sys"
 )
 
 func FindOrphanedCPUs(domains []PCIeDomain, allCPUs cpuset.CPUSet) cpuset.CPUSet {
@@ -57,11 +52,6 @@ type PCIeDomain struct {
 
 func (pcd PCIeDomain) String() string {
 	return fmt.Sprintf("<PCIeRoot=%s CPUs=%s>", pcd.RootName, pcd.LocalCPUs.String())
-}
-
-type SysFS interface {
-	fs.ReadLinkFS
-	fs.ReadDirFS
 }
 
 // IsPCIeRootName matches the constructions of the pcie roots in the linux kernel.

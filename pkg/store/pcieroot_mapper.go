@@ -21,6 +21,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/cpuset"
 )
@@ -37,9 +38,9 @@ func NewPCIeRootMapper() *PCIeRootMapper {
 }
 
 // Probe scans the machine and builds the CPU -> PCIe root mapping
-func (prm *PCIeRootMapper) Probe(logger logr.Logger, sysfs device.SysFS, onlineCPUs cpuset.CPUSet) error {
+func (prm *PCIeRootMapper) Probe(logger logr.Logger, sfs sysfs.FS, onlineCPUs cpuset.CPUSet) error {
 	var err error
-	prm.pcieDomains, err = device.PCIeDomainsFromFS(logger, sysfs)
+	prm.pcieDomains, err = device.PCIeDomainsFromFS(logger, sfs)
 	if err != nil {
 		return fmt.Errorf("failed to list PCIe domains: %w", err)
 	}
