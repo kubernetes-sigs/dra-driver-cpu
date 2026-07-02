@@ -304,6 +304,14 @@ This discrepancy is a known issue being addressed by [KEP-5517: Native Resource 
 
 **1-to-1 Claim to Container:** This driver enforces that a specific CPU `ResourceClaim` can only be used by *one* container within or across pods. See [Sharing resource claims](#sharing-resource-claims).
 
+### Extended Resource Claim Status integrations
+
+Kubernetes `status.extendedResourceClaimStatus` is for DRA-backed extended resources. [Extended resource names](https://kubernetes.io/docs/tasks/configure-pod-container/extended-resource/) exclude standard resources such as `cpu` and `memory`, so `extendedResourceName` in a `DeviceClass` or a pod's `status.extendedResourceClaimStatus` is not expected to work with this CPU DRA driver when the container only requests native `cpu`.
+
+For example, a Pod that references a CPU `ResourceClaim` explicitly through `containers[].resources.claims` follows this driver's supported path. A Pod that only patches `status.extendedResourceClaimStatus` with `requestMappings[].resourceName: cpu` does not, because `cpu` is a native resource rather than a DRA-backed extended resource.
+
+For integrations that model native `cpu`, use the Kubernetes node-allocatable DRA status path when available instead.
+
 ## Custom Opaque CPUSet Allocation Overrides
 
 When using `grouped` device mode with the `--group-by=machine` configuration, the DRA driver does not perform automatic topology-aware CPU allocation. Instead, an explicit core assignment must be provided via the `cpuset` field in the claim's opaque configuration parameters.
