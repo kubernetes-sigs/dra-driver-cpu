@@ -25,8 +25,33 @@ import (
 	"github.com/onsi/gomega"
 	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/dynamic-resource-allocation/deviceattribute"
 )
+
+func waitForDriverResourceSlices(ctx context.Context, client kubernetes.Interface, driverName string) []resourcev1.ResourceSlice {
+	ginkgo.GinkgoHelper()
+
+	var slices []resourcev1.ResourceSlice
+	gomega.Eventually(func(g gomega.Gomega) {
+		sliceList, err := client.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{
+			FieldSelector: "spec.driver=" + driverName,
+		})
+		g.Expect(err).ToNot(gomega.HaveOccurred(), "cannot list ResourceSlices")
+		g.Expect(sliceList.Items).ToNot(gomega.BeEmpty(), "no ResourceSlices found for driver %s", driverName)
+
+		totalDevices := 0
+		for _, slice := range sliceList.Items {
+			totalDevices += len(slice.Spec.Devices)
+		}
+		g.Expect(totalDevices).To(gomega.BeNumerically(">", 0), "no devices found across all ResourceSlices")
+
+		slices = sliceList.Items
+	}, driverPodPollTimeout, driverPodPollInterval).Should(gomega.Succeed(),
+		"timed out waiting for ResourceSlices for driver %q to be published", driverName)
+
+	return slices
+}
 
 var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
 	var (
@@ -38,8 +63,7 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
 		var err error
-		fxt, err = fixture.ForGinkgo()
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create fixture")
+		fxt = mustCreateFixture()
 
 		ginkgo.By("reading daemonset configuration")
 		daemonSet, err := fxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, "dracpu", metav1.GetOptions{})
@@ -55,13 +79,8 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 		}
 		fxt.Log.Info("daemonset configuration", "cpuDeviceMode", cpuDeviceMode, "groupBy", groupBy)
 
-		ginkgo.By("listing ResourceSlices for driver " + driverName)
-		sliceList, err := fxt.K8SClientset.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{
-			FieldSelector: "spec.driver=" + driverName,
-		})
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot list ResourceSlices")
-		gomega.Expect(sliceList.Items).ToNot(gomega.BeEmpty(), "no ResourceSlices found for driver %s", driverName)
-		slices = sliceList.Items
+		ginkgo.By("waiting for ResourceSlices for driver " + driverName)
+		slices = waitForDriverResourceSlices(ctx, fxt.K8SClientset, driverName)
 		fxt.Log.Info("found ResourceSlices", "count", len(slices))
 	})
 

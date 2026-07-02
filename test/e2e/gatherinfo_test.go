@@ -38,9 +38,9 @@ var _ = ginkgo.Describe("dracpu-gatherinfo", ginkgo.Ordered, func() {
 
 	ginkgo.BeforeAll(func() {
 		var err error
-		fxt, err = fixture.ForGinkgo()
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create fixture")
+		fxt = mustCreateFixture()
 		restConfig, err = e2eclient.NewK8SConfig()
+		skipIfMissingKubeconfig(err)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create Kubernetes config")
 	})
 
