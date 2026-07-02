@@ -37,6 +37,35 @@ var (
 	errClaimAllocationMismatch = errors.New("claim cpuset does not match prepared allocation")
 )
 
+type nriContextError struct {
+	kind  error
+	msg   string
+	cause error
+}
+
+func (e *nriContextError) Error() string {
+	if e.cause == nil {
+		return e.msg
+	}
+	return fmt.Sprintf("%s: %v", e.msg, e.cause)
+}
+
+func (e *nriContextError) Unwrap() error {
+	return e.cause
+}
+
+func (e *nriContextError) Is(target error) bool {
+	return target == e.kind
+}
+
+func newNRIContextError(kind error, cause error, format string, args ...any) error {
+	return &nriContextError{
+		kind:  kind,
+		msg:   fmt.Sprintf(format, args...),
+		cause: cause,
+	}
+}
+
 // Synchronize is called by the NRI to synchronize the state of the driver during bootstrap.
 func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, containers []*api.Container) ([]*api.ContainerUpdate, error) {
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen))
@@ -117,7 +146,7 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 		logger.V(4).Info("parsing DRA env entry", "env", env)
 		parts := strings.SplitN(env, "=", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("%w: %q", errMalformedDRAEnv, env)
+			return nil, newNRIContextError(errMalformedDRAEnv, nil, "malformed DRA env entry %q", env)
 		}
 		key, value := parts[0], parts[1]
 		var claimUID types.UID
@@ -130,7 +159,7 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 
 		parsedSet, err := cpuset.Parse(value)
 		if err != nil {
-			return nil, fmt.Errorf("%w: value %q from env %q: %w", errParseCPUSet, value, env, err)
+			return nil, newNRIContextError(errParseCPUSet, err, "failed to parse cpuset value %q from env %q", value, env)
 		}
 		allocations[claimUID] = parsedSet
 	}
@@ -141,10 +170,10 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 func (cp *CPUDriver) validatePreparedClaimAllocation(uid types.UID, cpus cpuset.CPUSet) error {
 	preparedCPUs, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(uid)
 	if !ok {
-		return fmt.Errorf("%w: claim %q", errClaimNotPrepared, uid)
+		return newNRIContextError(errClaimNotPrepared, nil, "claim %q is not prepared by this driver", uid)
 	}
 	if !preparedCPUs.Equals(cpus) {
-		return fmt.Errorf("%w for claim %q: expected %q, got %q", errClaimAllocationMismatch, uid, preparedCPUs.String(), cpus.String())
+		return newNRIContextError(errClaimAllocationMismatch, nil, "validation failed for claim %q: cpuset mismatch (expected %q, got %q)", uid, preparedCPUs.String(), cpus.String())
 	}
 	return nil
 }
