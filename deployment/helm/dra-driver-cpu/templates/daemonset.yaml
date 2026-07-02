@@ -34,9 +34,14 @@ spec:
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.podAnnotations }}
+      {{- if or .Values.podAnnotations .Values.sysfsOverlay }}
       annotations:
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.sysfsOverlay }}
+        dra.cpu/sysfs-overlay-checksum: {{ toYaml . | sha256sum }}
+        {{- end }}
       {{- end }}
     spec:
       hostNetwork: true
@@ -75,6 +80,9 @@ spec:
           {{- if .Values.args.exposePCIeRoots }}
           - --expose-pcie-roots
           {{- end }}
+          {{- with .Values.sysfsOverlay }}
+          - --sysfs-overlay=/etc/dra-driver-cpu/sysfs-overlay.yaml
+          {{- end }}
         image: {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         ports:
@@ -109,6 +117,12 @@ spec:
           mountPath: /var/run/nri
         - name: cdi-dir
           mountPath: /var/run/cdi
+        {{- with .Values.sysfsOverlay }}
+        - name: sysfs-overlay
+          mountPath: /etc/dra-driver-cpu/sysfs-overlay.yaml
+          subPath: sysfs-overlay.yaml
+          readOnly: true
+        {{- end }}
       volumes:
       - name: device-plugin
         hostPath:
@@ -123,3 +137,8 @@ spec:
         hostPath:
           path: /var/run/cdi
           type: DirectoryOrCreate
+      {{- with .Values.sysfsOverlay }}
+      - name: sysfs-overlay
+        configMap:
+          name: {{ include "dra-driver-cpu.fullname" $ }}-sysfs-overlay
+      {{- end }}

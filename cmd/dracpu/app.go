@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -34,8 +35,10 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/gatherinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sys/unix"
@@ -106,6 +109,11 @@ func run(logger logr.Logger) error {
 	reservedCPUSet, err := cpuset.Parse(driverFlags.ReservedCPUs)
 	if err != nil {
 		return fmt.Errorf("failed to parse reserved CPUs: %w", err)
+	}
+
+	sfs, err := newSysFS(logger, driverFlags.SysFSOverlay)
+	if err != nil {
+		return err
 	}
 
 	mux := http.NewServeMux()
@@ -184,6 +192,7 @@ func run(logger logr.Logger) error {
 	}
 	driverProviders := driver.Providers{
 		K8SClient: clientset,
+		SysFS:     sfs,
 	}
 	dracpu, err := driver.New(logger, driverProviders, &driverConfig)
 	if err != nil {
@@ -217,6 +226,38 @@ func run(logger logr.Logger) error {
 		fatalErr = errors.Join(fatalErr, fmt.Errorf("HTTP server shutdown error: %w", serverErr))
 	}
 	return fatalErr
+}
+
+func newSysFS(logger logr.Logger, overlayPath string) (sysfs.FS, error) {
+	sfs := os.DirFS(sysfs.Root).(sysfs.FS)
+	if overlayPath == "" {
+		return sfs, nil
+	}
+
+	overlayData, err := os.ReadFile(overlayPath)
+	if err != nil {
+		return nil, fmt.Errorf("read sysfs overlay: %w", err)
+	}
+	overlay, err := device.ParseSysFSOverlay(overlayData)
+	if err != nil {
+		return nil, err
+	}
+	sfs, err = device.NewOverlaySysFS(sfs, overlay)
+	if err != nil {
+		return nil, fmt.Errorf("create sysfs overlay: %w", err)
+	}
+
+	logger.Info("loaded sysfs overlay", "path", overlayPath, "entries", len(overlay))
+	paths := make([]string, 0, len(overlay))
+	for overlayPath := range overlay {
+		paths = append(paths, overlayPath)
+	}
+	sort.Strings(paths)
+	for _, overlayPath := range paths {
+		logger.V(4).Info("sysfs overlay entry", "path", overlayPath, "contents", overlay[overlayPath])
+	}
+
+	return sfs, nil
 }
 
 func printVersion(logger logr.Logger) {
