@@ -19,6 +19,7 @@ package driver
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/containerd/nri/pkg/api"
@@ -37,6 +38,7 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 		envs                []string
 		expectedAllocations map[types.UID]cpuset.CPUSet
 		expectedErr         error
+		expectedCause       error
 	}{
 		{
 			name: "single valid env",
@@ -67,9 +69,10 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 			expectedErr: errMalformedDRAEnv,
 		},
 		{
-			name:        "malformed env - invalid cpuset",
-			envs:        []string{fmt.Sprintf("%s_claim-uid-1=%s", cdiEnvVarPrefix, "a-b")},
-			expectedErr: errParseCPUSet,
+			name:          "malformed env - invalid cpuset",
+			envs:          []string{fmt.Sprintf("%s_claim-uid-1=%s", cdiEnvVarPrefix, "a-b")},
+			expectedErr:   errParseCPUSet,
+			expectedCause: strconv.ErrSyntax,
 		},
 		{
 			name:                "empty env",
@@ -84,6 +87,9 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 			if tc.expectedErr != nil {
 				require.Error(t, err)
 				require.ErrorIs(t, err, tc.expectedErr)
+				if tc.expectedCause != nil {
+					require.ErrorIs(t, err, tc.expectedCause)
+				}
 			} else {
 				require.NoError(t, err)
 				require.Equal(t, len(tc.expectedAllocations), len(allocations))

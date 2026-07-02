@@ -130,7 +130,7 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 
 		parsedSet, err := cpuset.Parse(value)
 		if err != nil {
-			return nil, fmt.Errorf("%w: value %q from env %q: %v", errParseCPUSet, value, env, err)
+			return nil, fmt.Errorf("%w: value %q from env %q: %w", errParseCPUSet, value, env, err)
 		}
 		allocations[claimUID] = parsedSet
 	}
