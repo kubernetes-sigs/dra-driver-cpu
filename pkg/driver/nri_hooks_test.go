@@ -19,7 +19,6 @@ package driver
 import (
 	"context"
 	"fmt"
-	"sort"
 	"testing"
 
 	"github.com/containerd/nri/pkg/api"
@@ -34,10 +33,10 @@ import (
 func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 	logger := testr.New(t)
 	testCases := []struct {
-		name                  string
-		envs                  []string
-		expectedAllocations   map[types.UID]cpuset.CPUSet
-		expectedErrorContains string
+		name                string
+		envs                []string
+		expectedAllocations map[types.UID]cpuset.CPUSet
+		expectedErr         error
 	}{
 		{
 			name: "single valid env",
@@ -63,14 +62,14 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 			expectedAllocations: map[types.UID]cpuset.CPUSet{},
 		},
 		{
-			name:                  "malformed env - no equals",
-			envs:                  []string{fmt.Sprintf("%s_claim-uid-1", cdiEnvVarPrefix)},
-			expectedErrorContains: "malformed DRA env entry",
+			name:        "malformed env - no equals",
+			envs:        []string{fmt.Sprintf("%s_claim-uid-1", cdiEnvVarPrefix)},
+			expectedErr: errMalformedDRAEnv,
 		},
 		{
-			name:                  "malformed env - invalid cpuset",
-			envs:                  []string{fmt.Sprintf("%s_claim-uid-1=%s", cdiEnvVarPrefix, "a-b")},
-			expectedErrorContains: "failed to parse cpuset value",
+			name:        "malformed env - invalid cpuset",
+			envs:        []string{fmt.Sprintf("%s_claim-uid-1=%s", cdiEnvVarPrefix, "a-b")},
+			expectedErr: errParseCPUSet,
 		},
 		{
 			name:                "empty env",
@@ -82,9 +81,9 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			allocations, err := parseDRAEnvToClaimAllocations(logger, tc.envs)
-			if tc.expectedErrorContains != "" {
+			if tc.expectedErr != nil {
 				require.Error(t, err)
-				require.Contains(t, err.Error(), tc.expectedErrorContains)
+				require.ErrorIs(t, err, tc.expectedErr)
 			} else {
 				require.NoError(t, err)
 				require.Equal(t, len(tc.expectedAllocations), len(allocations))
@@ -133,7 +132,7 @@ func TestCreateContainer(t *testing.T) {
 		container                   *api.Container
 		expectedContainerAdjustment *api.ContainerAdjustment
 		expectedContainerUpdates    []*api.ContainerUpdate
-		expectedErrorContains       string
+		expectedErr                 error
 	}{
 		{
 			name:           "guaranteed container triggers container adjustment with cpus in resource claim",
@@ -216,7 +215,7 @@ func TestCreateContainer(t *testing.T) {
 				Name:         "my-ctr",
 				Env:          []string{fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, "a-b")},
 			},
-			expectedErrorContains: "failed to parse cpuset value",
+			expectedErr: errParseCPUSet,
 		},
 		{
 			name:               "container with DRA env for unprepared claim fails closed",
@@ -224,10 +223,7 @@ func TestCreateContainer(t *testing.T) {
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 			claimTracker:       store.NewClaimTracker(),
 			container:          newTestContainer(claimUID, "0-3"),
-			expectedErrorContains: fmt.Sprintf(
-				"claim %q is not prepared by this driver",
-				claimUID,
-			),
+			expectedErr:        errClaimNotPrepared,
 		},
 		{
 			name:           "container with DRA env that differs from prepared allocation fails closed",
@@ -239,12 +235,7 @@ func TestCreateContainer(t *testing.T) {
 			}(),
 			claimTracker: store.NewClaimTracker(),
 			container:    newTestContainer(claimUID, "0-3"),
-			expectedErrorContains: fmt.Sprintf(
-				"validation failed for claim %q: cpuset mismatch (expected %q, got %q)",
-				claimUID,
-				"0-1",
-				"0-3",
-			),
+			expectedErr:  errClaimAllocationMismatch,
 		},
 	}
 
@@ -256,9 +247,9 @@ func TestCreateContainer(t *testing.T) {
 				claimTracker:       tc.claimTracker,
 			}
 			adjust, updates, err := driver.CreateContainer(context.Background(), pod, tc.container)
-			if tc.expectedErrorContains != "" {
+			if tc.expectedErr != nil {
 				require.Error(t, err)
-				require.Contains(t, err.Error(), tc.expectedErrorContains)
+				require.ErrorIs(t, err, tc.expectedErr)
 				require.Nil(t, adjust)
 				require.Nil(t, updates)
 				return
@@ -287,9 +278,9 @@ func TestStopContainer(t *testing.T) {
 	topo, _ := mockProvider.GetCPUTopology(logger)
 
 	testCases := []struct {
-		name               string
-		driver             *CPUDriver
-		expectedUpdatesFor []string
+		name            string
+		driver          *CPUDriver
+		expectedUpdates []*api.ContainerUpdate
 	}{
 		{
 			name: "Stop guaranteed container sets update required for shared containers",
@@ -300,11 +291,17 @@ func TestStopContainer(t *testing.T) {
 					claimTracker:       store.NewClaimTracker(),
 					cpuTopology:        topo,
 				}
+				driver.cpuAllocationStore.AddResourceClaimAllocation(logger, types.UID("claim-uid-1"), cpuset.New(2, 3))
 				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id), types.UID("claim-uid-1")))
 				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
 				return driver
 			}(),
-			expectedUpdatesFor: []string{ctr2.Id},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: ctr2.Id,
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
+				},
+			},
 		},
 		{
 			name: "Stop non-guaranteed container does not set update required",
@@ -319,16 +316,15 @@ func TestStopContainer(t *testing.T) {
 				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
 				return driver
 			}(),
-			expectedUpdatesFor: []string{},
+			expectedUpdates: []*api.ContainerUpdate{},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			sort.Strings(tc.expectedUpdatesFor)
 			upd, err := tc.driver.StopContainer(context.Background(), pod1, ctr1)
 			require.NoError(t, err)
-			require.Equal(t, containerIDsFromUpdates(upd), tc.expectedUpdatesFor)
+			require.ElementsMatch(t, tc.expectedUpdates, upd)
 		})
 	}
 }
@@ -352,7 +348,7 @@ func TestNRISynchronize(t *testing.T) {
 		runtimePods     []*api.PodSandbox
 		runtimeCtrs     []*api.Container
 		expectedUpdates []*api.ContainerUpdate
-		expectedError   string
+		expectedErr     error
 	}{
 		{
 			name: "empty runtime state clears the store",
@@ -479,7 +475,7 @@ func TestNRISynchronize(t *testing.T) {
 				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
 				{Id: "p1-malformed", PodSandboxId: pod1.Id, Name: "malformed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "a-b")}},
 			},
-			expectedError: "failed to parse cpuset value",
+			expectedErr: errParseCPUSet,
 		},
 	}
 
@@ -487,9 +483,9 @@ func TestNRISynchronize(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			updates, err := tc.driver.Synchronize(context.Background(), tc.runtimePods, tc.runtimeCtrs)
 
-			if tc.expectedError != "" {
+			if tc.expectedErr != nil {
 				require.Error(t, err)
-				require.Contains(t, err.Error(), tc.expectedError)
+				require.ErrorIs(t, err, tc.expectedErr)
 				return
 			}
 			require.NoError(t, err)
@@ -497,13 +493,4 @@ func TestNRISynchronize(t *testing.T) {
 			require.ElementsMatch(t, tc.expectedUpdates, updates)
 		})
 	}
-}
-
-func containerIDsFromUpdates(updates []*api.ContainerUpdate) []string {
-	ids := make([]string, 0, len(updates))
-	for _, upd := range updates {
-		ids = append(ids, upd.ContainerId)
-	}
-	sort.Strings(ids)
-	return ids
 }

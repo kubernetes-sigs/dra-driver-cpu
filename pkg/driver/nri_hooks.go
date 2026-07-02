@@ -18,6 +18,7 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -27,6 +28,13 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/cpuset"
+)
+
+var (
+	errMalformedDRAEnv         = errors.New("malformed DRA env entry")
+	errParseCPUSet             = errors.New("failed to parse cpuset value")
+	errClaimNotPrepared        = errors.New("claim is not prepared by this driver")
+	errClaimAllocationMismatch = errors.New("claim cpuset does not match prepared allocation")
 )
 
 // Synchronize is called by the NRI to synchronize the state of the driver during bootstrap.
@@ -109,7 +117,7 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 		logger.V(4).Info("parsing DRA env entry", "env", env)
 		parts := strings.SplitN(env, "=", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("malformed DRA env entry %q", env)
+			return nil, fmt.Errorf("%w: %q", errMalformedDRAEnv, env)
 		}
 		key, value := parts[0], parts[1]
 		var claimUID types.UID
@@ -122,7 +130,7 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 
 		parsedSet, err := cpuset.Parse(value)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse cpuset value %q from env %q: %w", value, env, err)
+			return nil, fmt.Errorf("%w: value %q from env %q: %v", errParseCPUSet, value, env, err)
 		}
 		allocations[claimUID] = parsedSet
 	}
@@ -133,10 +141,10 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 func (cp *CPUDriver) validatePreparedClaimAllocation(uid types.UID, cpus cpuset.CPUSet) error {
 	preparedCPUs, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(uid)
 	if !ok {
-		return fmt.Errorf("claim %q is not prepared by this driver", uid)
+		return fmt.Errorf("%w: claim %q", errClaimNotPrepared, uid)
 	}
 	if !preparedCPUs.Equals(cpus) {
-		return fmt.Errorf("validation failed for claim %q: cpuset mismatch (expected %q, got %q)", uid, preparedCPUs.String(), cpus.String())
+		return fmt.Errorf("%w for claim %q: expected %q, got %q", errClaimAllocationMismatch, uid, preparedCPUs.String(), cpus.String())
 	}
 	return nil
 }
