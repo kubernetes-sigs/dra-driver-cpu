@@ -136,11 +136,15 @@ func TestCreateContainer(t *testing.T) {
 		expectedErrorContains       string
 	}{
 		{
-			name:               "guaranteed container triggers container adjustment with cpus in resource claim",
-			podConfigStore:     store.NewPodConfig(),
-			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
-			claimTracker:       store.NewClaimTracker(),
-			container:          newTestContainer(claimUID, "0-3"),
+			name:           "guaranteed container triggers container adjustment with cpus in resource claim",
+			podConfigStore: store.NewPodConfig(),
+			cpuAllocationStore: func() *store.CPUAllocation {
+				store := store.NewCPUAllocation(topo, cpuset.New())
+				store.AddResourceClaimAllocation(logger, types.UID(claimUID), cpuset.New(0, 1, 2, 3))
+				return store
+			}(),
+			claimTracker: store.NewClaimTracker(),
+			container:    newTestContainer(claimUID, "0-3"),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-3"}}},
 			},
@@ -154,6 +158,21 @@ func TestCreateContainer(t *testing.T) {
 			container:          newTestContainer("", ""),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
+			},
+			expectedContainerUpdates: []*api.ContainerUpdate{},
+		},
+		{
+			name:           "shared container created after guaranteed allocation uses shared pool",
+			podConfigStore: store.NewPodConfig(),
+			cpuAllocationStore: func() *store.CPUAllocation {
+				store := store.NewCPUAllocation(topo, cpuset.New())
+				store.AddResourceClaimAllocation(logger, types.UID(claimUID), cpuset.New(0, 1, 2, 3))
+				return store
+			}(),
+			claimTracker: store.NewClaimTracker(),
+			container:    newTestContainer("", ""),
+			expectedContainerAdjustment: &api.ContainerAdjustment{
+				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "4-7"}}},
 			},
 			expectedContainerUpdates: []*api.ContainerUpdate{},
 		},
@@ -198,6 +217,34 @@ func TestCreateContainer(t *testing.T) {
 				Env:          []string{fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, "a-b")},
 			},
 			expectedErrorContains: "failed to parse cpuset value",
+		},
+		{
+			name:               "container with DRA env for unprepared claim fails closed",
+			podConfigStore:     store.NewPodConfig(),
+			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+			claimTracker:       store.NewClaimTracker(),
+			container:          newTestContainer(claimUID, "0-3"),
+			expectedErrorContains: fmt.Sprintf(
+				"claim %q is not prepared by this driver",
+				claimUID,
+			),
+		},
+		{
+			name:           "container with DRA env that differs from prepared allocation fails closed",
+			podConfigStore: store.NewPodConfig(),
+			cpuAllocationStore: func() *store.CPUAllocation {
+				store := store.NewCPUAllocation(topo, cpuset.New())
+				store.AddResourceClaimAllocation(logger, types.UID(claimUID), cpuset.New(0, 1))
+				return store
+			}(),
+			claimTracker: store.NewClaimTracker(),
+			container:    newTestContainer(claimUID, "0-3"),
+			expectedErrorContains: fmt.Sprintf(
+				"validation failed for claim %q: cpuset mismatch (expected %q, got %q)",
+				claimUID,
+				"0-1",
+				"0-3",
+			),
 		},
 	}
 

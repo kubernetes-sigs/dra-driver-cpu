@@ -130,6 +130,17 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 	return allocations, nil
 }
 
+func (cp *CPUDriver) validatePreparedClaimAllocation(uid types.UID, cpus cpuset.CPUSet) error {
+	preparedCPUs, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(uid)
+	if !ok {
+		return fmt.Errorf("claim %q is not prepared by this driver", uid)
+	}
+	if !preparedCPUs.Equals(cpus) {
+		return fmt.Errorf("validation failed for claim %q: cpuset mismatch (expected %q, got %q)", uid, preparedCPUs.String(), cpus.String())
+	}
+	return nil
+}
+
 func (cp *CPUDriver) getSharedContainerUpdates(logger logr.Logger, excludeID types.UID) []*api.ContainerUpdate {
 	updates := []*api.ContainerUpdate{}
 	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
@@ -177,10 +188,16 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		logger.V(2).Info("no guaranteed CPUs found, using shared CPUs", "sharedCPUs", sharedCPUs.String())
 		adjust.SetLinuxCPUSetCPUs(sharedCPUs.String())
 	} else {
+		// NRI invokes CreateContainer for all containers. Only trust DRA env
+		// entries that match a claim prepared by this driver.
 		guaranteedCPUs := cpuset.New()
 		claimUIDs := []types.UID{}
 		for uid, cpus := range claimAllocations {
 			cLogger := logger.WithValues("claimUID", uid)
+			if err := cp.validatePreparedClaimAllocation(uid, cpus); err != nil {
+				return nil, nil, err
+			}
+
 			err := cp.claimTracker.SetOwner(cLogger, uid, types.UID(pod.Uid), ctr.Name)
 			if err != nil {
 				return nil, nil, err
