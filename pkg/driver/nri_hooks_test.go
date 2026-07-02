@@ -18,6 +18,7 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"testing"
@@ -89,6 +90,7 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 				require.ErrorIs(t, err, tc.expectedErr)
 				if tc.expectedCause != nil {
 					require.ErrorIs(t, err, tc.expectedCause)
+					require.ErrorIs(t, errors.Unwrap(err), tc.expectedCause)
 				}
 			} else {
 				require.NoError(t, err)
