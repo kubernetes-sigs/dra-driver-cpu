@@ -507,3 +507,61 @@ func containerIDsFromUpdates(updates []*api.ContainerUpdate) []string {
 	sort.Strings(ids)
 	return ids
 }
+
+// TestStopContainerReleasesClaimToSharedPool asserts the DRA/NRI lifetime invariant tracked by #188:
+// stopping a guaranteed container releases its claim's CPUs back into the shared pool *during*
+// StopContainer (the documented early-release workaround), and immediately re-broadens the other
+// shared containers to the freed pool, rather than deferring the release to UnprepareResourceClaims.
+// The existing TestStopContainer only asserts which containers are updated; this asserts the actual
+// release (the shared-pool contents) and the re-broadened cpuset values.
+func TestStopContainerReleasesClaimToSharedPool(t *testing.T) {
+	logger := testr.New(t)
+	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
+	var infos []cpuinfo.CPUInfo
+	for _, cpuID := range allCPUs.UnsortedList() {
+		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
+	}
+	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
+	topo, _ := mockProvider.GetCPUTopology(logger)
+
+	guaranteedPod := &api.PodSandbox{Id: "pod-id-g", Name: "guaranteed-pod", Namespace: "ns", Uid: "pod-uid-g"}
+	guaranteedCtr := &api.Container{Id: "ctr-id-g", PodSandboxId: guaranteedPod.Id, Name: "guaranteed-ctr"}
+	sharedPod := &api.PodSandbox{Id: "pod-id-s", Name: "shared-pod", Namespace: "ns", Uid: "pod-uid-s"}
+	sharedCtr := &api.Container{Id: "ctr-id-s", PodSandboxId: sharedPod.Id, Name: "shared-ctr"}
+	claimUID := types.UID("claim-uid-1")
+	claimedCPUs := cpuset.New(0, 1)
+
+	cpuAllocationStore := store.NewCPUAllocation(topo, cpuset.New())
+	cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, claimedCPUs)
+
+	driver := &CPUDriver{
+		podConfigStore:     store.NewPodConfig(),
+		cpuAllocationStore: cpuAllocationStore,
+		claimTracker:       store.NewClaimTracker(),
+		cpuTopology:        topo,
+	}
+	driver.podConfigStore.SetContainerState(types.UID(guaranteedPod.Uid),
+		store.NewContainerState(guaranteedCtr.Name, types.UID(guaranteedCtr.Id), claimUID))
+	driver.podConfigStore.SetContainerState(types.UID(sharedPod.Uid),
+		store.NewContainerState(sharedCtr.Name, types.UID(sharedCtr.Id)))
+
+	// Precondition: the claimed CPUs are held out of the shared pool.
+	require.True(t, driver.cpuAllocationStore.GetSharedCPUs().Equals(allCPUs.Difference(claimedCPUs)),
+		"precondition: shared pool should exclude the claimed CPUs")
+
+	updates, err := driver.StopContainer(context.Background(), guaranteedPod, guaranteedCtr)
+	require.NoError(t, err)
+
+	// Invariant 1: the claim's CPUs are released back into the shared pool during StopContainer,
+	// not deferred to UnprepareResourceClaims.
+	require.True(t, driver.cpuAllocationStore.GetSharedCPUs().Equals(allCPUs),
+		"StopContainer should release the claim's CPUs back into the shared pool")
+
+	// Invariant 2: the surviving shared container is immediately re-broadened to the full pool.
+	require.Equal(t, []*api.ContainerUpdate{
+		{
+			ContainerId: sharedCtr.Id,
+			Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: allCPUs.String()}}},
+		},
+	}, updates)
+}
