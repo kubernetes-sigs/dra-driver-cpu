@@ -43,6 +43,9 @@ podAnnotations: {}
 # -- Extra labels to add to pods
 podLabels: {}
 
+# -- Sysfs file contents keyed by absolute /sys path; loaded once when the driver starts
+sysfsOverlay: {} # @schema additionalProperties: {type: string}
+
 # @schema additionalProperties:false
 resources:
   # @schema additionalProperties:false

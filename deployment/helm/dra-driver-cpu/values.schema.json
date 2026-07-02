@@ -158,6 +158,13 @@
         }
       }
     },
+    "sysfsOverlay": {
+      "description": "Sysfs file contents keyed by absolute /sys path; loaded once when the driver starts",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
     "tolerations": {
       "description": "Node tolerations; defaults to tolerating all NoSchedule taints",
       "type": "array",

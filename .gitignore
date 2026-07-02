@@ -31,8 +31,8 @@ go.work.sum
 .env
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
 
 # CI Manifests
 #  Partial files needed to regenerate the CI install file

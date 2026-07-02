@@ -57,6 +57,7 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
 | resources.requests.cpu | string | `"100m"` | CPU resource request |
 | resources.requests.memory | string | `"50Mi"` | Memory resource request |
 | serviceAccount.annotations | object | `{}` | Annotations to add to the ServiceAccount |
+| sysfsOverlay | object | `{}` | Sysfs file contents keyed by absolute /sys path; loaded once when the driver starts |
 | tolerations | list | `[{"effect":"NoSchedule","operator":"Exists"}]` | Node tolerations; defaults to tolerating all NoSchedule taints |
 
 ## Uninstallation
