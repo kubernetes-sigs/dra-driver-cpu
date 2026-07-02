@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "driverconfig.schema.json",
+  "$comment": "Schema for driverConfig values. Mirrors internal/driverconfig/config.go Config struct, except bindAddress which is intentionally excluded — use the healthzPort Helm value instead. Update this file when fields are added or removed from Config.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "enum": ["v1alpha1"]
+    },
+    "kubeconfig": {
+      "type": "string"
+    },
+    "hostnameOverride": {
+      "type": "string"
+    },
+    "reservedCPUs": {
+      "type": "string"
+    },
+    "cpuDeviceMode": {
+      "type": "string",
+      "enum": ["grouped", "individual"]
+    },
+    "groupBy": {
+      "type": "string",
+      "enum": ["numanode", "socket", "machine"]
+    },
+    "exposePCIeRoots": {
+      "type": "boolean"
+    }
+  }
+}

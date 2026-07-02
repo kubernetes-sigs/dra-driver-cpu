@@ -259,6 +259,8 @@ helm-schema: ## regenerate values.schema.json from values.yaml @schema annotatio
 		-f ${HELM_CHART}/values.yaml \
 		-o ${HELM_CHART}/values.schema.json \
 		--use-helm-docs \
+		--bundle \
+		--bundle-root ${HELM_CHART} \
 		--indent 2
 
 .PHONY: helm-schema-check

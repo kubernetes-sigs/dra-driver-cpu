@@ -110,6 +110,30 @@ func TestRunFailsWhenDriverProcessIsMissing(t *testing.T) {
 	}
 }
 
+// TestRunReadsConfigFile: config-file values appear in the report when --config is used.
+func TestRunReadsConfigFile(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "driver-config.yaml")
+	if err := os.WriteFile(cfgFile, []byte("reservedCPUs: \"2-3\"\n"), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	setupFakeHost(t, []byte("/dracpu\x00--config="+cfgFile+"\x00"))
+
+	stdout, err := captureStdout(t, func() error {
+		return gatherinfo.Run([]string{"--stdout"}, gatherinfo.Options{
+			DriverConfig: driverconfig.Default(),
+		}, logr.Discard())
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	report := readReport(t, []byte(stdout))
+	if report.DriverConfig.ReservedCPUs != "2-3" {
+		t.Fatalf("reservedCPUs = %q, want 2-3 (from config file)", report.DriverConfig.ReservedCPUs)
+	}
+}
+
 func TestRunRejectsStdoutWithOutputDir(t *testing.T) {
 	err := gatherinfo.Run([]string{"--stdout", "--output-dir=/tmp"}, gatherinfo.Options{}, logr.Discard())
 	if err == nil {
