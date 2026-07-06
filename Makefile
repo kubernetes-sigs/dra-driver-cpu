@@ -210,7 +210,11 @@ endif
 	kubectl wait --for=create node/${CLUSTER_NAME}-worker --timeout=120s
 	kubectl label node ${CLUSTER_NAME}-worker node-role.kubernetes.io/worker=''
 	kind load docker-image --name ${CLUSTER_NAME} ${IMAGE_CI} ${IMAGE_TEST}
+	if [[ "${DRACPU_E2E_SYSFS_OVERLAY}" == "true" ]]; then \
+		kubectl apply -n kube-system -f hack/examples/sysfs-overlay/configmap.yaml; \
+	fi
 	$(HELM) install dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
+		$(if $(filter true,${DRACPU_E2E_SYSFS_OVERLAY}),-f hack/examples/sysfs-overlay/values.yaml) \
 		--set image.repository=${IMAGE_REPO_CI} \
 		--set image.tag=${TAG} \
 		--set image.pullPolicy=IfNotPresent \
@@ -234,9 +238,18 @@ build-test-dracputester: ## build helper to serve as entry point and report cpu 
 	go build -v -o "$(OUT_DIR)/dracputester" ./test/image/dracputester
 
 test-e2e: ## run e2e test against an existing configured cluster
-	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) go test -v ./test/e2e/ --ginkgo.v $(GINKGO_LABEL_FILTER_ARG)
+	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) \
+		DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) \
+		DRACPU_E2E_EXPECTED_NUM_CPUS=$(DRACPU_E2E_EXPECTED_NUM_CPUS) \
+		DRACPU_E2E_EXPECTED_NUMA_NODES=$(DRACPU_E2E_EXPECTED_NUMA_NODES) \
+		go test -v ./test/e2e/ --ginkgo.v $(GINKGO_LABEL_FILTER_ARG)
 
 test-e2e-kind: ci-kind-setup test-e2e ## run e2e test against a purpose-built kind cluster
+
+test-e2e-kind-overlay: DRACPU_E2E_SYSFS_OVERLAY=true
+test-e2e-kind-overlay: DRACPU_E2E_EXPECTED_NUM_CPUS=4
+test-e2e-kind-overlay: DRACPU_E2E_EXPECTED_NUMA_NODES=2
+test-e2e-kind-overlay: ci-kind-setup test-e2e ## run e2e test against a kind cluster using the example sysfs overlay
 
 lint:  ## run the linter against the codebase
 	$(GOLANGCI_LINT) run ./... $(GOLANGCI_LINT_EXTRA_ARGS)

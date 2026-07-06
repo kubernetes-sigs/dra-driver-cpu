@@ -67,6 +67,7 @@ const (
 	daemonSetLabel            = "app=dracpu"
 	driverPodPollInterval     = 2 * time.Second
 	driverPodPollTimeout      = 2 * time.Minute
+	argSysFSOverlay           = "--sysfs-overlay="
 )
 
 var daemonSetNamespace = getEnvDaemonSetNamespace()
