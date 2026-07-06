@@ -73,6 +73,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		cpuDeviceMode                 string
 		groupBy                       string
 		publishNodeAllocatableMapping bool
+		allocatableCPUs               cpuset.CPUSet
 	)
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
@@ -90,9 +91,6 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 		rootFxt, err = fixture.ForGinkgo()
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create root fixture: %v", err)
-		infraFxt := rootFxt.WithPrefix("infra")
-		gomega.Expect(infraFxt.Setup(ctx)).To(gomega.Succeed())
-		ginkgo.DeferCleanup(infraFxt.Teardown)
 
 		ginkgo.By("checking the daemonset configuration matches the test configuration")
 		daemonSet, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, "dracpu", metav1.GetOptions{})
@@ -118,20 +116,13 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		rootFxt.Log.Info("using worker node", "nodeName", targetNode.Name)
 
-		infoPod := discovery.MakePod(infraFxt.Namespace.Name, dracpuTesterImage)
-		infoPod = e2epod.PinToNode(infoPod, targetNode.Name)
-		infoPod, err = e2epod.RunToCompletion(ctx, infraFxt.K8SClientset, infoPod)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create discovery pod: %v", err)
-		data, err := e2epod.GetLogs(ctx, infraFxt.K8SClientset, infoPod)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs from discovery pod: %v", err)
-		gomega.Expect(unmarshalLatestReport(data, &targetNodeCPUInfo)).To(gomega.Succeed())
-
-		allocatableCPUs := makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
+		targetNodeCPUInfo = discoverDriverCPUInfo(ctx, rootFxt.K8SClientset, targetNode.Name)
+		allocatableCPUs = makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
 		availableCPUs = allocatableCPUs.Difference(reservedCPUs)
 		if reservedCPUs.Size() > 0 {
 			gomega.Expect(availableCPUs).To(cpusetmatchers.HaveNoOverlapWith(reservedCPUs))
 		}
-		rootFxt.Log.Info("checking worker node", "nodeName", infoPod.Spec.NodeName, "coreCount", len(targetNodeCPUInfo.CPUs), "allocatableCPUs", allocatableCPUs.String(), "reservedCPUs", reservedCPUs.String(), "availableCPUs", availableCPUs.String())
+		rootFxt.Log.Info("checking worker node", "nodeName", targetNode.Name, "coreCount", allocatableCPUs.Size(), "allocatableCPUs", allocatableCPUs.String(), "reservedCPUs", reservedCPUs.String(), "availableCPUs", availableCPUs.String())
 	})
 
 	ginkgo.When("setting resource claims", func() {
@@ -173,7 +164,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				if availableCPUs.Size() < minCPUsAvailableForPodAllocation {
 					ginkgo.Skip(fmt.Sprintf("exclusive allocation tests require at least %d cpus in the worker node", minCPUsAvailableForPodAllocation))
 				}
-				fixture.By("found target nodes with %d allocatable cpus", len(targetNodeCPUInfo.CPUs))
+				fixture.By("found target node with %d allocatable cpus", allocatableCPUs.Size())
 			})
 
 			ginkgo.It("should allocate exclusive CPUs and remove from the shared pool", func(ctx context.Context) {
