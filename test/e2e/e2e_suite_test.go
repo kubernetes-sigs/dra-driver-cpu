@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/api/v1alpha1"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/gatherinfo"
+	e2eclient "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/client"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	podmatchers "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/matchers/pod"
@@ -39,6 +41,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/cpuset"
+	"sigs.k8s.io/yaml"
 )
 
 func TestE2E(t *testing.T) {
@@ -93,6 +96,38 @@ func waitForRunningDriverPods(ctx context.Context, client kubernetes.Interface) 
 	return pods
 }
 
+func waitForReadyDriverPod(ctx context.Context, client kubernetes.Interface, nodeName string) *v1.Pod {
+	ginkgo.GinkgoHelper()
+
+	var driverPod *v1.Pod
+	gomega.Eventually(func() error {
+		candidate, err := e2epod.GetDRACPUPod(ctx, client, nodeName)
+		if err != nil {
+			return err
+		}
+		if candidate.Status.Phase != v1.PodRunning {
+			return fmt.Errorf("driver pod %q on node %q is not Running", candidate.Name, nodeName)
+		}
+		if !isPodReady(candidate) {
+			return fmt.Errorf("driver pod %q on node %q is not Ready", candidate.Name, nodeName)
+		}
+		driverPod = candidate
+		return nil
+	}, driverPodPollTimeout, driverPodPollInterval).Should(gomega.Succeed(),
+		"timed out waiting for exactly one Running and Ready driver pod on node %q", nodeName)
+
+	return driverPod
+}
+
+func isPodReady(pod *v1.Pod) bool {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == v1.PodReady {
+			return condition.Status == v1.ConditionTrue
+		}
+	}
+	return false
+}
+
 func EventuallyFailedToCreate(ctx context.Context, fxt *fixture.Fixture, pod *v1.Pod) {
 	ginkgo.GinkgoHelper()
 
@@ -105,12 +140,30 @@ func EventuallyFailedToCreate(ctx context.Context, fxt *fixture.Fixture, pod *v1
 	}).WithTimeout(time.Minute).WithPolling(2 * time.Second).Should(podmatchers.BeFailedToCreate(fxt.Log))
 }
 
-func makeCPUSetFromDiscoveredCPUInfo(cpuInfo discovery.DRACPUInfo) cpuset.CPUSet {
-	coreIDs := make([]int, len(cpuInfo.CPUs))
-	for idx, cpu := range cpuInfo.CPUs {
-		coreIDs[idx] = cpu.CpuID
+func discoverDriverCPUs(ctx context.Context, cs kubernetes.Interface, nodeName string) cpuset.CPUSet {
+	ginkgo.GinkgoHelper()
+
+	driverPod := waitForReadyDriverPod(ctx, cs, nodeName)
+
+	restConfig, err := e2eclient.NewK8SConfig()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create Kubernetes config")
+
+	stdout, stderr, err := e2epod.Exec(ctx, restConfig, cs, driverPod, "/dracpu-gatherinfo", "--stdout")
+	gomega.Expect(err).ToNot(gomega.HaveOccurred(),
+		"dracpu-gatherinfo failed in pod %q on node %q; stdout: %s; stderr: %s",
+		driverPod.Name, nodeName, stdout, stderr)
+
+	var report gatherinfo.Report
+	gomega.Expect(yaml.Unmarshal([]byte(stdout), &report)).To(gomega.Succeed(),
+		"dracpu-gatherinfo output from pod %q should be valid YAML", driverPod.Name)
+	gomega.Expect(report.CPUDetails.CPUs).ToNot(gomega.BeEmpty(),
+		"dracpu-gatherinfo output from pod %q should include CPU details", driverPod.Name)
+
+	cpuIDs := make([]int, len(report.CPUDetails.CPUs))
+	for idx, cpu := range report.CPUDetails.CPUs {
+		cpuIDs[idx] = cpu.CPUID
 	}
-	return cpuset.New(coreIDs...)
+	return cpuset.New(cpuIDs...)
 }
 
 type CPUAllocation struct {
