@@ -26,7 +26,7 @@ YQ_VERSION ?= 4.47.1
 GOLANGCI_LINT_VERSION ?= 2.12.2
 HELM_DOCS_VERSION ?= 1.14.2
 HELM_SCHEMA_VERSION ?= 2.3.1
-KIND_K8S_VERSION ?= v1.36.0
+KIND_K8S_VERSION ?= v1.36.1
 GOPLS_VERSION ?= v0.22.0
 # paths
 YQ = $(OUT_DIR)/yq
@@ -107,6 +107,9 @@ LOCAL_PLATFORM?=linux/$(ARCH)
 DRACPU_E2E_CPU_DEVICE_MODE ?= grouped
 DRACPU_E2E_CPU_GROUP_BY ?= numanode
 DRACPU_E2E_RESERVED_CPUS ?= 0
+DRACPU_E2E_SYSFS_OVERLAY ?= false
+DRACPU_E2E_EXPECTED_NUM_CPUS ?=
+DRACPU_E2E_EXPECTED_NUMA_NODES ?=
 # Extra arguments passed to golangci-lint in the lint target.
 # For example, set GOLANGCI_LINT_EXTRA_ARGS=--fix to auto-fix issues.
 GOLANGCI_LINT_EXTRA_ARGS ?=
@@ -190,7 +193,11 @@ endif
 	kind create cluster --name ${CLUSTER_NAME} --image=kindest/node:$(KIND_K8S_VERSION) --config hack/ci/kind-ci.yaml
 	kubectl label node ${CLUSTER_NAME}-worker node-role.kubernetes.io/worker=''
 	kind load docker-image --name ${CLUSTER_NAME} ${IMAGE_CI} ${IMAGE_TEST}
+	if [[ "${DRACPU_E2E_SYSFS_OVERLAY}" == "true" ]]; then \
+		kubectl apply -n kube-system -f hack/examples/sysfs-overlay/configmap.yaml; \
+	fi
 	$(HELM) install dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
+		$(if $(filter true,${DRACPU_E2E_SYSFS_OVERLAY}),-f hack/examples/sysfs-overlay/values.yaml) \
 		--set image.repository=${IMAGE_REPO_CI} \
 		--set image.tag=${TAG} \
 		--set image.pullPolicy=IfNotPresent \
@@ -212,9 +219,18 @@ build-test-dracputester: ## build helper to serve as entry point and report cpu 
 	go build -v -o "$(OUT_DIR)/dracputester" ./test/image/dracputester
 
 test-e2e: ## run e2e test against an existing configured cluster
-	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) go test -v ./test/e2e/ --ginkgo.v
+	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) \
+		DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) \
+		DRACPU_E2E_EXPECTED_NUM_CPUS=$(DRACPU_E2E_EXPECTED_NUM_CPUS) \
+		DRACPU_E2E_EXPECTED_NUMA_NODES=$(DRACPU_E2E_EXPECTED_NUMA_NODES) \
+		go test -v ./test/e2e/ --ginkgo.v
 
 test-e2e-kind: ci-kind-setup test-e2e ## run e2e test against a purpose-built kind cluster
+
+test-e2e-kind-overlay: DRACPU_E2E_SYSFS_OVERLAY=true
+test-e2e-kind-overlay: DRACPU_E2E_EXPECTED_NUM_CPUS=4
+test-e2e-kind-overlay: DRACPU_E2E_EXPECTED_NUMA_NODES=2
+test-e2e-kind-overlay: ci-kind-setup test-e2e ## run e2e test against a kind cluster using the example sysfs overlay
 
 lint:  ## run the linter against the codebase
 	$(GOLANGCI_LINT) run ./... $(GOLANGCI_LINT_EXTRA_ARGS)

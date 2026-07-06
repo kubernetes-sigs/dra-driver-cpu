@@ -57,6 +57,7 @@ const (
 	argReservedCPUs       = "--reserved-cpus="
 	argCPUDeviceMode      = "--cpu-device-mode="
 	argGroupBy            = "--group-by="
+	argSysFSOverlay       = "--sysfs-overlay="
 	daemonSetNamespace    = "kube-system"
 	daemonSetLabel        = "app=dracpu"
 	driverPodPollInterval = 2 * time.Second
