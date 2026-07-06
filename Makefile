@@ -55,7 +55,7 @@ default: build ## Default builds
 help: ## Display this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-23s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
-build: build-dracpu build-dracpu-gatherinfo build-test-dracpuinfo build-test-dracputester ## build all the binaries
+build: build-dracpu build-dracpu-gatherinfo build-test-dracputester ## build all the binaries
 
 build-dracpu: ## build dracpu
 	go build -v -o "$(OUT_DIR)/dracpu" ./cmd/dracpu
@@ -210,9 +210,6 @@ build-test-image: ## build tests image
 
 build-test-dracputester: ## build helper to serve as entry point and report cpu allocation
 	go build -v -o "$(OUT_DIR)/dracputester" ./test/image/dracputester
-
-build-test-dracpuinfo: ## build helper to expose hardware info in the internal dracpu format
-	go build -v -o "$(OUT_DIR)/dracpuinfo" ./test/image/dracpuinfo
 
 test-e2e: ## run e2e test against an existing configured cluster
 	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) go test -v ./test/e2e/ --ginkgo.v

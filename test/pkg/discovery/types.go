@@ -16,10 +16,7 @@ limitations under the License.
 
 package discovery
 
-import (
-	"github.com/kubernetes-sigs/dra-driver-cpu/internal/buildinfo"
-	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
-)
+import "github.com/kubernetes-sigs/dra-driver-cpu/internal/buildinfo"
 
 type DRACPUBuildinfo struct {
 	GoVersion   string `json:"goVersion"`
@@ -33,11 +30,6 @@ type DRACPUAllocation struct {
 
 type DRACPURuntimeinfo struct {
 	CPUAffinity string `json:"affinity"`
-}
-
-type DRACPUInfo struct {
-	Buildinfo DRACPUBuildinfo   `json:"buildinfo"`
-	CPUs      []cpuinfo.CPUInfo `json:"cpus"`
 }
 
 type DRACPUTester struct {
