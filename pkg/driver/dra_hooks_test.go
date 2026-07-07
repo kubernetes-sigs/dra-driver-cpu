@@ -2131,6 +2131,7 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
 	driver.topology.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
 	driver.topology.onlineCPUs = driver.topology.cpuTopology.CPUDetails.CPUs()
+	driver.topology.reservedCPUs = reservedCPUs
 	driver.cpuAllocationStore = store.NewCPUAllocation(driver.topology.cpuTopology, reservedCPUs)
 	for claimUID, cpus := range initialAllocations {
 		requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, cpus)
