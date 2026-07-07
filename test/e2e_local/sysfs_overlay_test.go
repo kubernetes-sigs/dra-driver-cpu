@@ -23,30 +23,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/gatherinfo"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"sigs.k8s.io/yaml"
 )
-
-type gatherInfoReport struct {
-	CPUDetails struct {
-		Topology struct {
-			NumCPUs      int  `json:"numCPUs"`
-			NumNUMANodes int  `json:"numNUMANodes"`
-			SMTEnabled   bool `json:"smtEnabled"`
-		} `json:"topology"`
-		CPUs []struct {
-			CPUID         int `json:"cpuID"`
-			CoreID        int `json:"coreID"`
-			SocketID      int `json:"socketID"`
-			NUMANodeID    int `json:"numaNodeID"`
-			UncoreCacheID int `json:"uncoreCacheID"`
-		} `json:"cpus"`
-	} `json:"cpuDetails"`
-	DriverConfig struct {
-		SysFSOverlay string `json:"sysfsOverlay"`
-	} `json:"driverConfig"`
-}
 
 var _ = ginkgo.Describe("[Local] dracpu-gatherinfo with HOST_ROOT and sysfs overlay", func() {
 	ginkgo.It("should read the base topology and apply overlay values", func() {
@@ -87,7 +68,7 @@ var _ = ginkgo.Describe("[Local] dracpu-gatherinfo with HOST_ROOT and sysfs over
 		out, err := cmd.Output()
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
-		var report gatherInfoReport
+		var report gatherinfo.Report
 		gomega.Expect(yaml.Unmarshal(out, &report)).To(gomega.Succeed())
 		gomega.Expect(report.DriverConfig.SysFSOverlay).To(gomega.Equal(overlayPath))
 		gomega.Expect(report.CPUDetails.Topology.NumCPUs).To(gomega.Equal(1))
