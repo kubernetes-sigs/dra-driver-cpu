@@ -45,6 +45,7 @@ const (
 	AttributeCoreID     resourceapi.QualifiedName = "dra.cpu/coreID"
 	AttributeCPUID      resourceapi.QualifiedName = "dra.cpu/cpuID"
 	AttributeNumCPUs    resourceapi.QualifiedName = "dra.cpu/numCPUs"
+	AttributeCPUIDs     resourceapi.QualifiedName = "dra.cpu/cpuIDs"
 )
 
 // SetCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other
