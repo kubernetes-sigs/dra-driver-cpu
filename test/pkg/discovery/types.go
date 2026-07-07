@@ -81,6 +81,9 @@ func FromEnviron() DRACPUEnvironment {
 type DRACPURuntimeinfo struct {
 	CPUAffinity string            `json:"affinity"`
 	Environ     DRACPUEnvironment `json:"environ"`
+	// KernelOnlineCPUs is the CPU set exposed by /sys/devices/system/cpu/online.
+	// Unlike the driver's discovered topology, it is unaffected by --sysfs-overlay.
+	KernelOnlineCPUs string `json:"kernelOnlineCPUs"`
 }
 
 type DRACPUInfo struct {

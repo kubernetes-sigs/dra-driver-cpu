@@ -252,6 +252,8 @@ type CPUAllocation struct {
 	CPUAffinity cpuset.CPUSet
 	// CPUReported is the CPUSet reported by the environment variables
 	CPUReported cpuset.CPUSet
+	// KernelOnlineCPUs is the real online CPU set, independent of the driver overlay.
+	KernelOnlineCPUs cpuset.CPUSet
 }
 
 func unmarshalLatestReport(data string, v any) error {
@@ -285,6 +287,8 @@ func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod
 	if !errors.Is(err, discovery.ErrNotFound) { // no exclusive claims reports NotFound
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse assigned cpuset env var")
 	}
+	ret.KernelOnlineCPUs, err = cpuset.Parse(testerInfo.Runtimeinfo.KernelOnlineCPUs)
+	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse kernel online cpuset: %q", testerInfo.Runtimeinfo.KernelOnlineCPUs)
 	return ret
 }
 
