@@ -29,6 +29,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpumanager"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
@@ -65,6 +66,14 @@ type CPUInfoProvider interface {
 	GetCPUTopology(logger logr.Logger) (*cpuinfo.CPUTopology, error)
 }
 
+type CPUAllocator interface {
+	// Allocate produces a cpuset from the given `availableCPUs` of `count` items. `availableCPUs` must be non-empty;
+	// if it is or contains less than `count` CPUs, the allocation fails and `err` is non-nil.
+	// `preferredCPUs` optionally provides a set of CPUs the allocator must include in the returned set.
+	// if `preferredCPUs` is empty, is ignored. `preferredCPUs` must be a subset of `availableCPUs`.
+	Allocate(logger logr.Logger, availableCPUs, preferredCPUs cpuset.CPUSet, count int) (cpuset.CPUSet, error)
+}
+
 // CPUDriver is the structure that holds all the driver runtime information.
 type CPUDriver struct {
 	driverName              string
@@ -82,6 +91,7 @@ type CPUDriver struct {
 	pcieRootMapper          *store.PCIeRootMapper
 	devicesPerResourceSlice int
 	metrics                 cpumetrics.Recorder
+	cpuAllocator            CPUAllocator
 }
 
 // deviceTopology holds the CPU topology and device-to-CPU/socket/NUMA
@@ -190,6 +200,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.topology.cpuTopology, config.ReservedCPUs)
 	plugin.refreshAllocationMetrics()
 	plugin.podConfigStore = store.NewPodConfig()
+	plugin.cpuAllocator = cpumanager.NewAllocator(topo)
 
 	var devices []resourceapi.Device
 
