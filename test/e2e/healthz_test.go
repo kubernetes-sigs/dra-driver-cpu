@@ -55,12 +55,12 @@ var _ = ginkgo.Describe("dra-driver-cpu HTTP health endpoints", ginkgo.Ordered, 
 					healthzPath, pod.Name, pod.Spec.NodeName))
 
 				gomega.Eventually(func(g gomega.Gomega) {
-					_, err := fxt.K8SClientset.CoreV1().Pods(daemonSetNamespace).
+					body, err := fxt.K8SClientset.CoreV1().Pods(daemonSetNamespace).
 						ProxyGet("http", pod.Name, strconv.Itoa(driverHTTPPort), healthzPath, nil).
 						DoRaw(ctx)
 					g.Expect(err).NotTo(gomega.HaveOccurred(),
-						"GET %s through the pod proxy failed for pod %q on node %q",
-						healthzPath, pod.Name, pod.Spec.NodeName)
+						"GET %s through the pod proxy failed for pod %q on node %q; response body: %q",
+						healthzPath, pod.Name, pod.Spec.NodeName, body)
 				}, driverPodPollTimeout, driverPodPollInterval).Should(gomega.Succeed(),
 					"%s through the pod proxy did not return HTTP 200 for pod %q within timeout",
 					healthzPath, pod.Name)
