@@ -27,6 +27,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/testr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	devattr "github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
@@ -946,6 +947,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			},
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 			podConfigStore:     store.NewPodConfig(),
+			cpuAllocator:       cpuallocator.NewCPUManager(topo),
 		}
 		if withExistingAllocation {
 			requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, existingCPUs)
@@ -1588,6 +1590,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 				deviceNameToNUMANodeID: map[string]int{},
 			},
 			cpuAllocationStore: cpuStore,
+			cpuAllocator:       cpuallocator.NewCPUManager(topo),
 			cdiMgr:             cdiMgr,
 			podConfigStore:     store.NewPodConfig(),
 		}, cpuStore, cdiMgr
@@ -1607,6 +1610,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 				deviceNameToNUMANodeID: map[string]int{"cpudevnuma0": 0, "cpudevnuma1": 1},
 			},
 			cpuAllocationStore: cpuStore,
+			cpuAllocator:       cpuallocator.NewCPUManager(topo),
 			cdiMgr:             cdiMgr,
 			podConfigStore:     store.NewPodConfig(),
 		}, cpuStore, cdiMgr

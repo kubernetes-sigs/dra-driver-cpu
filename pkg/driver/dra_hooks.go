@@ -26,7 +26,6 @@ import (
 	"github.com/go-logr/logr"
 	opaqueapi "github.com/kubernetes-sigs/dra-driver-cpu/api"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
-	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpumanager"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	resourceapi "k8s.io/api/resource/v1"
@@ -164,7 +163,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			socketCPUs := topo.CPUDetails.CPUsInSockets(socketID)
 			availableCPUsForDevice := allocatableCPUs.Difference(cpuAssignment).Intersection(socketCPUs)
 			logger.V(4).Info("socket CPU availability", "socketID", socketID, "socketCPUs", socketCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
-			cur, err = cpumanager.TakeByTopologyNUMAPacked(logger, topo, availableCPUsForDevice, int(claimCPUCount), cpumanager.CPUSortingStrategyPacked, true)
+			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, cpuset.New(), int(claimCPUCount))
 		case device.GROUP_BY_NUMA_NODE:
 			numaNodeID, ok := cp.topology.deviceNameToNUMANodeID[alloc.Device]
 			if !ok {
@@ -173,7 +172,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			numaCPUs := topo.CPUDetails.CPUsInNUMANodes(numaNodeID)
 			availableCPUsForDevice := allocatableCPUs.Difference(cpuAssignment).Intersection(numaCPUs)
 			logger.V(4).Info("NUMA node CPU availability", "numaNodeID", numaNodeID, "numaCPUs", numaCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
-			cur, err = cpumanager.TakeByTopologyNUMAPacked(logger, topo, availableCPUsForDevice, int(claimCPUCount), cpumanager.CPUSortingStrategyPacked, true)
+			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, cpuset.New(), int(claimCPUCount))
 		case device.GROUP_BY_MACHINE:
 			opaqueCPUSet, ok, err := cp.getOpaqueCPUSet(logger, claim.Status.Allocation, alloc)
 			if err != nil {
