@@ -168,8 +168,9 @@ func discoverDriverCPUs(ctx context.Context, cs kubernetes.Interface, nodeName s
 }
 
 type CPUAllocation struct {
-	CPUAssigned cpuset.CPUSet
-	CPUAffinity cpuset.CPUSet
+	CPUAssigned      cpuset.CPUSet
+	CPUAffinity      cpuset.CPUSet
+	KernelOnlineCPUs cpuset.CPUSet
 }
 
 func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod *v1.Pod) CPUAllocation {
@@ -191,6 +192,8 @@ func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod
 	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse assigned cpuset: %q", testerInfo.Allocation.CPUs)
 	ret.CPUAffinity, err = cpuset.Parse(testerInfo.Runtimeinfo.CPUAffinity)
 	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse affinity cpuset: %q", testerInfo.Runtimeinfo.CPUAffinity)
+	ret.KernelOnlineCPUs, err = cpuset.Parse(testerInfo.Runtimeinfo.KernelOnlineCPUs)
+	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse kernel online cpuset: %q", testerInfo.Runtimeinfo.KernelOnlineCPUs)
 	return ret
 }
 

@@ -30,6 +30,9 @@ type DRACPUAllocation struct {
 
 type DRACPURuntimeinfo struct {
 	CPUAffinity string `json:"affinity"`
+	// KernelOnlineCPUs is the CPU set exposed by /sys/devices/system/cpu/online.
+	// Unlike the driver's discovered topology, it is unaffected by --sysfs-overlay.
+	KernelOnlineCPUs string `json:"kernelOnlineCPUs"`
 }
 
 type DRACPUTester struct {

@@ -195,10 +195,9 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 
 		ginkgo.By("Verifying Pod 2 CPU mask is NOT restricted to the shared pool")
 		alloc2 := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, createdPod2)
-		fxt.Log.Info("Pod 2 CPU allocation (without NRI)", "cpuAssigned", alloc2.CPUAssigned.String())
-		// Since NRI is down, pod2 is not restricted to shared pool CPUs. Its native affinity may
-		// include CPUs outside the driver's overlaid topology, so require the driver CPUs and the
-		// exclusively allocated CPUs to be subsets instead of requiring exact equality.
+		fxt.Log.Info("Pod 2 CPU allocation (without NRI)", "cpuAssigned", alloc2.CPUAssigned.String(), "cpuAffinity", alloc2.CPUAffinity.String(), "kernelOnlineCPUs", alloc2.KernelOnlineCPUs.String())
+		// Since NRI is down, pod2's affinity must match the CPUs that the kernel reports online.
+		gomega.Expect(alloc2.CPUAffinity).To(cpusetmatchers.Equal(alloc2.KernelOnlineCPUs), "Pod 2 CPU mask not equal to all kernel-online CPUs")
 		gomega.Expect(allocatableCPUs).To(cpusetmatchers.BeSubsetOf(alloc2.CPUAffinity), "Pod 2 does not have access to all driver CPUs")
 		gomega.Expect(exclusiveCPUs).To(cpusetmatchers.BeSubsetOf(alloc2.CPUAffinity), "Pod 2 is still restricted away from exclusive CPUs")
 
