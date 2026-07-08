@@ -359,3 +359,15 @@ func generateShortID(length int) string {
 	}
 	return string(b)
 }
+
+func findAllocatorMode(logger logr.Logger, config *Config) string {
+	if config.Allocator == driverconfig.AllocatorExternal {
+		// easy case: explicit user preference
+		return config.Allocator
+	}
+	if config.CPUDeviceMode == device.CPU_DEVICE_MODE_GROUPED && config.CPUDeviceGroupBy == device.GROUP_BY_MACHINE {
+		logger.Info("machine grouping in grouped device mode requires external allocator, forcing")
+		return driverconfig.AllocatorExternal
+	}
+	return driverconfig.AllocatorCPUManager
+}
