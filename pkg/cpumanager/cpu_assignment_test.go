@@ -70,6 +70,12 @@ func TestCPUAccumulatorFreeSockets(t *testing.T) {
 			[]int{},
 		},
 		{
+			"asymmetric sockets, larger socket free",
+			topoAsymmetricSockets,
+			cpuset.New(2, 3, 4, 5),
+			[]int{1},
+		},
+		{
 			"dual socket, multi numa per socket, HT, 2 sockets free",
 			topoDualSocketMultiNumaPerSocketHT,
 			mustParseCPUSet(t, "0-79"),
@@ -128,6 +134,53 @@ func TestCPUAccumulatorFreeSockets(t *testing.T) {
 				t.Errorf("expected %v to equal %v", result, tc.expect)
 			}
 		})
+	}
+}
+
+func TestCPUAccumulatorFreeCoresWithRepeatedCoreIDs(t *testing.T) {
+	logger := klog.Background()
+	acc := newCPUAccumulator(logger, topoRepeatedCoreIDs, cpuset.New(0, 1, 2, 3), 2, CPUSortingStrategyPacked)
+
+	if got, want := acc.freeCores(), []topology.CoreKey{
+		{SocketID: 0, ClusterID: 0, CoreID: 0},
+		{SocketID: 1, ClusterID: 0, CoreID: 0},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("freeCores() = %v, want %v", got, want)
+	}
+}
+
+func TestTopologyQueriesTrackAllAndAvailableCoreCPUs(t *testing.T) {
+	logger := klog.Background()
+	acc := newCPUAccumulator(logger, topoRepeatedCoreIDs, cpuset.New(0, 1), 0, CPUSortingStrategyPacked)
+
+	socket0Core0 := topology.CoreKey{SocketID: 0, ClusterID: 0, CoreID: 0}
+	socket1Core0 := topology.CoreKey{SocketID: 1, ClusterID: 0, CoreID: 0}
+
+	if got, want := acc.queries.allCPUsInCoreKeys(socket0Core0), cpuset.New(0, 1); !got.Equals(want) {
+		t.Fatalf("allCPUsInCoreKeys(socket0Core0) = %s, want %s", got.String(), want.String())
+	}
+	if got, want := acc.queries.allCPUsInCoreKeys(socket1Core0), cpuset.New(2, 3); !got.Equals(want) {
+		t.Fatalf("allCPUsInCoreKeys(socket1Core0) = %s, want %s", got.String(), want.String())
+	}
+	if got := acc.queries.availableCPUsInCoreKeys(socket1Core0); !got.Equals(cpuset.New()) {
+		t.Fatalf("availableCPUsInCoreKeys(socket1Core0) = %s, want empty set", got.String())
+	}
+}
+
+func TestTopologyQueriesTrackAvailableCPUsAfterTake(t *testing.T) {
+	logger := klog.Background()
+	acc := newCPUAccumulator(logger, topoRepeatedCoreIDs, cpuset.New(0, 1, 2, 3), 0, CPUSortingStrategyPacked)
+
+	socket1Core0 := topology.CoreKey{SocketID: 1, ClusterID: 0, CoreID: 0}
+
+	if got, want := acc.queries.availableCPUsInCoreKeys(socket1Core0), cpuset.New(2, 3); !got.Equals(want) {
+		t.Fatalf("availableCPUsInCoreKeys(socket1Core0) before take = %s, want %s", got.String(), want.String())
+	}
+
+	acc.take(cpuset.New(2, 3))
+
+	if got := acc.queries.availableCPUsInCoreKeys(socket1Core0); !got.Equals(cpuset.New()) {
+		t.Fatalf("availableCPUsInCoreKeys(socket1Core0) after take = %s, want empty set", got.String())
 	}
 }
 
@@ -290,55 +343,86 @@ func TestCPUAccumulatorFreeCores(t *testing.T) {
 		description   string
 		topo          *topology.CPUTopology
 		availableCPUs cpuset.CPUSet
-		expect        []int
+		expect        []topology.CoreKey
 	}{
 		{
 			"single socket HT, 4 cores free",
 			topoSingleSocketHT,
 			cpuset.New(0, 1, 2, 3, 4, 5, 6, 7),
-			[]int{0, 1, 2, 3},
+			[]topology.CoreKey{
+				{SocketID: 0, ClusterID: 0, CoreID: 0},
+				{SocketID: 0, ClusterID: 0, CoreID: 1},
+				{SocketID: 0, ClusterID: 0, CoreID: 2},
+				{SocketID: 0, ClusterID: 0, CoreID: 3},
+			},
 		},
 		{
 			"single socket HT, 3 cores free",
 			topoSingleSocketHT,
 			cpuset.New(0, 1, 2, 4, 5, 6),
-			[]int{0, 1, 2},
+			[]topology.CoreKey{
+				{SocketID: 0, ClusterID: 0, CoreID: 0},
+				{SocketID: 0, ClusterID: 0, CoreID: 1},
+				{SocketID: 0, ClusterID: 0, CoreID: 2},
+			},
 		},
 		{
 			"single socket HT, 3 cores free (1 partially consumed)",
 			topoSingleSocketHT,
 			cpuset.New(0, 1, 2, 3, 4, 5, 6),
-			[]int{0, 1, 2},
+			[]topology.CoreKey{
+				{SocketID: 0, ClusterID: 0, CoreID: 0},
+				{SocketID: 0, ClusterID: 0, CoreID: 1},
+				{SocketID: 0, ClusterID: 0, CoreID: 2},
+			},
 		},
 		{
 			"single socket HT, 0 cores free",
 			topoSingleSocketHT,
 			cpuset.New(),
-			[]int{},
+			[]topology.CoreKey{},
 		},
 		{
 			"single socket HT, 0 cores free (4 partially consumed)",
 			topoSingleSocketHT,
 			cpuset.New(0, 1, 2, 3),
-			[]int{},
+			[]topology.CoreKey{},
 		},
 		{
 			"dual socket HT, 6 cores free",
 			topoDualSocketHT,
 			cpuset.New(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
-			[]int{0, 2, 4, 1, 3, 5},
+			[]topology.CoreKey{
+				{SocketID: 0, ClusterID: 0, CoreID: 0},
+				{SocketID: 0, ClusterID: 0, CoreID: 2},
+				{SocketID: 0, ClusterID: 0, CoreID: 4},
+				{SocketID: 1, ClusterID: 0, CoreID: 1},
+				{SocketID: 1, ClusterID: 0, CoreID: 3},
+				{SocketID: 1, ClusterID: 0, CoreID: 5},
+			},
 		},
 		{
 			"dual socket HT, 5 cores free (1 consumed from socket 0)",
 			topoDualSocketHT,
 			cpuset.New(2, 1, 3, 4, 5, 7, 8, 9, 10, 11),
-			[]int{2, 4, 1, 3, 5},
+			[]topology.CoreKey{
+				{SocketID: 0, ClusterID: 0, CoreID: 2},
+				{SocketID: 0, ClusterID: 0, CoreID: 4},
+				{SocketID: 1, ClusterID: 0, CoreID: 1},
+				{SocketID: 1, ClusterID: 0, CoreID: 3},
+				{SocketID: 1, ClusterID: 0, CoreID: 5},
+			},
 		},
 		{
 			"dual socket HT, 4 cores free (1 consumed from each socket)",
 			topoDualSocketHT,
 			cpuset.New(2, 3, 4, 5, 8, 9, 10, 11),
-			[]int{2, 4, 3, 5},
+			[]topology.CoreKey{
+				{SocketID: 0, ClusterID: 0, CoreID: 2},
+				{SocketID: 0, ClusterID: 0, CoreID: 4},
+				{SocketID: 1, ClusterID: 0, CoreID: 3},
+				{SocketID: 1, ClusterID: 0, CoreID: 5},
+			},
 		},
 	}
 
@@ -767,6 +851,15 @@ func TestTakeByTopologyNUMAPacked(t *testing.T) {
 			"",
 			mustParseCPUSet(t, "4-7,12-15,1,9"),
 		},
+		{
+			"take partial uncore from asymmetric SMT uncore",
+			topoAsymmetricUncoreSMT,
+			StaticPolicyOptions{PreferAlignByUncoreCacheOption: true},
+			mustParseCPUSet(t, "0-5"),
+			3,
+			"",
+			cpuset.New(0, 2, 5),
+		},
 	}...)
 
 	for _, tc := range testCases {
@@ -784,6 +877,78 @@ func TestTakeByTopologyNUMAPacked(t *testing.T) {
 				t.Errorf("expected result [%s] to equal [%s]", result, tc.expResult)
 			}
 		})
+	}
+}
+
+func TestTakeByTopologyNUMAPackedRequest(t *testing.T) {
+	logger := klog.Background()
+	request := newPackedAllocationRequest(topoAsymmetricUncoreSMT, mustParseCPUSet(t, "0-5"), 3, CPUSortingStrategyPacked, true)
+
+	got, err := takeByTopologyNUMAPackedRequest(logger, request)
+	if err != nil {
+		t.Fatalf("takeByTopologyNUMAPackedRequest() failed: %v", err)
+	}
+
+	want := cpuset.New(0, 2, 5)
+	if !got.Equals(want) {
+		t.Fatalf("takeByTopologyNUMAPackedRequest() = %s, want %s", got.String(), want.String())
+	}
+}
+
+func TestTakeByTopologyNUMADistributedRequest(t *testing.T) {
+	logger := klog.Background()
+	request := newDistributedAllocationRequest(
+		topoDualSocketHT,
+		cpuset.New(1, 2, 3, 4, 5, 7, 8, 9, 10, 11),
+		1,
+		2,
+		CPUSortingStrategyPacked,
+	)
+
+	got, err := takeByTopologyNUMADistributedRequest(logger, request)
+	if err != nil {
+		t.Fatalf("takeByTopologyNUMADistributedRequest() failed: %v", err)
+	}
+
+	want := cpuset.New(2)
+	if !got.Equals(want) {
+		t.Fatalf("takeByTopologyNUMADistributedRequest() = %s, want %s", got.String(), want.String())
+	}
+}
+
+func TestTakeByTopologyRequestUsesPackedPolicy(t *testing.T) {
+	logger := klog.Background()
+	request := newPackedAllocationRequest(topoAsymmetricUncoreSMT, mustParseCPUSet(t, "0-5"), 3, CPUSortingStrategyPacked, true)
+
+	got, err := takeByTopologyRequest(logger, request)
+	if err != nil {
+		t.Fatalf("takeByTopologyRequest() failed: %v", err)
+	}
+
+	want := cpuset.New(0, 2, 5)
+	if !got.Equals(want) {
+		t.Fatalf("takeByTopologyRequest() = %s, want %s", got.String(), want.String())
+	}
+}
+
+func TestTakeByTopologyRequestUsesDistributedPolicy(t *testing.T) {
+	logger := klog.Background()
+	request := newDistributedAllocationRequest(
+		topoDualSocketHT,
+		cpuset.New(1, 2, 3, 4, 5, 7, 8, 9, 10, 11),
+		1,
+		2,
+		CPUSortingStrategyPacked,
+	)
+
+	got, err := takeByTopologyRequest(logger, request)
+	if err != nil {
+		t.Fatalf("takeByTopologyRequest() failed: %v", err)
+	}
+
+	want := cpuset.New(2)
+	if !got.Equals(want) {
+		t.Fatalf("takeByTopologyRequest() = %s, want %s", got.String(), want.String())
 	}
 }
 
