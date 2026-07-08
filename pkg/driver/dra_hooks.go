@@ -26,7 +26,6 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
-	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/extalloc"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -176,19 +175,14 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			}
 			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, preferredCPUs, claimCPUCount)
 		case device.GROUP_BY_MACHINE:
-			opaqueCPUSet, ok, err := extalloc.GetOpaqueCPUSet(logger, cp.driverName, claim.Status.Allocation, alloc)
+			// no mapping needed in machine mode - just one device = the whole machine
+			availableCPUs := cp.topology.onlineCPUs.Difference(cp.topology.reservedCPUs)
+			logger.V(4).Info("Machine CPU availability", "availableCPUs", availableCPUs.String())
+			preferredCPUs, err = cp.cpuAllocator.GetPreferredCPUs(logger, claim.Status.Allocation, alloc, claimCPUCount)
 			if err != nil {
 				return kubeletplugin.PrepareResult{Err: err}
 			}
-			if !ok {
-				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no opaque cpuset configuration found for allocation request %q", alloc.Request)}
-			}
-
-			err = extalloc.ValidateOpaqueCPUSet(opaqueCPUSet, cp.topology.onlineCPUs, cp.topology.reservedCPUs, claimCPUCount)
-			if err != nil {
-				return kubeletplugin.PrepareResult{Err: err}
-			}
-			cur = opaqueCPUSet
+			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUs, preferredCPUs, claimCPUCount)
 			logger.V(2).Info("using opaque config CPU assignment", "device", alloc.Device, "assigned", cur.String())
 		}
 

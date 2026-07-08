@@ -242,8 +242,9 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	plugin.refreshAllocationMetrics()
 	plugin.podConfigStore = store.NewPodConfig()
 
-	logger.Info("creating CPU allocator", "method", config.Allocator)
-	switch config.Allocator {
+	allocMode := findAllocatorMode(logger, config)
+	logger.Info("creating CPU allocator", "method", allocMode)
+	switch allocMode {
 	case driverconfig.AllocatorExternal:
 		plugin.cpuAllocator = extalloc.NewAllocator(config.DriverName, topo, plugin.topology.onlineCPUs, config.ReservedCPUs)
 	default:
@@ -465,4 +466,16 @@ func generateShortID(length int) string {
 		b[i] = hexDigits[rand.IntN(len(hexDigits))] //nolint:gosec
 	}
 	return string(b)
+}
+
+func findAllocatorMode(logger logr.Logger, config *Config) string {
+	if config.Allocator == driverconfig.AllocatorExternal {
+		// easy case: explicit user preference
+		return config.Allocator
+	}
+	if config.CPUDeviceMode == device.CPU_DEVICE_MODE_GROUPED && config.CPUDeviceGroupBy == device.GROUP_BY_MACHINE {
+		logger.Info("machine grouping in grouped device mode requires external allocator, forcing")
+		return driverconfig.AllocatorExternal
+	}
+	return driverconfig.AllocatorCPUManager
 }

@@ -44,6 +44,8 @@ func NewAllocator(driverName string, topo *topology.CPUTopology, onlineCPUs, res
 }
 
 func (alc *Allocator) Allocate(logger logr.Logger, availableCPUs, preferredCPUs cpuset.CPUSet, count int) (cpuset.CPUSet, error) {
+	// There's no allocation to be done here, just a final sanity check about the preferred CPU hint we're trusting.
+	// This check is redundant in group-by=machine, but necessary in group-by={socket,numa}
 	if !preferredCPUs.IsSubsetOf(availableCPUs) {
 		return cpuset.CPUSet{}, fmt.Errorf("preferred CPUs <%s> must be a subset of available CPUs <%s>", preferredCPUs.String(), availableCPUs.String())
 	}
@@ -51,11 +53,14 @@ func (alc *Allocator) Allocate(logger logr.Logger, availableCPUs, preferredCPUs 
 }
 
 func (alc *Allocator) GetPreferredCPUs(logger logr.Logger, allocation *resourceapi.AllocationResult, alloc resourceapi.DeviceRequestAllocationResult, count int) (cpuset.CPUSet, error) {
-	preferred, _, err := GetOpaqueCPUSet(logger, alc.driverName, allocation, alloc)
+	preferred, ok, err := getOpaqueCPUSet(logger, alc.driverName, allocation, alloc)
 	if err != nil {
 		return cpuset.CPUSet{}, err
 	}
-	err = ValidateOpaqueCPUSet(preferred, alc.onlineCPUs, alc.reservedCPUs, count)
+	if !ok {
+		return cpuset.CPUSet{}, fmt.Errorf("no opaque cpuset configuration found for allocation request %q", alloc.Request)
+	}
+	err = validateOpaqueCPUSet(preferred, alc.onlineCPUs, alc.reservedCPUs, count)
 	if err != nil {
 		return cpuset.CPUSet{}, err
 	}
@@ -76,7 +81,7 @@ func (alc *Allocator) Validate(preferredCPUs, preparedCPUs, assignedCPUs cpuset.
 	return nil
 }
 
-func GetOpaqueCPUSet(logger logr.Logger, driverName string, allocation *resourceapi.AllocationResult, alloc resourceapi.DeviceRequestAllocationResult) (cpuset.CPUSet, bool, error) {
+func getOpaqueCPUSet(logger logr.Logger, driverName string, allocation *resourceapi.AllocationResult, alloc resourceapi.DeviceRequestAllocationResult) (cpuset.CPUSet, bool, error) {
 	if allocation == nil {
 		return cpuset.CPUSet{}, false, nil
 	}
@@ -116,7 +121,7 @@ func GetOpaqueCPUSet(logger logr.Logger, driverName string, allocation *resource
 	return cpuset.CPUSet{}, false, nil
 }
 
-func ValidateOpaqueCPUSet(opaqueCPUs, onlineCPUs, reservedCPUs cpuset.CPUSet, count int) error {
+func validateOpaqueCPUSet(opaqueCPUs, onlineCPUs, reservedCPUs cpuset.CPUSet, count int) error {
 	// Verify core count matches requested capacity
 	if opaqueCPUs.Size() != count {
 		return fmt.Errorf("preferred CPUs cpuset size %d does not match requested capacity %d", opaqueCPUs.Size(), count)
