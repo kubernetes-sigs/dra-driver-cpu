@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"testing"
 
@@ -502,15 +501,6 @@ func TestNRISynchronize(t *testing.T) {
 			require.ElementsMatch(t, tc.expectedUpdates, updates)
 		})
 	}
-}
-
-func containerIDsFromUpdates(updates []*api.ContainerUpdate) []string {
-	ids := make([]string, 0, len(updates))
-	for _, upd := range updates {
-		ids = append(ids, upd.ContainerId)
-	}
-	sort.Strings(ids)
-	return ids
 }
 
 // TestStopContainerReleasesClaimToSharedPool asserts the DRA/NRI lifetime invariant tracked by #188:
