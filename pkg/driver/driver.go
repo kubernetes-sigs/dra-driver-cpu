@@ -92,8 +92,15 @@ type CPUDriver struct {
 	pcieRootMapper          *store.PCIeRootMapper
 	devicesPerResourceSlice int
 	metrics                 cpumetrics.Recorder
+	health                  healthTracker
 
 	kubeletRootDir string
+}
+
+// deviceHealthEntry is the last known health of a single device.
+type deviceHealthEntry struct {
+	status  kubeletplugin.HealthStatus
+	message string
 }
 
 // deviceTopology holds the CPU topology and device-to-CPU/socket/NUMA
@@ -182,6 +189,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		pcieRootMapper:          store.NewPCIeRootMapper(),
 		devicesPerResourceSlice: config.DevicesPerResourceSlice(),
 		metrics:                 metricsRecorder,
+		health:                  newHealthTracker(),
 		kubeletRootDir:          config.KubeletRootDir,
 	}
 	sfs := providers.EnsureSysFS()
@@ -231,6 +239,14 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		// Chunk devices into slices of at most devicesPerResourceSlice
 		plugin.topology.deviceSlices = slices.Collect(slices.Chunk(devices, plugin.devicesPerResourceSlice))
 	}
+
+	for _, d := range devices {
+		plugin.health.devices[d.Name] = &deviceHealthEntry{
+			status:  kubeletplugin.HealthStatusHealthy,
+			message: "device initialized",
+		}
+	}
+
 	return plugin, nil
 }
 
@@ -302,6 +318,7 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 		kubeletplugin.RegistrarDirectoryPath(registrarDir(cp.kubeletRootDir)),
 		kubeletplugin.PluginDataDirectoryPath(driverPluginPath),
 		kubeletplugin.EnableDeviceMetadata(true, []schema.GroupVersion{drametadatav1beta1.SchemeGroupVersion}),
+		kubeletplugin.HealthService(true),
 	}
 	d, err := kubeletplugin.Start(ctx, cp, kubeletOpts...)
 	if err != nil {
@@ -338,11 +355,19 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 	// publish available resources
 	go cp.PublishResources(ctx)
 
+	// periodically (every healthResendInterval) resend device health so
+	// the kubelet's lease on it does not expire (see WatchHealthStatus in
+	// health.go)
+	cp.health.wg.Add(1)
+	go cp.healthResendLoop(ctx)
+
 	return asyncErr, nil
 }
 
 // Stop stops the CPUDriver.
 func (cp *CPUDriver) Stop() {
+	close(cp.health.stopCh)
+	cp.health.wg.Wait()
 	cp.nriPlugin.Stop()
 	cp.draPlugin.Stop()
 }

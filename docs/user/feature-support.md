@@ -14,6 +14,7 @@
   (NUMA/socket/machine aggregates exposed as consumable capacity — fewer API objects, scales
   to large systems). See [Configuration](configuration.md#driver-configuration) for the
   full description and how to choose.
+- **Device Health Reporting**: The driver reports per-device health to the kubelet via the DRA `WatchHealthStatus` gRPC API, reflected in `pod.status.containerStatuses[].allocatedResourcesStatus`. Devices are reported `Healthy` and go `Unknown` if the driver stops sending updates. `Unhealthy` is reserved for future use. See [Device Health Reporting](workload-requirements.md#device-health-reporting).
 
 ## Not Supported
 

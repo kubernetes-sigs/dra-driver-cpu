@@ -380,12 +380,6 @@ func (cp *CPUDriver) unprepareResourceClaim(logger logr.Logger, claim kubeletplu
 	return nil
 }
 
-// WatchHealthStatus is required by the kubeletplugin.DRAPlugin interface in the 1.37-dev
-// dynamic-resource-allocation library. This driver does not implement device health reporting.
-func (cp *CPUDriver) WatchHealthStatus(ctx context.Context, reports chan<- kubeletplugin.DeviceHealthReport) error {
-	return kubeletplugin.ErrHealthNotSupported
-}
-
 // HandleError is called by the kubelet plugin framework when an error occurs in the background,
 // for example while publishing ResourceSlices.
 func (cp *CPUDriver) HandleError(ctx context.Context, err error, msg string) {
