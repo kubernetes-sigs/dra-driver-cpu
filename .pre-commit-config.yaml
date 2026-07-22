@@ -37,6 +37,7 @@ repos:
     hooks:
       - id: codespell
         args: [--write-changes]
+        exclude: (^|/)go\.(mod|sum)$
   - repo: https://github.com/pecigonzalo/pre-commit-shfmt
     rev: v2.2.0
     hooks:
