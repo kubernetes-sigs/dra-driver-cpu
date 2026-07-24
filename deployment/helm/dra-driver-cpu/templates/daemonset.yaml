@@ -73,6 +73,7 @@ spec:
           {{- if .Values.healthzPort }}
           - --bind-address=:{{ .Values.healthzPort }}
           {{- end }}
+          - --kubelet-root-dir={{ include "dra-driver-cpu.kubeletRootDir" . }}
           {{- if .Values.args.reservedCPUs }}
           - --reserved-cpus={{ .Values.args.reservedCPUs }}
           {{- end }}
@@ -113,9 +114,9 @@ spec:
             add: ["NET_ADMIN", "SYS_ADMIN"]
         volumeMounts:
         - name: device-plugin
-          mountPath: /var/lib/kubelet/plugins
+          mountPath: {{ include "dra-driver-cpu.pluginsDir" . }}
         - name: plugin-registry
-          mountPath: /var/lib/kubelet/plugins_registry
+          mountPath: {{ include "dra-driver-cpu.pluginRegistryDir" . }}
         - name: nri-plugin
           mountPath: /var/run/nri
         - name: cdi-dir
@@ -131,10 +132,10 @@ spec:
       volumes:
       - name: device-plugin
         hostPath:
-          path: /var/lib/kubelet/plugins
+          path: {{ include "dra-driver-cpu.pluginsDir" . }}
       - name: plugin-registry
         hostPath:
-          path: /var/lib/kubelet/plugins_registry
+          path: {{ include "dra-driver-cpu.pluginRegistryDir" . }}
       - name: nri-plugin
         hostPath:
           path: /var/run/nri

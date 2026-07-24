@@ -52,6 +52,7 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
 | image.repository | string | `"registry.k8s.io/dra-driver-cpu/dra-driver-cpu"` | Container image repository |
 | image.tag | string | `""` | Image tag; defaults to `.Chart.AppVersion` when empty, which is set to the release tag at package time |
 | imagePullSecrets | list | `[]` | List of image pull secrets |
+| kubeletRootDir | string | `""` | Kubelet root directory, matching the kubelet's `--root-dir`. The chart mounts `<root>/plugins` and `<root>/plugins_registry` and passes the same value to the driver, which derives the registrar socket and plugin data directory from it. Set this only when the kubelet root is not the default. Not configurable via `driverConfig`, since the mounts and the driver would then be able to disagree |
 | nameOverride | string | `""` | Override the chart name |
 | nodeSelector | object | `{}` | Node selector for scheduling the DaemonSet pods |
 | podAnnotations | object | `{}` | Annotations to add to pods |

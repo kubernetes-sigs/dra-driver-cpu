@@ -39,14 +39,14 @@ except where noted. Unknown fields are rejected at startup to catch typos early.
 | `groupBy`          | string | `numanode`  | Grouping strategy when `cpuDeviceMode` is `grouped`: `numanode`, `socket`, or `machine`. |
 | `reservedCPUs`     | string | *(none)*    | CPUs excluded from allocation, e.g. `"0-1"`.                                             |
 | `hostnameOverride` | string | *(none)*    | Override the node hostname the driver registers under.                                   |
-| `exposePCIeRoots`  | bool   | `false`     | Add PCIe root attributes to CPU devices (requires `DRAListTypeAttributes` feature gate). |
+| `sysfsOverlay`     | string | *(none)*    | Path to a YAML file with sysfs file overlays (testing/advanced use).                     |
 | `kubeconfig`       | string | *(none)*    | Path to a kubeconfig file (for out-of-cluster use).                                      |
 
 #### Versioning and backward compatibility
 
 The schema is versioned via the optional `apiVersion` field (currently `v1alpha1`). The layout
 is intentionally flat for now. If a nested hierarchy is introduced in the future, the
-`apiVersion` field will be bumped so that older config files continue to be accepted or produce a
+`apiVersion` field will be bumped so that older config files continue to be accepted or produce
 an error.
 
 #### Example
@@ -70,6 +70,26 @@ both are set for the same field.
 Both `args.*` and `driverConfig` exist during a transition period. The intent is to eventually
 deprecate `args.*` in favour of `driverConfig` as the single configuration mechanism. The driver
 logs the effective configuration at startup so you can verify which values are active.
+
+### Relocated kubelet root directory
+
+A node whose kubelet runs with a non-default
+[`--root-dir`](https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/) needs
+the chart value `kubeletRootDir`:
+
+```yaml
+# values.yaml
+kubeletRootDir: /var/lib/custom-kubelet
+```
+
+The chart mounts `<root>/plugins` and `<root>/plugins_registry` from the host and passes the same
+value to the driver, which derives its registrar socket and plugin data directory from it. The
+two have to come from one value: the kubelet looks for the registrar socket under its own root,
+so a driver told a different root registers where the kubelet never looks, and registration times
+out. That is why this is a chart value rather than a `driverConfig` field, the same reasoning as
+`healthzPort`. The value must be an absolute path, and every node the DaemonSet selects uses it;
+for nodes with different kubelet roots, deploy separate releases with mutually exclusive
+`nodeSelector`s.
 
 ### Command-line flags
 

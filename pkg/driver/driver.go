@@ -28,6 +28,7 @@ import (
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
@@ -42,7 +43,6 @@ import (
 )
 
 const (
-	kubeletPluginPath = "/var/lib/kubelet/plugins"
 	// maxAttempts indicates the number of times the driver will try to recover itself before failing
 	maxAttempts = 5
 )
@@ -82,6 +82,8 @@ type CPUDriver struct {
 	pcieRootMapper          *store.PCIeRootMapper
 	devicesPerResourceSlice int
 	metrics                 cpumetrics.Recorder
+
+	kubeletRootDir string
 }
 
 // deviceTopology holds the CPU topology and device-to-CPU/socket/NUMA
@@ -126,6 +128,10 @@ type Config struct {
 	CPUDeviceGroupBy string
 	ExposePCIeRoots  bool
 	Metrics          cpumetrics.Recorder
+	// KubeletRootDir is the kubelet root directory. The registrar and plugins
+	// directories are derived from it. It defaults to /var/lib/kubelet when
+	// empty.
+	KubeletRootDir string
 }
 
 func (cfg Config) DevicesPerResourceSlice() int {
@@ -146,6 +152,17 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	if metricsRecorder == nil {
 		metricsRecorder = cpumetrics.Noop()
 	}
+	// driverconfig.Load normalizes an empty root to the default for the
+	// production path; this fallback covers direct callers of New that build a
+	// Config without setting KubeletRootDir. A non-empty relative path is
+	// rejected either way.
+	kubeletRootDir := config.KubeletRootDir
+	if kubeletRootDir == "" {
+		kubeletRootDir = driverconfig.DefaultKubeletRootDir
+	}
+	if !filepath.IsAbs(kubeletRootDir) {
+		return nil, fmt.Errorf("kubelet root directory must be absolute: %q", kubeletRootDir)
+	}
 	plugin := &CPUDriver{
 		driverName: config.DriverName,
 		nodeName:   config.NodeName,
@@ -162,6 +179,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		pcieRootMapper:          store.NewPCIeRootMapper(),
 		devicesPerResourceSlice: config.DevicesPerResourceSlice(),
 		metrics:                 metricsRecorder,
+		kubeletRootDir:          kubeletRootDir,
 	}
 	sfs := providers.EnsureSysFS()
 
@@ -213,6 +231,24 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	return plugin, nil
 }
 
+// registrarDir is the kubelet plugin registration directory, always
+// <kubelet-root>/plugins_registry.
+func (cp *CPUDriver) registrarDir() string {
+	return filepath.Join(cp.kubeletRootDir, "plugins_registry")
+}
+
+// pluginsDir is the kubelet plugins directory, always <kubelet-root>/plugins.
+func (cp *CPUDriver) pluginsDir() string {
+	return filepath.Join(cp.kubeletRootDir, "plugins")
+}
+
+// pluginDataDir is the per-driver directory where the DRA socket is created. It
+// includes the driver name because the kubeletplugin contract requires it not
+// to be shared with other kubelet plugins.
+func (cp *CPUDriver) pluginDataDir() string {
+	return filepath.Join(cp.pluginsDir(), cp.driverName)
+}
+
 // Start registers the plugin with kubelet, starts the NRI plugin, and begins
 // async resource publication. Setup must have been called first.
 func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
@@ -220,7 +256,7 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 
 	asyncErr := make(chan error, 1)
 
-	driverPluginPath := filepath.Join(kubeletPluginPath, cp.driverName)
+	driverPluginPath := cp.pluginDataDir()
 	if err := os.MkdirAll(driverPluginPath, 0750); err != nil {
 		return asyncErr, fmt.Errorf("failed to create plugin path %s: %w", driverPluginPath, err)
 	}
@@ -235,6 +271,8 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 		kubeletplugin.DriverName(cp.driverName),
 		kubeletplugin.NodeName(cp.nodeName),
 		kubeletplugin.KubeClient(cp.kubeClient),
+		kubeletplugin.RegistrarDirectoryPath(cp.registrarDir()),
+		kubeletplugin.PluginDataDirectoryPath(driverPluginPath),
 	}
 	d, err := kubeletplugin.Start(ctx, cp, kubeletOpts...)
 	if err != nil {

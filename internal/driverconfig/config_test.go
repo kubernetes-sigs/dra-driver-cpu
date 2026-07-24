@@ -221,6 +221,9 @@ func TestDefault(t *testing.T) {
 	assert.Equal(t, ":8080", d.BindAddress)
 	assert.Equal(t, device.CPU_DEVICE_MODE_GROUPED, d.CPUDeviceMode)
 	assert.Equal(t, device.GROUP_BY_NUMA_NODE, d.GroupBy)
+	// The kubelet root defaults to the standard location, so behavior is
+	// unchanged unless the kubelet --root-dir is relocated.
+	assert.Equal(t, "/var/lib/kubelet", d.KubeletRootDir)
 	// Fields with no built-in default must be zero/empty.
 	assert.Empty(t, d.Kubeconfig)
 	assert.Empty(t, d.HostnameOverride)
@@ -290,4 +293,75 @@ func TestLoad_ExcludedFieldInFileIsError(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.expectedError)
 		})
 	}
+}
+
+// TestLoad_KubeletRootDirFromFlag: the kubelet root is supplied by the Helm
+// chart as a flag, alongside the hostPath mounts derived from the same value.
+func TestLoad_KubeletRootDirFromFlag(t *testing.T) {
+	cfg := driverconfig.Default()
+	fs := newFlagSet(t, &cfg, []string{"--kubelet-root-dir=/mnt/fast/k8s/kubelet"})
+
+	result, err := driverconfig.Load(cfg, "", fs, testr.New(t))
+
+	require.NoError(t, err)
+	assert.Equal(t, "/mnt/fast/k8s/kubelet", result.KubeletRootDir)
+}
+
+// TestLoad_KubeletRootDirRejectedInFile: the kubelet root has to match the
+// hostPath mounts the chart renders, so setting it in the config file (where
+// the chart cannot keep the two in step) is rejected with a pointer to the
+// chart value, the same way bindAddress and exposePCIeRoots are.
+func TestLoad_KubeletRootDirRejectedInFile(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := writeFile(t, dir, "config.yaml", `
+apiVersion: v1alpha1
+kubeletRootDir: /mnt/fast/k8s/kubelet
+`)
+
+	cfg := driverconfig.Default()
+	fs := newFlagSet(t, &cfg, nil)
+
+	_, err := driverconfig.Load(cfg, cfgFile, fs, testr.New(t))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not configurable via the config file")
+	assert.Contains(t, err.Error(), "use helm chart's kubeletRootDir instead")
+}
+
+// TestLoad_RelativeKubeletRootDirIsError: a relative kubelet root is rejected,
+// since it would resolve against the working directory and break registration.
+func TestLoad_RelativeKubeletRootDirIsError(t *testing.T) {
+	cfg := driverconfig.Default()
+	fs := newFlagSet(t, &cfg, []string{"--kubelet-root-dir=relative/kubelet"})
+
+	_, err := driverconfig.Load(cfg, "", fs, testr.New(t))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be an absolute path")
+}
+
+// TestLoad_EmptyKubeletRootDirIsDefaulted: an empty kubeletRootDir is
+// normalized to the default in the config layer, so the logged and gathered
+// config reports the value the driver actually uses.
+func TestLoad_EmptyKubeletRootDirIsDefaulted(t *testing.T) {
+	cfg := driverconfig.Default()
+	fs := newFlagSet(t, &cfg, []string{"--kubelet-root-dir="})
+
+	result, err := driverconfig.Load(cfg, "", fs, testr.New(t))
+
+	require.NoError(t, err)
+	assert.Equal(t, "/var/lib/kubelet", result.KubeletRootDir)
+}
+
+// TestLoad_KubeletRootDirIsCleaned: a non-canonical absolute root is cleaned in
+// the config layer, so the logged effective value matches the paths the driver
+// and chart derive from it.
+func TestLoad_KubeletRootDirIsCleaned(t *testing.T) {
+	cfg := driverconfig.Default()
+	fs := newFlagSet(t, &cfg, []string{"--kubelet-root-dir=/mnt/a/../kubelet//"})
+
+	result, err := driverconfig.Load(cfg, "", fs, testr.New(t))
+
+	require.NoError(t, err)
+	assert.Equal(t, "/mnt/kubelet", result.KubeletRootDir)
 }

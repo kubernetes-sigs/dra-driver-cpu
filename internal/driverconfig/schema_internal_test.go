@@ -58,3 +58,28 @@ func TestGenerateDriverConfigSchema_CoversAllFields(t *testing.T) {
 		}
 	}
 }
+
+// TestGenerateDriverConfigSchema_ExcludesKubeletRootDir verifies the kubelet
+// root is kept out of the generated schema. It has to match the hostPath mounts
+// the chart renders from the same value, so the chart owns it and a user cannot
+// set it in the config file, the same as bindAddress and exposePCIeRoots.
+func TestGenerateDriverConfigSchema_ExcludesKubeletRootDir(t *testing.T) {
+	out, err := GenerateDriverConfigSchema()
+	if err != nil {
+		t.Fatalf("GenerateDriverConfigSchema: %v", err)
+	}
+
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(out, &schema); err != nil {
+		t.Fatalf("unmarshal generated schema: %v\n%s", err, out)
+	}
+
+	if _, ok := schema.Properties["kubeletRootDir"]; ok {
+		t.Errorf("kubeletRootDir must not appear in the generated schema; got:\n%s", out)
+	}
+	if want := "use helm chart's kubeletRootDir instead"; schemaExcludedFields["kubeletRootDir"] != want {
+		t.Errorf("kubeletRootDir exclusion hint = %q, want %q", schemaExcludedFields["kubeletRootDir"], want)
+	}
+}

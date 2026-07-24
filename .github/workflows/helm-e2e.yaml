@@ -5,6 +5,13 @@ on:
     branches: [ main ]
     paths:
       - 'deployment/helm/**'
+      - 'cmd/dracpu/**'
+      - 'internal/driverconfig/**'
+      - 'pkg/driver/**'
+      - 'hack/ci/kind-ci.yaml'
+      - 'hack/ci/kind-ci-relocated-root.yaml'
+      - 'hack/ci/wait-resourcelices.sh'
+      - 'Makefile'
       - '.github/workflows/helm-e2e.yaml'
 
 env:
@@ -16,6 +23,20 @@ jobs:
   helm-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Default kubelet root; the baseline this workflow has always run.
+          - variant: default-root
+            kindConfig: hack/ci/kind-ci.yaml
+            kubeletRootDir: ""
+          # Kubelet relocated to a non-default --root-dir on every node, the
+          # scenario kubeletRootDir exists for (issue #231).
+          - variant: relocated-root
+            kindConfig: hack/ci/kind-ci-relocated-root.yaml
+            kubeletRootDir: /var/lib/custom-kubelet
+    name: helm-e2e (${{ matrix.variant }})
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -35,7 +56,7 @@ jobs:
           KIND_K8S_VERSION=${KIND_K8S_VERSION:-v1.36.0}
           kind delete cluster --name dra-driver-cpu || true
           kind build node-image --image=kindest/node:${KIND_K8S_VERSION} ${KIND_K8S_VERSION}
-          kind create cluster --name dra-driver-cpu --image=kindest/node:${KIND_K8S_VERSION} --config hack/ci/kind-ci.yaml
+          kind create cluster --name dra-driver-cpu --image=kindest/node:${KIND_K8S_VERSION} --config ${{ matrix.kindConfig }}
           kind get kubeconfig --name dra-driver-cpu > /tmp/kubeconfig-dra-driver-cpu
           kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
             label node dra-driver-cpu-worker node-role.kubernetes.io/worker=''
@@ -47,6 +68,10 @@ jobs:
 
       - name: Install driver via Helm
         run: |
+          extra=()
+          if [ -n "${{ matrix.kubeletRootDir }}" ]; then
+            extra+=(--set-string "kubeletRootDir=${{ matrix.kubeletRootDir }}")
+          fi
           helm install dra-driver-cpu deployment/helm/dra-driver-cpu \
             --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
             --namespace kube-system \
@@ -54,7 +79,8 @@ jobs:
             --set podLabels.app=dracpu \
             --set image.repository="${IMAGE}" \
             --set image.tag="${TAG}" \
-            --set image.pullPolicy=Never
+            --set image.pullPolicy=Never \
+            "${extra[@]}"
 
       - name: Wait for resourceSlices
         run: KUBECONFIG=/tmp/kubeconfig-dra-driver-cpu hack/ci/wait-resourcelices.sh
@@ -63,6 +89,32 @@ jobs:
         run: |
           kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
             rollout status daemonset/dracpu -n kube-system --timeout=120s
+
+      # For the relocated-root variant, the rollout above already proves the
+      # kubelet watched <root>/plugins_registry (registration would otherwise time
+      # out). Confirm the sockets really live under the relocated root, that the
+      # default root is not used, and that startup produced no spurious config error.
+      - name: Verify the driver registered under the relocated kubelet root
+        if: matrix.kubeletRootDir != ''
+        run: |
+          root="${{ matrix.kubeletRootDir }}"
+          nodes=$(kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
+            get pods -n kube-system -l app=dracpu \
+            -o jsonpath='{.items[*].spec.nodeName}')
+          for node in $nodes; do
+            echo "checking node ${node}"
+            docker exec "${node}" sh -c "ls ${root}/plugins_registry/*.sock" >/dev/null
+            docker exec "${node}" sh -c "ls ${root}/plugins/dra.cpu/*.sock" >/dev/null
+            if docker exec "${node}" sh -c "ls /var/lib/kubelet/plugins_registry/*.sock" >/dev/null 2>&1; then
+              echo "driver socket unexpectedly present under the default kubelet root on ${node}" >&2
+              exit 1
+            fi
+          done
+          if kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
+            logs -n kube-system -l app=dracpu | grep -q 'flag not found in flagToJSONKey'; then
+            echo 'unexpected flagToJSONKey error in driver logs' >&2
+            exit 1
+          fi
 
       - name: Final check
         if: failure()

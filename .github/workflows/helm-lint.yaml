@@ -6,6 +6,8 @@ on:
       - 'deployment/helm/**'
       - 'internal/driverconfig/**'
       - 'tools/gen-driverconfig-schema/**'
+      - 'hack/ci/helm-render-check.sh'
+      - 'Makefile'
       - '.github/workflows/helm-lint.yaml'
 
 jobs:
@@ -24,6 +26,9 @@ jobs:
 
       - name: Run Helm lint
         run: make helm-lint
+
+      - name: Check the kubelet root derives the chart mounts and driver flag
+        run: make helm-render-check
 
       - name: Check helm-docs is up to date
         run: make helm-docs-check

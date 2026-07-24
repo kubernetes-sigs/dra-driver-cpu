@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/require"
 )
 
@@ -140,4 +141,54 @@ func isHex(s string) bool {
 		return false
 	}
 	return true
+}
+
+func TestKubeletDirDerivation(t *testing.T) {
+	const driverName = "cpu.dra.example.com"
+
+	// The registrar, plugins, and per-driver socket directories are always
+	// derived from the kubelet root, both at the default location and when the
+	// root is relocated. filepath.Join also cleans a trailing slash.
+	for _, tc := range []struct {
+		name          string
+		root          string
+		wantRegistrar string
+		wantPlugins   string
+		wantData      string
+	}{
+		{
+			name:          "default kubelet root",
+			root:          "/var/lib/kubelet",
+			wantRegistrar: "/var/lib/kubelet/plugins_registry",
+			wantPlugins:   "/var/lib/kubelet/plugins",
+			wantData:      "/var/lib/kubelet/plugins/cpu.dra.example.com",
+		},
+		{
+			name:          "relocated kubelet root with trailing slash",
+			root:          "/mnt/fast/k8s/kubelet/",
+			wantRegistrar: "/mnt/fast/k8s/kubelet/plugins_registry",
+			wantPlugins:   "/mnt/fast/k8s/kubelet/plugins",
+			wantData:      "/mnt/fast/k8s/kubelet/plugins/cpu.dra.example.com",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cp := &CPUDriver{driverName: driverName, kubeletRootDir: tc.root}
+			require.Equal(t, tc.wantRegistrar, cp.registrarDir())
+			require.Equal(t, tc.wantPlugins, cp.pluginsDir())
+			require.Equal(t, tc.wantData, cp.pluginDataDir())
+			// The socket dir must not be the shared plugins parent, per the
+			// kubeletplugin "not shared" contract.
+			require.NotEqual(t, cp.pluginsDir(), cp.pluginDataDir())
+		})
+	}
+}
+
+func TestNewRejectsRelativeKubeletRootDir(t *testing.T) {
+	// A non-empty relative root is rejected before any sysfs access, so this
+	// stays hermetic. An empty root is defaulted (covered by dra_hooks tests
+	// that build a Config without KubeletRootDir).
+	cfg := Config{DriverName: "cpu.dra.example.com", KubeletRootDir: "relative/kubelet"}
+	_, err := New(logr.Discard(), Providers{}, &cfg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "must be absolute")
 }
