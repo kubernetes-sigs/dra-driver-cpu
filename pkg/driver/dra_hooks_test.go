@@ -80,6 +80,7 @@ func (m *mockKubeletPlugin) Stop() {}
 
 type mockCdiMgr struct {
 	devices     map[string]string
+	addCalls    int
 	addError    error
 	removeError error
 }
@@ -91,6 +92,7 @@ func newMockCdiMgr() *mockCdiMgr {
 }
 
 func (m *mockCdiMgr) AddDevice(_ logr.Logger, deviceName, envVar string) error {
+	m.addCalls++
 	if m.addError != nil {
 		return m.addError
 	}
@@ -1368,6 +1370,24 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			cdiMgr:                 cdiMgr,
 		}, cpuStore, cdiMgr
 	}
+	makeMachineDriver := func(_ logr.Logger) (*CPUDriver, *store.CPUAllocation, *mockCdiMgr) {
+		cdiMgr := newMockCdiMgr()
+		driver := createCPUDriverForTest(t, devattr.GROUP_BY_MACHINE, mockCPUInfos_DualSocket_4CPUsPerSocket_HT, nil, cpuset.New(), cdiMgr)
+		return driver, driver.cpuAllocationStore, cdiMgr
+	}
+	claimWithQuantity := func(deviceName, quantity string) *resourceapi.ResourceClaim {
+		return testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{
+			{
+				Driver:  testDriverName,
+				Pool:    testNodeName,
+				Device:  deviceName,
+				Request: string(claimUID),
+				ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{
+					devattr.CPUResourceQualifiedName: resource.MustParse(quantity),
+				},
+			},
+		})
+	}
 
 	testCases := []struct {
 		name           string
@@ -1376,6 +1396,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 		secondClaim    *resourceapi.ResourceClaim
 		expectedCPUSet cpuset.CPUSet
 		expectedShared cpuset.CPUSet
+		expectedError  string
 	}{
 		{
 			name:           "same socket repeated",
@@ -1392,6 +1413,59 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket1": 2}),
 			expectedCPUSet: cpuset.New(0, 4),
 			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+			expectedError:  "socket 1 allocation requests 2 CPUs but prepared CPUs contain 0",
+		},
+		{
+			name:           "different socket capacity repeated",
+			makeDriver:     makeSocketDriver,
+			firstClaim:     testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2}),
+			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 1}),
+			expectedCPUSet: cpuset.New(0, 4),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+			expectedError:  "socket 0 allocation requests 1 CPUs but prepared CPUs contain 2",
+		},
+		{
+			name:       "equivalent repeated results for same socket",
+			makeDriver: makeSocketDriver,
+			firstClaim: testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2}),
+			secondClaim: testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{
+				{
+					Driver:           testDriverName,
+					Pool:             testNodeName,
+					Device:           "cpudevsocket0",
+					Request:          "req-0",
+					ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{devattr.CPUResourceQualifiedName: *resource.NewQuantity(1, resource.DecimalSI)},
+				},
+				{
+					Driver:           testDriverName,
+					Pool:             testNodeName,
+					Device:           "cpudevsocket0",
+					Request:          "req-1",
+					ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{devattr.CPUResourceQualifiedName: *resource.NewQuantity(1, resource.DecimalSI)},
+				},
+			}),
+			expectedCPUSet: cpuset.New(0, 4),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+		},
+		{
+			name:       "missing socket capacity repeated",
+			makeDriver: makeSocketDriver,
+			firstClaim: testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2}),
+			secondClaim: testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{
+				{Driver: testDriverName, Pool: testNodeName, Device: "cpudevsocket0", Request: string(claimUID)},
+			}),
+			expectedCPUSet: cpuset.New(0, 4),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+			expectedError:  "has no \"dra.cpu/cpu\" capacity",
+		},
+		{
+			name:           "fractional socket capacity repeated",
+			makeDriver:     makeSocketDriver,
+			firstClaim:     testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2}),
+			secondClaim:    claimWithQuantity("cpudevsocket0", "1500m"),
+			expectedCPUSet: cpuset.New(0, 4),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+			expectedError:  "must be a whole number",
 		},
 		{
 			name:           "same NUMA node repeated",
@@ -1408,6 +1482,42 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma1": 2}),
 			expectedCPUSet: cpuset.New(0, 4),
 			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+			expectedError:  "NUMA node 1 allocation requests 2 CPUs but prepared CPUs contain 0",
+		},
+		{
+			name:           "same machine opaque cpuset repeated",
+			makeDriver:     makeMachineDriver,
+			firstClaim:     testClaimWithOpaqueConfig(claimUID, testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: 2}, "0,4"),
+			secondClaim:    testClaimWithOpaqueConfig(claimUID, testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: 2}, "0,4"),
+			expectedCPUSet: cpuset.New(0, 4),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+		},
+		{
+			name:           "different machine opaque cpuset repeated",
+			makeDriver:     makeMachineDriver,
+			firstClaim:     testClaimWithOpaqueConfig(claimUID, testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: 2}, "0,4"),
+			secondClaim:    testClaimWithOpaqueConfig(claimUID, testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: 2}, "1,5"),
+			expectedCPUSet: cpuset.New(0, 4),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+			expectedError:  "opaque cpuset 1,5 does not match prepared CPUs 0,4",
+		},
+		{
+			name:           "machine opaque capacity mismatch repeated",
+			makeDriver:     makeMachineDriver,
+			firstClaim:     testClaimWithOpaqueConfig(claimUID, testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: 2}, "0,4"),
+			secondClaim:    testClaimWithOpaqueConfig(claimUID, testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: 1}, "0,4"),
+			expectedCPUSet: cpuset.New(0, 4),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+			expectedError:  "opaque config cpuset size 2 does not match requested capacity 1",
+		},
+		{
+			name:           "missing machine opaque config repeated",
+			makeDriver:     makeMachineDriver,
+			firstClaim:     testClaimWithOpaqueConfig(claimUID, testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: 2}, "0,4"),
+			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: 2}),
+			expectedCPUSet: cpuset.New(0, 4),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+			expectedError:  "is targeted by 0 configurations",
 		},
 	}
 
@@ -1415,8 +1525,9 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			driver, cpuStore, cdiMgr := tc.makeDriver(logger)
 
-			_, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{tc.firstClaim})
+			firstResults, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{tc.firstClaim})
 			require.NoError(t, err)
+			require.NoError(t, firstResults[claimUID].Err)
 
 			gotCPUsAfterFirst, ok := cpuStore.GetResourceClaimAllocation(claimUID)
 			require.True(t, ok)
@@ -1425,7 +1536,13 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 
 			prepareResults, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{tc.secondClaim})
 			require.NoError(t, err)
-			require.NoError(t, prepareResults[claimUID].Err)
+			if tc.expectedError == "" {
+				require.NoError(t, prepareResults[claimUID].Err)
+				require.Equal(t, 2, cdiMgr.addCalls, "equivalent duplicate prepare must recreate CDI state")
+			} else {
+				require.ErrorContains(t, prepareResults[claimUID].Err, tc.expectedError)
+				require.Equal(t, 1, cdiMgr.addCalls, "mismatched duplicate prepare must not recreate CDI state")
+			}
 
 			gotCPUs, ok := cpuStore.GetResourceClaimAllocation(claimUID)
 			require.True(t, ok)

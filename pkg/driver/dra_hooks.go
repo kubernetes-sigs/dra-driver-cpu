@@ -113,6 +113,11 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 
 	if existingCPUs, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(claim.UID); ok {
 		logger.V(2).Info("claim already has allocated CPUs in store, reusing assignment", "cpus", existingCPUs.String())
+		if err := cp.validateGroupedAllocationForReuse(logger, claim, existingCPUs); err != nil {
+			return kubeletplugin.PrepareResult{
+				Err: fmt.Errorf("claim %s/%s is already prepared with CPUs %s which do not match the current allocation: %w", claim.Namespace, claim.Name, existingCPUs.String(), err),
+			}
+		}
 		// Even if the claim is already allocated in our in-memory store (which happens when a duplicate prepare
 		// call is invoked without an intermediate unprepare), we must call prepareDevices and return the result back to Kubelet.
 		// If the CDI file is already created on disk, the CDI manager will safely overwrite it with the same configuration.
@@ -194,6 +199,105 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 	cp.metricsRecorder().RecordClaimAllocatedCPUs(cpuAssignment.Size())
 	cp.refreshAllocationMetrics()
 	return result
+}
+
+func (cp *CPUDriver) validateGroupedAllocationForReuse(logger logr.Logger, claim *resourceapi.ResourceClaim, existingCPUs cpuset.CPUSet) error {
+	type boundaryAllocation struct {
+		name string
+		cpus cpuset.CPUSet
+	}
+
+	requestedByBoundary := make(map[int]int64)
+	boundaries := make(map[int]boundaryAllocation)
+	machineAssignment := cpuset.New()
+	driverAllocations := 0
+
+	for _, alloc := range claim.Status.Allocation.Devices.Results {
+		if alloc.Driver != cp.driverName {
+			continue
+		}
+		driverAllocations++
+
+		quantity, ok := alloc.ConsumedCapacity[device.CPUResourceQualifiedName]
+		if !ok {
+			return fmt.Errorf("allocation for device %q has no %q capacity", alloc.Device, device.CPUResourceQualifiedName)
+		}
+		if quantity.Sign() <= 0 {
+			return fmt.Errorf("CPU capacity for device %q must be positive, got %s", alloc.Device, quantity.String())
+		}
+		count := quantity.Value()
+		if quantity.CmpInt64(count) != 0 {
+			return fmt.Errorf("CPU capacity for device %q must be a whole number, got %s", alloc.Device, quantity.String())
+		}
+
+		switch cp.cpuDeviceGroupBy {
+		case device.GROUP_BY_SOCKET:
+			socketID, ok := cp.deviceNameToSocketID[alloc.Device]
+			if !ok {
+				return fmt.Errorf("no valid socket ID found for device %s", alloc.Device)
+			}
+			requestedByBoundary[socketID] += count
+			boundaries[socketID] = boundaryAllocation{
+				name: fmt.Sprintf("socket %d", socketID),
+				cpus: cp.cpuTopology.CPUDetails.CPUsInSockets(socketID),
+			}
+		case device.GROUP_BY_NUMA_NODE:
+			numaNodeID, ok := cp.deviceNameToNUMANodeID[alloc.Device]
+			if !ok {
+				return fmt.Errorf("no valid NUMA node ID found for device %s", alloc.Device)
+			}
+			requestedByBoundary[numaNodeID] += count
+			boundaries[numaNodeID] = boundaryAllocation{
+				name: fmt.Sprintf("NUMA node %d", numaNodeID),
+				cpus: cp.cpuTopology.CPUDetails.CPUsInNUMANodes(numaNodeID),
+			}
+		case device.GROUP_BY_MACHINE:
+			if alloc.Device != device.CPUDeviceMachineGrouped {
+				return fmt.Errorf("invalid machine device %q", alloc.Device)
+			}
+			opaqueCPUSet, ok, err := cp.getOpaqueCPUSet(logger, claim.Status.Allocation, alloc)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("no opaque cpuset configuration found for allocation request %q", alloc.Request)
+			}
+
+			otherClaimCPUs := cp.cpuAllocationStore.GetAllocatedCPUs().Difference(existingCPUs)
+			if err := cp.validateOpaqueCPUSetAgainstAllocations(opaqueCPUSet, cp.onlineCPUs, machineAssignment, count, otherClaimCPUs); err != nil {
+				return err
+			}
+			machineAssignment = machineAssignment.Union(opaqueCPUSet)
+		default:
+			return fmt.Errorf("unsupported CPU grouping %q", cp.cpuDeviceGroupBy)
+		}
+	}
+
+	if driverAllocations == 0 {
+		return fmt.Errorf("claim has no CPU allocations for driver %q", cp.driverName)
+	}
+
+	if cp.cpuDeviceGroupBy == device.GROUP_BY_MACHINE {
+		if !machineAssignment.Equals(existingCPUs) {
+			return fmt.Errorf("opaque cpuset %s does not match prepared CPUs %s", machineAssignment.String(), existingCPUs.String())
+		}
+		return nil
+	}
+
+	matchedCPUs := cpuset.New()
+	for boundaryID, requested := range requestedByBoundary {
+		boundary := boundaries[boundaryID]
+		actual := existingCPUs.Intersection(boundary.cpus)
+		if int64(actual.Size()) != requested {
+			return fmt.Errorf("%s allocation requests %d CPUs but prepared CPUs contain %d", boundary.name, requested, actual.Size())
+		}
+		matchedCPUs = matchedCPUs.Union(actual)
+	}
+	if !matchedCPUs.Equals(existingCPUs) {
+		return fmt.Errorf("prepared CPUs %s are outside the allocated topology boundaries", existingCPUs.Difference(matchedCPUs).String())
+	}
+
+	return nil
 }
 
 func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
@@ -411,6 +515,10 @@ func (cp *CPUDriver) getOpaqueCPUSet(logger logr.Logger, allocation *resourceapi
 }
 
 func (cp *CPUDriver) validateOpaqueCPUSet(opaqueCPUSet cpuset.CPUSet, onlineCPUs cpuset.CPUSet, cpuAssignment cpuset.CPUSet, claimCPUCount int64) error {
+	return cp.validateOpaqueCPUSetAgainstAllocations(opaqueCPUSet, onlineCPUs, cpuAssignment, claimCPUCount, cp.cpuAllocationStore.GetAllocatedCPUs())
+}
+
+func (cp *CPUDriver) validateOpaqueCPUSetAgainstAllocations(opaqueCPUSet cpuset.CPUSet, onlineCPUs cpuset.CPUSet, cpuAssignment cpuset.CPUSet, claimCPUCount int64, allocatedCPUs cpuset.CPUSet) error {
 	// Verify core count matches requested capacity
 	if int64(opaqueCPUSet.Size()) != claimCPUCount {
 		return fmt.Errorf("opaque config cpuset size %d does not match requested capacity %d", opaqueCPUSet.Size(), claimCPUCount)
@@ -436,8 +544,7 @@ func (cp *CPUDriver) validateOpaqueCPUSet(opaqueCPUSet cpuset.CPUSet, onlineCPUs
 	}
 
 	// Verify cores do not overlap with other active claims on this node
-	existingClaimCPUs := cp.cpuAllocationStore.GetAllocatedCPUs()
-	if opaqueCPUSet.Intersection(existingClaimCPUs).Size() > 0 {
+	if opaqueCPUSet.Intersection(allocatedCPUs).Size() > 0 {
 		return fmt.Errorf("requested CPUs %s from opaque config conflict with already allocated claims", opaqueCPUSet.String())
 	}
 
