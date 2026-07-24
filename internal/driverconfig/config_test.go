@@ -246,17 +246,17 @@ groupBy: garbage
 	assert.Contains(t, err.Error(), "garbage")
 }
 
-// TestLoad_ExcludedFieldInFileIsError: bindAddress, exposePCIeRoots, and
-// showMetrics aren't configurable via the config file, whether or not it's
-// wired through Helm; setting any of them is an error.
+// TestLoad_ExcludedFieldInFileIsError: excluded and removed fields aren't
+// configurable via the config file.
 func TestLoad_ExcludedFieldInFileIsError(t *testing.T) {
 	for _, tc := range []struct {
-		field   string
-		content string
+		field         string
+		content       string
+		expectedError string
 	}{
-		{field: "bindAddress", content: "bindAddress: \":9090\""},
-		{field: "exposePCIeRoots", content: "exposePCIeRoots: true"},
-		{field: "showMetrics", content: "showMetrics: true"},
+		{field: "bindAddress", content: "bindAddress: \":9090\"", expectedError: "not configurable via the config file"},
+		{field: "exposePCIeRoots", content: "exposePCIeRoots: true", expectedError: "not configurable via the config file"},
+		{field: "showMetrics", content: "showMetrics: true", expectedError: "unknown field"},
 	} {
 		t.Run(tc.field, func(t *testing.T) {
 			dir := t.TempDir()
@@ -269,7 +269,7 @@ func TestLoad_ExcludedFieldInFileIsError(t *testing.T) {
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.field)
-			assert.Contains(t, err.Error(), "not configurable via the config file")
+			assert.Contains(t, err.Error(), tc.expectedError)
 		})
 	}
 }

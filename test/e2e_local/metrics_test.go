@@ -27,9 +27,9 @@ import (
 	"github.com/onsi/gomega"
 )
 
-var _ = ginkgo.Describe("[Local] dracpu --show-metrics", func() {
+var _ = ginkgo.Describe("[Local] dracpu introspect metrics", func() {
 	ginkgo.It("should output valid JSON with custom metric descriptors", func() {
-		cmdline := []string{binPath, "--show-metrics"}
+		cmdline := []string{binPath, "introspect", "metrics"}
 		fmt.Fprintf(ginkgo.GinkgoWriter, "running: %v\n", cmdline)
 
 		cmd := exec.Command(cmdline[0], cmdline[1:]...)
@@ -53,6 +53,44 @@ var _ = ginkgo.Describe("[Local] dracpu --show-metrics", func() {
 		gomega.Expect(findDescriptorByName(descriptors, "dra_cpu_allocated_cpus")).ToNot(gomega.BeNil())
 	})
 })
+
+var _ = ginkgo.Describe("[Local] dracpu root usage", func() {
+	ginkgo.It("should list subcommands and compatibility paths", func() {
+		cmdline := []string{binPath, "--help"}
+		fmt.Fprintf(ginkgo.GinkgoWriter, "running: %v\n", cmdline)
+
+		// #nosec G204 -- the command and arguments are fixed above.
+		out, err := exec.Command(cmdline[0], cmdline[1:]...).CombinedOutput()
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+		usage := string(out)
+		gomega.Expect(usage).To(gomega.ContainSubstring("dracpu gatherinfo [flags]"))
+		gomega.Expect(usage).To(gomega.ContainSubstring("dracpu introspect metrics"))
+		gomega.Expect(usage).To(gomega.ContainSubstring("dracpu-gatherinfo [flags]"))
+		gomega.Expect(usage).ToNot(gomega.ContainSubstring("--show-metrics"))
+	})
+})
+
+var _ = ginkgo.DescribeTable("[Local] dracpu command flag isolation",
+	func(args []string, expectedError string) {
+		cmdline := append([]string{binPath}, args...)
+		fmt.Fprintf(ginkgo.GinkgoWriter, "running: %v\n", cmdline)
+
+		// #nosec G204 -- the command and arguments come from the fixed test table below.
+		out, err := exec.Command(cmdline[0], cmdline[1:]...).CombinedOutput()
+		gomega.Expect(err).To(gomega.HaveOccurred())
+		gomega.Expect(string(out)).To(gomega.ContainSubstring(expectedError))
+	},
+	ginkgo.Entry("rejects root flags before a subcommand",
+		[]string{"--config=/does/not/exist", "gatherinfo"},
+		"root flags cannot be combined with subcommands"),
+	ginkgo.Entry("rejects root flags after a subcommand",
+		[]string{"gatherinfo", "--config=/does/not/exist"},
+		"flag provided but not defined: -config"),
+	ginkgo.Entry("rejects the removed show-metrics flag",
+		[]string{"--show-metrics"},
+		"flag provided but not defined: -show-metrics"),
+)
 
 func findDescriptorByName(descriptors []metrics.Descriptor, name string) *metrics.Descriptor {
 	for idx := range len(descriptors) {
