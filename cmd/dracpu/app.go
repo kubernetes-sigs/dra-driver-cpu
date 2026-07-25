@@ -180,17 +180,11 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 		return fmt.Errorf("can not obtain the node name, use the hostname-override flag if you want to set it to a specific value: %w", err)
 	}
 
-	// trap Ctrl+C and call cancel on the context
+	// Cancel the context on interactive interruption (SIGINT) or the default Pod
+	// stop signal (SIGTERM), so a normal termination runs the graceful shutdown.
 	ctx := ctxlog.NewContext(context.Background(), logger)
-	ctx, cancel := context.WithCancel(ctx)
-
-	// Enable signal handler
-	signalCh := make(chan os.Signal, 2)
-	defer func() {
-		close(signalCh)
-		cancel()
-	}()
-	signal.Notify(signalCh, os.Interrupt, unix.SIGINT)
+	ctx, stop := signal.NotifyContext(ctx, unix.SIGINT, unix.SIGTERM)
+	defer stop()
 
 	driverConfig := driver.Config{
 		DriverName:       driverName,
@@ -220,13 +214,13 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 	var fatalErr error
 
 	select {
-	case <-signalCh:
-		logger.Info("exiting", "reason", "received signal")
-		cancel()
 	case <-ctx.Done():
-		logger.Info("exiting", "reason", "context cancelled")
+		// Restore the default signal behavior as soon as we start exiting, so a
+		// second signal can force termination if graceful cleanup gets stuck.
+		stop()
+		logger.Info("exiting", "reason", "received signal")
 	case err := <-asyncErr:
-		cancel()
+		stop()
 		fatalErr = fmt.Errorf("NRI driver error: %w", err)
 	}
 
