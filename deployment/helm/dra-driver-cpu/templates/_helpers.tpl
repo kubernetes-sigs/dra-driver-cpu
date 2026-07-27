@@ -49,3 +49,25 @@ Selector labels
 app.kubernetes.io/name: {{ include "dra-driver-cpu.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{/*
+Effective driverConfig: folds deprecated args.* fields (cpuDeviceMode,
+groupBy, reservedCPUs, hostnameOverride) into driverConfig, args.* wins on
+conflicts.
+*/}}
+{{- define "dra-driver-cpu.effectiveDriverConfig" -}}
+{{- $cfg := deepCopy (.Values.driverConfig | default dict) -}}
+{{- if .Values.args.cpuDeviceMode }}
+{{- $_ := set $cfg "cpuDeviceMode" .Values.args.cpuDeviceMode }}
+{{- end }}
+{{- if .Values.args.groupBy }}
+{{- $_ := set $cfg "groupBy" .Values.args.groupBy }}
+{{- end }}
+{{- if .Values.args.reservedCPUs }}
+{{- $_ := set $cfg "reservedCPUs" .Values.args.reservedCPUs }}
+{{- end }}
+{{- if .Values.args.hostnameOverride }}
+{{- $_ := set $cfg "hostnameOverride" .Values.args.hostnameOverride }}
+{{- end }}
+{{- toYaml $cfg -}}
+{{- end }}

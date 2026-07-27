@@ -11,7 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-{{- if .Values.driverConfig }}
+{{- $effectiveDriverConfig := include "dra-driver-cpu.effectiveDriverConfig" . | fromYaml }}
+{{- if $effectiveDriverConfig }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -22,5 +23,5 @@ metadata:
     {{- include "dra-driver-cpu.labels" . | nindent 4 }}
 data:
   config.yaml: |
-    {{- .Values.driverConfig | toYaml | nindent 4 }}
+    {{- $effectiveDriverConfig | toYaml | nindent 4 }}
 {{- end }}

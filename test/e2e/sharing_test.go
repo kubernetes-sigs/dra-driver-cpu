@@ -71,18 +71,15 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 		daemonSet, err := rootFxt.K8SClientset.AppsV1().DaemonSets("kube-system").Get(ctx, "dracpu", metav1.GetOptions{})
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get dracpu daemonset")
 		gomega.Expect(daemonSet.Spec.Template.Spec.Containers).ToNot(gomega.BeEmpty(), "no containers in dracpu daemonset")
+		cfgValues, err := getDriverConfigValues(ctx, rootFxt.K8SClientset, "kube-system", daemonSet)
+		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot read dracpu driver config values")
 		var dsReservedCPUs cpuset.CPUSet
-		cnt := &daemonSet.Spec.Template.Spec.Containers[0]
-		if val, ok := findArgInContainer(cnt, argReservedCPUs); ok {
-			dsReservedCPUs, err = cpuset.Parse(val)
+		if len(cfgValues.ReservedCPUs) > 0 {
+			dsReservedCPUs, err = cpuset.Parse(cfgValues.ReservedCPUs)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse daemonset reserved cpus: %v", err)
 		}
-		if val, ok := findArgInContainer(cnt, argCPUDeviceMode); ok {
-			cpuDeviceMode = val
-		}
-		if val, ok := findArgInContainer(cnt, argGroupBy); ok {
-			groupBy = val
-		}
+		cpuDeviceMode = cfgValues.CPUDeviceMode
+		groupBy = cfgValues.GroupBy
 		gomega.Expect(dsReservedCPUs).To(cpusetmatchers.Equal(reservedCPUs), "daemonset reserved cpus do not match test reserved cpus")
 
 		rootFxt.Log.Info("daemonset configuration", "reservedCPUs", dsReservedCPUs.String(), "deviceMode", cpuDeviceMode, "groupBy", groupBy)

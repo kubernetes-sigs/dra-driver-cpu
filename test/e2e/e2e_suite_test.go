@@ -31,6 +31,7 @@ import (
 	e2epod "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/pod"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -39,6 +40,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/cpuset"
+	"sigs.k8s.io/yaml"
 )
 
 func TestE2E(t *testing.T) {
@@ -225,6 +227,40 @@ func findArgInContainer(container *v1.Container, prefix string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// driverConfigValues holds cpuDeviceMode/groupBy/reservedCPUs read back from a daemonset.
+type driverConfigValues struct {
+	CPUDeviceMode string `json:"cpuDeviceMode,omitempty"`
+	GroupBy       string `json:"groupBy,omitempty"`
+	ReservedCPUs  string `json:"reservedCPUs,omitempty"`
+}
+
+// getDriverConfigValues reads the ConfigMap if the daemonset uses --config=, else falls back to
+// the deprecated CLI flags.
+func getDriverConfigValues(ctx context.Context, client kubernetes.Interface, namespace string, ds *appsv1.DaemonSet) (driverConfigValues, error) {
+	var values driverConfigValues
+	cnt := &ds.Spec.Template.Spec.Containers[0]
+	if _, ok := findArgInContainer(cnt, "--config="); ok {
+		cm, err := client.CoreV1().ConfigMaps(namespace).Get(ctx, ds.Name+"-config", metav1.GetOptions{})
+		if err != nil {
+			return values, fmt.Errorf("getting driver config configmap for daemonset %s: %w", ds.Name, err)
+		}
+		if err := yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &values); err != nil {
+			return values, fmt.Errorf("parsing driver config configmap for daemonset %s: %w", ds.Name, err)
+		}
+		return values, nil
+	}
+	if val, ok := findArgInContainer(cnt, argCPUDeviceMode); ok {
+		values.CPUDeviceMode = val
+	}
+	if val, ok := findArgInContainer(cnt, argGroupBy); ok {
+		values.GroupBy = val
+	}
+	if val, ok := findArgInContainer(cnt, argReservedCPUs); ok {
+		values.ReservedCPUs = val
+	}
+	return values, nil
 }
 
 func makeTesterPodWithNamedClaim(ns, image, claimName string, nodeName string) *v1.Pod {

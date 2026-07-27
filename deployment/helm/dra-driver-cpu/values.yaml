@@ -78,13 +78,13 @@ affinity: {}
 args:
   # -- Log verbosity level passed as `--v`
   logLevel: 4 # @schema type:integer;minimum:0;required:true
-  # -- CPU exposure mode: `grouped` (expose NUMA nodes or sockets as devices) or `individual` (expose each CPU as a device); when empty, defers to `driverConfig.cpuDeviceMode` or the built-in default (`grouped`)
+  # -- **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.cpuDeviceMode` instead. CPU exposure mode: `grouped` (expose NUMA nodes or sockets as devices) or `individual` (expose each CPU as a device); defaults to `grouped` when empty.
   cpuDeviceMode: "" # @schema enum:["",grouped,individual];required:true
-  # -- Grouping criteria when `cpuDeviceMode=grouped`: `numanode`, `socket` or `machine`; when empty, defers to `driverConfig.groupBy` or the built-in default (`numanode`)
+  # -- **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.groupBy` instead. Grouping criteria when `cpuDeviceMode=grouped`: `numanode`, `socket` or `machine`; defaults to `numanode` when empty.
   groupBy: "" # @schema enum:["",numanode,socket,machine];required:true
-  # -- CPUs reserved for the OS and kubelet, excluded from DRA management (e.g. `"0-1"`); omitted when empty
+  # -- **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.reservedCPUs` instead. CPUs reserved for the OS and kubelet, excluded from DRA management (e.g. `"0-1"`).
   reservedCPUs: ""
-  # -- Override the node name the driver registers under; omitted when empty
+  # -- **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.hostnameOverride` instead. Overrides the node name the driver registers under.
   hostnameOverride: ""
   # -- Discover and expose PCIe roots as device attributes. Requires the `DRAListTypeAttributes=true` feature gate in the cluster. Not configurable via `driverConfig`; use this flag instead
   exposePCIeRoots: false # @schema type:boolean
@@ -94,9 +94,12 @@ healthzPath: /healthz
 # -- Port the HTTP server binds to; used for the container port and probes
 healthzPort: 8080 # @schema type:integer;minimum:1;maximum:65535
 
-# -- Driver config file contents. When non-empty, a ConfigMap is created and
-# mounted into the driver container as /etc/dracpu/config.yaml. Fields in
-# `args.*` that are non-empty always take priority over values set here.
+# -- Driver config file contents. When non-empty, or when a deprecated
+# `args.*` field below is set, a ConfigMap is created and mounted into the
+# driver container as /etc/dracpu/config.yaml. `args.*` fields that mirror a
+# deprecated CLI flag (`cpuDeviceMode`, `groupBy`, `reservedCPUs`,
+# `hostnameOverride`) are folded into the generated config automatically and
+# take priority over the same field set here.
 # Example:
 #   driverConfig:
 #     cpuDeviceMode: individual
