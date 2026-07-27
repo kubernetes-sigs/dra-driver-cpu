@@ -28,13 +28,22 @@ func (c *Config) AddFlags(fs *flag.FlagSet) {
 	c.applyDefaults()
 
 	fs.StringVar(&c.Kubeconfig, "kubeconfig", c.Kubeconfig, "absolute path to the kubeconfig file")
-	fs.StringVar(&c.HostnameOverride, "hostname-override", c.HostnameOverride, "If non-empty, will be used as the name of the Node that kube-network-policies is running on. If unset, the node name is assumed to be the same as the node's hostname.")
 	fs.StringVar(&c.BindAddress, "bind-address", c.BindAddress, "The address to bind the HTTP server for /healthz and /metrics endpoints")
-	fs.StringVar(&c.ReservedCPUs, "reserved-cpus", c.ReservedCPUs, "cpuset of CPUs to be excluded from ResourceSlice.")
-	fs.Var(newCPUDeviceModeValue(&c.CPUDeviceMode, c.CPUDeviceMode), "cpu-device-mode", "Sets the mode for exposing CPU devices. 'grouped' exposes a single device per socket or numa node (based on --group-by). 'individual' exposes each CPU as a separate device.")
-	fs.Var(newGroupByValue(&c.GroupBy, c.GroupBy), "group-by", "When --cpu-device-mode=grouped, sets the criteria for grouping CPUs. Can be set to 'socket', 'numanode', or 'machine' (machine mode requires an external scheduler to include cpuset configuration in claim allocation results).")
 	fs.BoolVar(&c.ExposePCIeRoots, "expose-pcie-roots", c.ExposePCIeRoots, "Discover and expose PCIe roots as device attributes. Requires the DRAListTypeAttributes=true Feature Gate in the cluster.")
-	fs.StringVar(&c.SysFSOverlay, "sysfs-overlay", c.SysFSOverlay, "Path to a YAML file containing sysfs file overlays.")
+	fs.Var(newCPUDeviceModeValue(&c.CPUDeviceMode, c.CPUDeviceMode), "cpu-device-mode", deprecatedUsage("cpuDeviceMode",
+		"Sets the mode for exposing CPU devices. 'grouped' exposes a single device per socket or numa node (based on --group-by). 'individual' exposes each CPU as a separate device."))
+	fs.Var(newGroupByValue(&c.GroupBy, c.GroupBy), "group-by", deprecatedUsage("groupBy",
+		"When --cpu-device-mode=grouped, sets the criteria for grouping CPUs. Can be set to 'socket', 'numanode', or 'machine' (machine mode requires an external scheduler to include cpuset configuration in claim allocation results)."))
+	fs.StringVar(&c.ReservedCPUs, "reserved-cpus", c.ReservedCPUs, deprecatedUsage("reservedCPUs",
+		"cpuset of CPUs to be excluded from ResourceSlice."))
+	fs.StringVar(&c.HostnameOverride, "hostname-override", c.HostnameOverride, deprecatedUsage("hostnameOverride",
+		"If non-empty, will be used as the name of the Node that kube-network-policies is running on. If unset, the node name is assumed to be the same as the node's hostname."))
+	fs.StringVar(&c.SysFSOverlay, "sysfs-overlay", c.SysFSOverlay, deprecatedUsage("sysfsOverlay",
+		"Path to a YAML file containing sysfs file overlays."))
+}
+
+func deprecatedUsage(driverConfigField, usage string) string {
+	return fmt.Sprintf("%s (DEPRECATED: prefer driverConfig field %q; this flag will be removed in a future release)", usage, driverConfigField)
 }
 
 func (c *Config) applyDefaults() {

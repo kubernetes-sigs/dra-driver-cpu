@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/go-logr/logr"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // flagToJSONKey maps CLI flag names to their Config JSON keys.
@@ -34,6 +35,29 @@ var flagToJSONKey = map[string]string{
 	"group-by":          "groupBy",
 	"expose-pcie-roots": "exposePCIeRoots",
 	"sysfs-overlay":     "sysfsOverlay",
+}
+
+// deprecatedFlags is the set of standalone CLI flags being phased out in
+// favour of the same-named driverConfig field (issue #245).
+var deprecatedFlags = sets.New(
+	"cpu-device-mode",
+	"group-by",
+	"reserved-cpus",
+	"hostname-override",
+	"sysfs-overlay",
+)
+
+// WarnDeprecatedFlags logs a warning for each deprecated flag explicitly set
+// on the command line. Not called by Load. gatherinfo also calls Load, but
+// on other processes' flags, where a warning wouldn't make sense.
+func WarnDeprecatedFlags(fs *flag.FlagSet, logger logr.Logger) {
+	fs.Visit(func(f *flag.Flag) {
+		if !deprecatedFlags.Has(f.Name) {
+			return
+		}
+		logger.Info("flag is deprecated and will be removed in a future release; prefer the equivalent driverConfig field instead",
+			"flag", f.Name, "driverConfigField", flagToJSONKey[f.Name])
+	})
 }
 
 // Load merges the config file at filePath into base, giving CLI flags that were

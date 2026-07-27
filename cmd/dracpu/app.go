@@ -89,6 +89,7 @@ func main() {
 	ctxlog.AddFlags(flag.CommandLine)
 	flag.Parse()
 	logger := ctxlog.Setup()
+	driverconfig.WarnDeprecatedFlags(flag.CommandLine, logger)
 
 	if len(flag.Args()) > 0 {
 		if flag.NFlag() > 0 {
