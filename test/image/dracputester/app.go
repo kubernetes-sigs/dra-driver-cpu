@@ -20,6 +20,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/fs"
 	"log"
@@ -87,6 +88,9 @@ func affinityScanBoundFromTopology(topo *cpuinfo.CPUTopology) int {
 }
 
 func main() {
+	exitAfter := flag.Duration("exit-after", 0, "exit after this duration to exercise container restart handling")
+	flag.Parse()
+	started := time.Now()
 	logger := stdr.New(log.Default())
 	// Read the container's cgroup view, intentionally ignoring HOST_ROOT.
 	containerSysfs := os.DirFS("/sys")
@@ -114,6 +118,9 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error encoding info: %v\n", err)
 			os.Exit(2)
+		}
+		if *exitAfter > 0 && time.Since(started) >= *exitAfter {
+			os.Exit(42)
 		}
 
 		time.Sleep(5 * time.Second)

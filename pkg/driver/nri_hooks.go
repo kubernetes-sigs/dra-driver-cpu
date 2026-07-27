@@ -207,6 +207,9 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 			guaranteedCPUs = guaranteedCPUs.Union(cpus)
 			claimUIDs = append(claimUIDs, uid)
 		}
+		if err := cp.cpuAllocationStore.EnforceResourceClaims(claimAllocations); err != nil {
+			return nil, nil, err
+		}
 		logger.V(2).Info("guaranteed CPUs found", "cpus", guaranteedCPUs.String())
 		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs...)
 		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
@@ -218,23 +221,20 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 	return adjust, updates, nil
 }
 
-// StopContainer releases a guaranteed container's CPU claim back into the shared pool.
+// StopContainer releases a guaranteed container's CPUs back into the shared pool.
 //
 // CPU-allocation lifetime across the DRA and NRI hooks:
-//   - PrepareResourceClaims (DRA) records the claim's CPUs in cpuAllocationStore and writes the CDI
-//     spec carrying that cpuset.
-//   - CreateContainer (NRI) pins the guaranteed container and shrinks the other shared containers'
-//     pool accordingly.
-//   - StopContainer (NRI, here) releases the claim's CPUs back into the shared pool and re-broadens
-//     the surviving shared containers immediately, because NRI only lets us push cpuset updates to
-//     other containers during a container lifecycle event and UnprepareResourceClaims runs too late.
-//   - UnprepareResourceClaims (DRA) does the authoritative cleanup (remove the CDI device, then
-//     release the allocation); releasing an already-released claim is a no-op, so the early release
-//     here stays consistent with it.
+//   - PrepareResourceClaims (DRA) records a pending reservation and writes the CDI spec carrying
+//     that cpuset. Pending CPUs stay available to shared containers but not to new exclusive claims.
+//   - CreateContainer (NRI) validates and enforces the prepared allocation, then shrinks the shared
+//     pool.
+//   - StopContainer (NRI, here) marks the allocation pending and immediately re-broadens surviving
+//     shared containers. The prepared allocation and owner remain available for a restart.
+//   - UnprepareResourceClaims (DRA) is the authoritative cleanup point for the allocation and owner.
 //   - Synchronize (NRI, on restart) rebuilds the stores from the running containers' CDI env.
 //
 // This relies on a ResourceClaim being owned by exactly one container (claim sharing is
-// unsupported), which is what makes the early release safe. Revisit before enabling claim sharing,
+// unsupported), which is what makes pending shared use safe. Revisit before enabling claim sharing,
 // preemption, or mixed shared/isolated allocation.
 func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) ([]*api.ContainerUpdate, error) {
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen), "pod", ctxlog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
@@ -245,16 +245,12 @@ func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr
 	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
 	entries := "none"
 	if len(claimUIDs) > 0 {
-		// Early release of the claim's CPUs; see the lifetime model in StopContainer's doc comment.
+		// Stop enforcing the claim while retaining its prepared allocation for a restart.
 		// TODO: assumes ResourceClaims are not shared across pods/containers; revisit if sharing lands.
-		for _, claimUID := range claimUIDs {
-			cLogger := logger.WithValues("claimUID", claimUID)
-			cp.cpuAllocationStore.RemoveResourceClaimAllocation(cLogger, claimUID)
-		}
+		cp.cpuAllocationStore.MarkResourceClaimsPending(claimUIDs...)
 		cp.refreshAllocationMetrics()
 		// Remove the guaranteed CPUs from the containers with shared CPUs.
 		updates = cp.getSharedContainerUpdates(logger, types.UID(ctr.GetId()))
-		cp.claimTracker.Cleanup(claimUIDs...)
 		entries = fmt.Sprintf("%d entries", len(updates))
 	}
 	logger.V(2).Info("StopContainer updates needed", "entries", entries)

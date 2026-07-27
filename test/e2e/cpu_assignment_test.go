@@ -233,6 +233,46 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				verifySharedPoolMatches(ctx, fxt, shrPod2, availableCPUs)
 			})
 
+			ginkgo.It("should preserve exclusive CPUs when a container restarts without re-preparing its claim", func(ctx context.Context) {
+				if cpuDeviceMode == "grouped" && groupBy == "machine" {
+					ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
+				}
+
+				claimTemplate := resourcev1.ResourceClaimTemplate{
+					ObjectMeta: metav1.ObjectMeta{Name: "cpu-claim-container-restart"},
+					Spec: resourcev1.ResourceClaimTemplateSpec{
+						Spec: makeResourceClaimSpec(cpusPerClaim, cpuDeviceMode == "grouped"),
+					},
+				}
+				createdTemplate, err := fxt.K8SClientset.ResourceV1().ResourceClaimTemplates(fxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				pod := makeTesterPodWithExclusiveCPUClaim(fxt.Namespace.Name, dracpuTesterImage, createdTemplate.Name, int64(cpusPerClaim), targetNode.Name)
+				pod.Spec.Containers[0].Args = []string{"--exit-after=10s"}
+				createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				initialAllocation := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, createdPod)
+				gomega.Expect(initialAllocation.CPUAssigned).To(cpusetmatchers.HaveSize(cpusPerClaim))
+				gomega.Expect(createdPod.Status.ContainerStatuses).ToNot(gomega.BeEmpty())
+				initialContainerID := createdPod.Status.ContainerStatuses[0].ContainerID
+
+				var restartedPod *v1.Pod
+				gomega.Eventually(func(g gomega.Gomega) {
+					current, err := fxt.K8SClientset.CoreV1().Pods(createdPod.Namespace).Get(ctx, createdPod.Name, metav1.GetOptions{})
+					g.Expect(err).ToNot(gomega.HaveOccurred())
+					g.Expect(current.Status.ContainerStatuses).ToNot(gomega.BeEmpty())
+					status := current.Status.ContainerStatuses[0]
+					g.Expect(status.RestartCount).To(gomega.BeNumerically(">=", 1))
+					g.Expect(status.ContainerID).ToNot(gomega.Equal(initialContainerID))
+					g.Expect(status.State.Running).ToNot(gomega.BeNil())
+					restartedPod = current
+				}, 2*time.Minute, 2*time.Second).Should(gomega.Succeed())
+
+				restartedAllocation := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, restartedPod)
+				gomega.Expect(restartedAllocation.CPUAssigned).To(cpusetmatchers.Equal(initialAllocation.CPUAssigned))
+			})
+
 			ginkgo.It("should allocate non-overlapping CPUs for multiple requests in the same grouped claim", func(ctx context.Context) {
 				if cpuDeviceMode != "grouped" {
 					ginkgo.Skip("this test only applies to grouped CPU device mode")

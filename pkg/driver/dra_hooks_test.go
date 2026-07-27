@@ -1354,7 +1354,7 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 			firstDevices:   []string{"cpudev000", "cpudev002"},
 			secondDevices:  []string{"cpudev000", "cpudev002"},
 			expectedCPUSet: cpuset.New(0, 1),
-			expectedShared: cpuset.New(2, 3),
+			expectedShared: cpuset.New(0, 1, 2, 3),
 			expectError:    false,
 		},
 		{
@@ -1362,7 +1362,7 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 			firstDevices:   []string{"cpudev000", "cpudev002"},
 			secondDevices:  []string{"cpudev001", "cpudev003"},
 			expectedCPUSet: cpuset.New(0, 1),
-			expectedShared: cpuset.New(2, 3),
+			expectedShared: cpuset.New(0, 1, 2, 3),
 			expectError:    true,
 		},
 	}
@@ -1491,7 +1491,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			firstClaim:     testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2}),
 			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2}),
 			expectedCPUSet: cpuset.New(0, 4),
-			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+			expectedShared: cpuset.New(0, 1, 2, 3, 4, 5, 6, 7),
 		},
 		{
 			name:           "different socket repeated",
@@ -1499,7 +1499,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			firstClaim:     testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2}),
 			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket1": 2}),
 			expectedCPUSet: cpuset.New(0, 4),
-			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+			expectedShared: cpuset.New(0, 1, 2, 3, 4, 5, 6, 7),
 		},
 		{
 			name:           "same NUMA node repeated",
@@ -1507,7 +1507,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			firstClaim:     testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2}),
 			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2}),
 			expectedCPUSet: cpuset.New(0, 4),
-			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+			expectedShared: cpuset.New(0, 1, 2, 3, 4, 5, 6, 7),
 		},
 		{
 			name:           "different NUMA node repeated",
@@ -1515,7 +1515,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			firstClaim:     testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2}),
 			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma1": 2}),
 			expectedCPUSet: cpuset.New(0, 4),
-			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+			expectedShared: cpuset.New(0, 1, 2, 3, 4, 5, 6, 7),
 		},
 	}
 
@@ -1631,6 +1631,7 @@ func TestUnprepareResourceClaimsKeepsAllocationWhenCDIRemoveFails(t *testing.T) 
 	require.True(t, ok)
 	require.True(t, allocatedCPUs.Equals(gotCPUs), "claim cpus: got %s, want %s", gotCPUs, allocatedCPUs)
 	require.True(t, cpuset.New(1, 3).Equals(cp.cpuAllocationStore.GetSharedCPUs()), "shared cpus: got %s", cp.cpuAllocationStore.GetSharedCPUs())
+	require.Equal(t, 1, cp.claimTracker.Len())
 	require.Contains(t, mockCdiMgr.devices, cdiDeviceName)
 }
 
@@ -1649,6 +1650,7 @@ func TestUnprepareResourceClaimsRemovesAllocationAfterCDIRemoveSucceeds(t *testi
 	_, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
 	require.False(t, ok)
 	require.True(t, cpuset.New(0, 1, 2, 3).Equals(cp.cpuAllocationStore.GetSharedCPUs()), "shared cpus: got %s", cp.cpuAllocationStore.GetSharedCPUs())
+	require.Equal(t, 0, cp.claimTracker.Len())
 	require.NotContains(t, mockCdiMgr.devices, cdiDeviceName)
 }
 
@@ -1662,10 +1664,13 @@ func newDriverWithAllocatedClaim(t *testing.T, logger logr.Logger, claimUID type
 	require.NoError(t, err)
 	cpuAllocationStore := store.NewCPUAllocation(topo, cpuset.New())
 	cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, allocatedCPUs)
+	claimTracker := store.NewClaimTracker()
+	require.NoError(t, claimTracker.SetOwner(logger, claimUID, "pod", "container"))
 
 	return &CPUDriver{
 		cdiMgr:             mockCdiMgr,
 		cpuAllocationStore: cpuAllocationStore,
+		claimTracker:       claimTracker,
 	}, mockCdiMgr
 }
 

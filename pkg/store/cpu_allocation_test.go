@@ -38,6 +38,31 @@ func newTestCPUAllocation(logger logr.Logger, allCPUs, reserved cpuset.CPUSet) *
 	return NewCPUAllocation(topo, reserved)
 }
 
+func TestCPUAllocationPreparedEnforcedLifecycle(t *testing.T) {
+	logger := testr.New(t)
+	allCPUs := cpuset.New(0, 1, 2, 3)
+	claimUID := types.UID("claim-1")
+	claimCPUs := cpuset.New(0, 1)
+	store := newTestCPUAllocation(logger, allCPUs, cpuset.New())
+
+	require.NoError(t, store.ReserveResourceClaimAllocation(logger, claimUID, claimCPUs))
+	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
+	require.True(t, store.GetAllocatableCPUs().Equals(cpuset.New(2, 3)))
+	require.Error(t, store.ReserveResourceClaimAllocation(logger, "claim-2", claimCPUs))
+
+	require.NoError(t, store.EnforceResourceClaims(map[types.UID]cpuset.CPUSet{claimUID: claimCPUs}))
+	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
+	require.True(t, store.GetAllocatableCPUs().Equals(cpuset.New(2, 3)))
+
+	store.MarkResourceClaimsPending(claimUID)
+	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
+	require.True(t, store.GetAllocatableCPUs().Equals(cpuset.New(2, 3)))
+
+	store.RemoveResourceClaimAllocation(logger, claimUID)
+	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
+	require.True(t, store.GetAllocatableCPUs().Equals(allCPUs))
+}
+
 func TestNewCPUAllocation(t *testing.T) {
 	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
