@@ -17,6 +17,7 @@ limitations under the License.
 package store
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/go-logr/logr"
@@ -25,13 +26,19 @@ import (
 	"k8s.io/utils/cpuset"
 )
 
+type claimAllocation struct {
+	cpus     cpuset.CPUSet
+	enforced bool
+}
+
 // CPUAllocation is the single source of truth for CPU allocations.
 type CPUAllocation struct {
 	mu                       sync.RWMutex
 	availableCPUs            cpuset.CPUSet
 	reservedCPUs             cpuset.CPUSet
-	resourceClaimAllocations map[types.UID]cpuset.CPUSet
-	allocatedCPUs            cpuset.CPUSet
+	resourceClaimAllocations map[types.UID]claimAllocation
+	preparedCPUs             cpuset.CPUSet
+	enforcedCPUs             cpuset.CPUSet
 }
 
 // AllocationSnapshot is a point-in-time summary of CPU allocation state.
@@ -54,47 +61,129 @@ func NewCPUAllocation(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUS
 	return &CPUAllocation{
 		availableCPUs:            availableCPUs,
 		reservedCPUs:             reservedCPUs,
-		resourceClaimAllocations: make(map[types.UID]cpuset.CPUSet),
-		allocatedCPUs:            cpuset.New(),
+		resourceClaimAllocations: make(map[types.UID]claimAllocation),
+		preparedCPUs:             cpuset.New(),
+		enforcedCPUs:             cpuset.New(),
 	}
 }
 
-// AddResourceClaimAllocation adds a new resource claim allocation to the store.
+// AddResourceClaimAllocation adds an allocation already enforced by a running container.
+// It is used while reconstructing state from the NRI runtime.
 func (s *CPUAllocation) AddResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if old, ok := s.resourceClaimAllocations[claimUID]; ok {
-		s.allocatedCPUs = s.allocatedCPUs.Difference(old)
+	s.removeLocked(claimUID)
+	s.resourceClaimAllocations[claimUID] = claimAllocation{cpus: cpus, enforced: true}
+	s.preparedCPUs = s.preparedCPUs.Union(cpus)
+	s.enforcedCPUs = s.enforcedCPUs.Union(cpus)
+	logger.Info("added enforced allocation for resource claim", "cpus", cpus.String())
+}
+
+// ReserveResourceClaimAllocation records a prepared claim without removing its CPUs from
+// shared containers. The CPUs remain unavailable to other exclusive claims until Unprepare.
+func (s *CPUAllocation) ReserveResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if allocation, ok := s.resourceClaimAllocations[claimUID]; ok {
+		if allocation.cpus.Equals(cpus) {
+			return nil
+		}
+		return fmt.Errorf("claim %q is already prepared with CPUs %q (requested %q)", claimUID, allocation.cpus.String(), cpus.String())
 	}
-	s.resourceClaimAllocations[claimUID] = cpus
-	s.allocatedCPUs = s.allocatedCPUs.Union(cpus)
-	logger.Info("added allocation for resource claim", "cpus", cpus.String())
+	if !cpus.IsSubsetOf(s.availableCPUs.Difference(s.preparedCPUs)) {
+		return fmt.Errorf("claim %q has overlapping CPU assignment %q", claimUID, cpus.String())
+	}
+	s.resourceClaimAllocations[claimUID] = claimAllocation{cpus: cpus}
+	s.preparedCPUs = s.preparedCPUs.Union(cpus)
+	logger.Info("reserved allocation for resource claim", "cpus", cpus.String())
+	return nil
+}
+
+// EnforceResourceClaims validates and marks a container's claims as enforced.
+func (s *CPUAllocation) EnforceResourceClaims(expected map[types.UID]cpuset.CPUSet) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for claimUID, cpus := range expected {
+		allocation, ok := s.resourceClaimAllocations[claimUID]
+		if !ok {
+			return fmt.Errorf("claim %q is not prepared by this driver", claimUID)
+		}
+		if !allocation.cpus.Equals(cpus) {
+			return fmt.Errorf("validation failed for claim %q: cpuset mismatch (expected %q, got %q)", claimUID, allocation.cpus.String(), cpus.String())
+		}
+	}
+
+	for claimUID := range expected {
+		allocation := s.resourceClaimAllocations[claimUID]
+		if allocation.enforced {
+			continue
+		}
+		allocation.enforced = true
+		s.resourceClaimAllocations[claimUID] = allocation
+		s.enforcedCPUs = s.enforcedCPUs.Union(allocation.cpus)
+	}
+	return nil
+}
+
+// MarkResourceClaimsPending stops enforcing claims while retaining their prepared reservations.
+func (s *CPUAllocation) MarkResourceClaimsPending(claimUIDs ...types.UID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, claimUID := range claimUIDs {
+		allocation, ok := s.resourceClaimAllocations[claimUID]
+		if !ok || !allocation.enforced {
+			continue
+		}
+		allocation.enforced = false
+		s.resourceClaimAllocations[claimUID] = allocation
+		s.enforcedCPUs = s.enforcedCPUs.Difference(allocation.cpus)
+	}
 }
 
 // RemoveResourceClaimAllocation removes a resource claim allocation from the store.
 func (s *CPUAllocation) RemoveResourceClaimAllocation(logger logr.Logger, claimUID types.UID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cpus, ok := s.resourceClaimAllocations[claimUID]; ok {
-		delete(s.resourceClaimAllocations, claimUID)
-		s.allocatedCPUs = s.allocatedCPUs.Difference(cpus)
+	if _, ok := s.resourceClaimAllocations[claimUID]; ok {
+		s.removeLocked(claimUID)
 		logger.Info("removed allocation for resource claim")
 	}
 }
 
-// GetSharedCPUs returns the set of CPUs not reserved by any resource claim.
+func (s *CPUAllocation) removeLocked(claimUID types.UID) {
+	allocation, ok := s.resourceClaimAllocations[claimUID]
+	if !ok {
+		return
+	}
+	delete(s.resourceClaimAllocations, claimUID)
+	s.preparedCPUs = s.preparedCPUs.Difference(allocation.cpus)
+	if allocation.enforced {
+		s.enforcedCPUs = s.enforcedCPUs.Difference(allocation.cpus)
+	}
+}
+
+// GetSharedCPUs returns CPUs available to shared containers. Prepared claims only
+// leave this pool while they are enforced by a live container.
 func (s *CPUAllocation) GetSharedCPUs() cpuset.CPUSet {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.availableCPUs.Difference(s.allocatedCPUs)
+	return s.availableCPUs.Difference(s.enforcedCPUs)
+}
+
+// GetAllocatableCPUs returns CPUs available for a new exclusive claim.
+func (s *CPUAllocation) GetAllocatableCPUs() cpuset.CPUSet {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.availableCPUs.Difference(s.preparedCPUs)
 }
 
 // GetResourceClaimAllocation returns the cpuset for a given resource claim.
 func (s *CPUAllocation) GetResourceClaimAllocation(claimUID types.UID) (cpuset.CPUSet, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	cpus, ok := s.resourceClaimAllocations[claimUID]
-	return cpus, ok
+	allocation, ok := s.resourceClaimAllocations[claimUID]
+	return allocation.cpus, ok
 }
 
 // GetReservedCPUs returns the set of reserved CPUs.
@@ -108,7 +197,7 @@ func (s *CPUAllocation) GetReservedCPUs() cpuset.CPUSet {
 func (s *CPUAllocation) GetAllocatedCPUs() cpuset.CPUSet {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.allocatedCPUs
+	return s.preparedCPUs
 }
 
 // Snapshot returns a point-in-time summary of CPU allocation state.
@@ -116,8 +205,8 @@ func (s *CPUAllocation) Snapshot() AllocationSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return AllocationSnapshot{
-		AllocatedCPUs:        s.allocatedCPUs.Size(),
-		AvailableCPUs:        s.availableCPUs.Difference(s.allocatedCPUs).Size(),
+		AllocatedCPUs:        s.preparedCPUs.Size(),
+		AvailableCPUs:        s.availableCPUs.Difference(s.preparedCPUs).Size(),
 		ReservedCPUs:         s.reservedCPUs.Size(),
 		ActiveResourceClaims: len(s.resourceClaimAllocations),
 	}

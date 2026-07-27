@@ -333,6 +333,60 @@ func TestStopContainer(t *testing.T) {
 	}
 }
 
+func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
+	logger := testr.New(t)
+	allCPUs := cpuset.New(0, 1, 2, 3)
+	var infos []cpuinfo.CPUInfo
+	for _, cpuID := range allCPUs.UnsortedList() {
+		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
+	}
+	topo, err := (&cpuinfo.MockCPUInfoProvider{CPUInfos: infos}).GetCPUTopology(logger)
+	require.NoError(t, err)
+
+	claimUID := types.UID("claim-restart")
+	claimCPUs := cpuset.New(0, 1)
+	cpuStore := store.NewCPUAllocation(topo, cpuset.New())
+	require.NoError(t, cpuStore.ReserveResourceClaimAllocation(logger, claimUID, claimCPUs))
+	driver := &CPUDriver{
+		podConfigStore:     store.NewPodConfig(),
+		cpuAllocationStore: cpuStore,
+		claimTracker:       store.NewClaimTracker(),
+		cpuTopology:        topo,
+	}
+
+	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod", Name: "pod", Namespace: "ns"}
+	container := func(id string) *api.Container {
+		return &api.Container{
+			Id:           id,
+			PodSandboxId: pod.Id,
+			Name:         "app",
+			Env:          []string{fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, claimCPUs.String())},
+		}
+	}
+
+	first := container("container-1")
+	adjustment, _, err := driver.CreateContainer(context.Background(), pod, first)
+	require.NoError(t, err)
+	require.Equal(t, claimCPUs.String(), adjustment.Linux.Resources.Cpu.Cpus)
+	require.True(t, cpuStore.GetSharedCPUs().Equals(cpuset.New(2, 3)))
+
+	_, err = driver.StopContainer(context.Background(), pod, first)
+	require.NoError(t, err)
+	preparedCPUs, ok := cpuStore.GetResourceClaimAllocation(claimUID)
+	require.True(t, ok)
+	require.True(t, preparedCPUs.Equals(claimCPUs))
+	require.True(t, cpuStore.GetSharedCPUs().Equals(allCPUs))
+	require.True(t, cpuStore.GetAllocatableCPUs().Equals(cpuset.New(2, 3)))
+	require.Equal(t, 1, driver.claimTracker.Len())
+
+	restarted := container("container-2")
+	adjustment, _, err = driver.CreateContainer(context.Background(), pod, restarted)
+	require.NoError(t, err)
+	require.Equal(t, claimCPUs.String(), adjustment.Linux.Resources.Cpu.Cpus)
+	require.True(t, cpuStore.GetSharedCPUs().Equals(cpuset.New(2, 3)))
+	require.Equal(t, 1, driver.claimTracker.Len())
+}
+
 func TestNRISynchronize(t *testing.T) {
 	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
@@ -615,9 +669,9 @@ func containerIDsFromUpdates(updates []*api.ContainerUpdate) []string {
 }
 
 // TestStopContainerReleasesClaimToSharedPool asserts the DRA/NRI lifetime invariant tracked by #188:
-// stopping a guaranteed container releases its claim's CPUs back into the shared pool *during*
-// StopContainer (the documented early-release workaround), and immediately re-broadens the other
-// shared containers to the freed pool, rather than deferring the release to UnprepareResourceClaims.
+// stopping a guaranteed container releases its CPUs back into the shared pool *during*
+// StopContainer and immediately re-broadens the other shared containers, while retaining the
+// prepared claim reservation until UnprepareResourceClaims.
 // The existing TestStopContainer only asserts which containers are updated; this asserts the actual
 // release (the shared-pool contents) and the re-broadened cpuset values.
 func TestStopContainerReleasesClaimToSharedPool(t *testing.T) {
@@ -662,6 +716,11 @@ func TestStopContainerReleasesClaimToSharedPool(t *testing.T) {
 	// not deferred to UnprepareResourceClaims.
 	require.True(t, driver.cpuAllocationStore.GetSharedCPUs().Equals(allCPUs),
 		"StopContainer should release the claim's CPUs back into the shared pool")
+	preparedCPUs, ok := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
+	require.True(t, ok, "StopContainer must retain the prepared claim")
+	require.True(t, preparedCPUs.Equals(claimedCPUs))
+	require.True(t, driver.cpuAllocationStore.GetAllocatableCPUs().Equals(allCPUs.Difference(claimedCPUs)),
+		"pending CPUs must remain unavailable to new exclusive claims")
 
 	// Invariant 2: the surviving shared container is immediately re-broadened to the full pool.
 	require.Equal(t, []*api.ContainerUpdate{
