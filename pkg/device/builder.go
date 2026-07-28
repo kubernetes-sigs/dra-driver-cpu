@@ -23,6 +23,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
+	v1 "k8s.io/api/core/v1"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/dynamic-resource-allocation/deviceattribute"
@@ -38,16 +39,16 @@ const (
 	CPUDeviceMachineGrouped      = "cpudevmachine"
 )
 
-func Build(topo *cpuinfo.CPUTopology, reservedCPUSet cpuset.CPUSet, pcieRootMapper *store.PCIeRootMapper) ([]resourceapi.Device, map[string]int) {
+func Build(topo *cpuinfo.CPUTopology, reservedCPUSet cpuset.CPUSet, pcieRootMapper *store.PCIeRootMapper, nodeAllocatableResources bool) ([]resourceapi.Device, map[string]int) {
 	deviceInfos := cpuDeviceInfos(topo, reservedCPUSet)
 	nameToID := make(map[string]int)
 	for _, dev := range deviceInfos {
 		nameToID[dev.name] = dev.cpu.CpuID
 	}
-	return createCPUDeviceSlices(deviceInfos, pcieRootMapper, topo.SMTEnabled), nameToID
+	return createCPUDeviceSlices(deviceInfos, pcieRootMapper, topo.SMTEnabled, nodeAllocatableResources), nameToID
 }
 
-func BuildGrouped(logger logr.Logger, groupBy string, topo *cpuinfo.CPUTopology, onlineCPUs, reservedCPUSet cpuset.CPUSet, pcieRootMapper *store.PCIeRootMapper) ([]resourceapi.Device, map[string]int) {
+func BuildGrouped(logger logr.Logger, groupBy string, topo *cpuinfo.CPUTopology, onlineCPUs, reservedCPUSet cpuset.CPUSet, pcieRootMapper *store.PCIeRootMapper, nodeAllocatableResources bool) ([]resourceapi.Device, map[string]int) {
 	deviceInfos := groupedCPUDeviceInfos(groupBy, topo, onlineCPUs, reservedCPUSet)
 	nameToID := make(map[string]int)
 	for _, dev := range deviceInfos {
@@ -58,7 +59,34 @@ func BuildGrouped(logger logr.Logger, groupBy string, topo *cpuinfo.CPUTopology,
 			nameToID[dev.name] = dev.numaNodeID
 		}
 	}
-	return createGroupedCPUDeviceSlices(logger, groupBy, deviceInfos, pcieRootMapper, topo.SMTEnabled), nameToID
+	return createGroupedCPUDeviceSlices(logger, groupBy, deviceInfos, pcieRootMapper, topo.SMTEnabled, nodeAllocatableResources), nameToID
+}
+
+func groupedCPUNodeAllocatable(enabled bool) map[v1.ResourceName]resourceapi.NodeAllocatableResource {
+	if !enabled {
+		return nil
+	}
+	return map[v1.ResourceName]resourceapi.NodeAllocatableResource{
+		v1.ResourceCPU: {
+			Mapping: &resourceapi.NodeAllocatableMapping{
+				CapacityKey:        new(resourceapi.QualifiedName(CPUResourceQualifiedName)),
+				CapacityMultiplier: new(resource.MustParse("1")),
+			},
+		},
+	}
+}
+
+func individualCPUNodeAllocatable(enabled bool) map[v1.ResourceName]resourceapi.NodeAllocatableResource {
+	if !enabled {
+		return nil
+	}
+	return map[v1.ResourceName]resourceapi.NodeAllocatableResource{
+		v1.ResourceCPU: {
+			Mapping: &resourceapi.NodeAllocatableMapping{
+				DeviceMultiplier: new(resource.MustParse("1")),
+			},
+		},
+	}
 }
 
 type groupedCPUDeviceInfo struct {
@@ -179,7 +207,7 @@ func cpuDeviceInfos(topo *cpuinfo.CPUTopology, reservedCPUSet cpuset.CPUSet) []c
 }
 
 // createGroupedCPUDeviceSlices creates Device objects based on the CPU topology, grouped by a specific criteria.
-func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfos []groupedCPUDeviceInfo, pcieRootMapper *store.PCIeRootMapper, smtEnabled bool) []resourceapi.Device {
+func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfos []groupedCPUDeviceInfo, pcieRootMapper *store.PCIeRootMapper, smtEnabled bool, nodeAllocatableResources bool) []resourceapi.Device {
 	logger.V(4).Info("creating grouped CPU devices")
 	var devices []resourceapi.Device
 
@@ -203,6 +231,7 @@ func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfo
 				Attributes:               deviceAttrs,
 				Capacity:                 deviceCapacity,
 				AllowMultipleAllocations: new(true),
+				NodeAllocatableResources: groupedCPUNodeAllocatable(nodeAllocatableResources),
 			})
 		case GROUP_BY_NUMA_NODE:
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -219,6 +248,7 @@ func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfo
 				Attributes:               deviceAttrs,
 				Capacity:                 deviceCapacity,
 				AllowMultipleAllocations: new(true),
+				NodeAllocatableResources: groupedCPUNodeAllocatable(nodeAllocatableResources),
 			})
 		case GROUP_BY_MACHINE:
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -231,6 +261,7 @@ func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfo
 				Attributes:               deviceAttrs,
 				Capacity:                 deviceCapacity,
 				AllowMultipleAllocations: new(true),
+				NodeAllocatableResources: groupedCPUNodeAllocatable(nodeAllocatableResources),
 			})
 		}
 	}
@@ -242,7 +273,7 @@ func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfo
 // It groups CPUs by physical core to assign consecutive device IDs to hyperthreads.
 // This allows the DRA scheduler, which requests resources in contiguous blocks,
 // to co-locate workloads on hyperthreads of the same core.
-func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PCIeRootMapper, smtEnabled bool) []resourceapi.Device {
+func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PCIeRootMapper, smtEnabled bool, nodeAllocatableResources bool) []resourceapi.Device {
 	var allDevices []resourceapi.Device
 	for _, deviceInfo := range deviceInfos {
 		cpu := deviceInfo.cpu
@@ -259,9 +290,10 @@ func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PC
 		addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, cpu.CpuID)
 
 		cpuDevice := resourceapi.Device{
-			Name:       deviceInfo.name,
-			Attributes: deviceAttrs,
-			Capacity:   make(map[resourceapi.QualifiedName]resourceapi.DeviceCapacity),
+			Name:                     deviceInfo.name,
+			Attributes:               deviceAttrs,
+			Capacity:                 make(map[resourceapi.QualifiedName]resourceapi.DeviceCapacity),
+			NodeAllocatableResources: individualCPUNodeAllocatable(nodeAllocatableResources),
 		}
 		allDevices = append(allDevices, cpuDevice)
 	}
