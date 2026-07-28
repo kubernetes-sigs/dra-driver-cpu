@@ -8,7 +8,7 @@ The driver exposes Prometheus metrics on the existing HTTP `/metrics` endpoint s
 Custom driver metrics can also be listed programmatically without starting the driver:
 
 ```bash
-dracpu --show-metrics
+dracpu introspect metrics
 ```
 
 The command prints JSON metadata for custom `dra_cpu_*` metrics only. It does not include default Go runtime, process, or Prometheus client metrics.

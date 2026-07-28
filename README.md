@@ -38,7 +38,7 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
 See the [Helm chart README](deployment/helm/dra-driver-cpu/README.md) for the full list of configuration options, and
 [Getting Started](docs/user/installation.md) for cluster setup, migrating from the deprecated manifest-based installation, and example workloads.
 
-If you run into problems, run the [`dracpu-gatherinfo`](docs/user/troubleshooting.md) diagnostic tool and attach its output
+If you run into problems, run the [`dracpu gatherinfo`](docs/user/troubleshooting.md) diagnostic tool and attach its output
 when filing an issue — it collects the CPU topology and driver configuration needed to diagnose most problems quickly.
 
 ## Documentation
@@ -55,7 +55,7 @@ when filing an issue — it collects the CPU topology and driver configuration n
 - [Custom Opaque CPUSet Allocation Overrides](docs/user/opaque-cpuset-overrides.md) - explicit core assignment for `--group-by=machine` mode.
 - [Metrics](docs/user/metrics.md) - Prometheus metrics exposed by the driver.
 - [Example ResourceSlices](docs/user/resourceslices-examples.md) - sample `ResourceSlice` output in each mode.
-- [Troubleshooting & Diagnostics](docs/user/troubleshooting.md) - the `dracpu-gatherinfo` diagnostic tool.
+- [Troubleshooting & Diagnostics](docs/user/troubleshooting.md) - the `dracpu gatherinfo` diagnostic tool.
 
 ### Developer Documentation
 

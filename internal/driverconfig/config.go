@@ -28,7 +28,6 @@ type Config struct {
 	CPUDeviceMode    string `json:"cpuDeviceMode,omitempty"`
 	GroupBy          string `json:"groupBy,omitempty"`
 	ExposePCIeRoots  bool   `json:"exposePCIeRoots,omitempty"`
-	ShowMetrics      bool   `json:"showMetrics,omitempty"`
 	SysFSOverlay     string `json:"sysfsOverlay,omitempty"`
 }
 
@@ -42,7 +41,6 @@ func (c Config) LogValues() []any {
 		"reservedCPUs", c.ReservedCPUs,
 		"hostnameOverride", c.HostnameOverride,
 		"exposePCIeRoots", c.ExposePCIeRoots,
-		"showMetrics", c.ShowMetrics,
 		"sysfsOverlay", c.SysFSOverlay,
 	}
 }

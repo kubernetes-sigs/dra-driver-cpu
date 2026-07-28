@@ -1,10 +1,10 @@
 # Troubleshooting & Diagnostics
 
-The repository includes a diagnostic tool `dracpu-gatherinfo` to collect node-local CPU topology and driver configuration information. This is helpful for debugging CPU allocation issues or validating that the host topology is discovered correctly.
+The repository includes a diagnostic tool available as `dracpu gatherinfo` to collect node-local CPU topology and driver configuration information. The legacy `dracpu-gatherinfo` alias remains supported in versions 0.2.z and 0.3.z. This is helpful for debugging CPU allocation issues or validating that the host topology is discovered correctly.
 
-## `dracpu-gatherinfo` Overview
+## `dracpu gatherinfo` Overview
 
-`dracpu-gatherinfo` is a node-local diagnostic tool for collecting CPU information from the host where it runs. The command entrypoint is thin; the collection logic lives in `internal/gatherinfo` and writes a YAML report with a top-level `layoutVersion`.
+`dracpu gatherinfo` is a node-local diagnostic tool for collecting CPU information from the host where it runs. The command entrypoint is thin; the collection logic lives in `internal/gatherinfo` and writes a YAML report with a top-level `layoutVersion`.
 
 This first iteration intentionally keeps the scope small:
 
@@ -16,7 +16,7 @@ It does not collect Kubernetes control-plane objects and it does not emit the ex
 ## Usage
 
 ```bash
-./dracpu-gatherinfo
+./dracpu gatherinfo
 ```
 
 By default the tool writes a temporary YAML file, prints the final path, and exits.
@@ -24,7 +24,7 @@ By default the tool writes a temporary YAML file, prints the final path, and exi
 To place the output under a specific directory:
 
 ```bash
-./dracpu-gatherinfo --output-dir=/var/log/dracpu-debug
+./dracpu gatherinfo --output-dir=/var/log/dracpu-debug
 ```
 
 In that case the tool writes one file per invocation under `/var/log/dracpu-debug`.
@@ -32,7 +32,7 @@ In that case the tool writes one file per invocation under `/var/log/dracpu-debu
 To stream the YAML report to standard output instead of creating a file:
 
 ```bash
-./dracpu-gatherinfo --stdout > node-a.yaml
+./dracpu gatherinfo --stdout > node-a.yaml
 ```
 
 `--stdout` is intended for remote collection flows such as `kubectl exec`. It cannot be combined with `--output-dir`.
@@ -84,7 +84,7 @@ When the driver process is running in the same container, `driverConfig` is deri
 
 ## Integration With Bug Reports
 
-1. Run `dracpu-gatherinfo` on the affected node.
+1. Run `dracpu gatherinfo` on the affected node.
 1. Attach the generated `.yaml` file.
 1. Include relevant driver logs from the same node.
 
@@ -103,7 +103,7 @@ mkdir -p "${outdir}"
 
 for pod in $(kubectl get pods -n "${namespace}" -l "${selector}" -o name); do
   node=$(kubectl get -n "${namespace}" "${pod}" -o jsonpath='{.spec.nodeName}')
-  kubectl exec -n "${namespace}" "${pod}" -- /dracpu-gatherinfo --stdout > "${outdir}/${node}.yaml"
+  kubectl exec -n "${namespace}" "${pod}" -- /dracpu gatherinfo --stdout > "${outdir}/${node}.yaml"
 done
 ```
 
@@ -111,7 +111,7 @@ If you want to keep multiple node reports in a single stream, concatenate them a
 
 ```bash
 for pod in $(kubectl get pods -n "${namespace}" -l "${selector}" -o name); do
-  kubectl exec -n "${namespace}" "${pod}" -- /dracpu-gatherinfo --stdout >> all-nodes.yaml
+  kubectl exec -n "${namespace}" "${pod}" -- /dracpu gatherinfo --stdout >> all-nodes.yaml
 done
 ```
 

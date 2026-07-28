@@ -21,7 +21,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -33,7 +32,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/buildinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
-	"github.com/kubernetes-sigs/dra-driver-cpu/internal/gatherinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/subcommands"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
@@ -48,7 +47,11 @@ import (
 )
 
 const (
-	driverName = "dra.cpu"
+	driverName     = "dra.cpu"
+	configFlagHelp = "Path to a YAML driver configuration file. Configuration values are applied in order: " +
+		"built-in defaults, then file values, then explicit CLI flags. " +
+		"Only values explicitly set on the command line override earlier layers. " +
+		"If empty, only CLI flags and built-in defaults are used."
 )
 
 var (
@@ -61,38 +64,51 @@ var (
 func init() {
 	// --config is kept outside Config to avoid a self-referential loop,
 	// following the convention used by kubeadm and similar tools.
-	flag.StringVar(&configFile, "config", "",
-		"Path to a YAML driver configuration file. Configuration values are applied in order: "+
-			"built-in defaults, then file values, then explicit CLI flags. "+
-			"Only values explicitly set on the command line override earlier layers. "+
-			"If empty, only CLI flags and built-in defaults are used.")
+	flag.StringVar(&configFile, "config", "", configFlagHelp)
 	driverFlags.AddFlags(flag.CommandLine)
+	flag.CommandLine.Usage = func() {
+		printRootUsage(flag.CommandLine)
+	}
+}
+
+func printRootUsage(fs *flag.FlagSet) {
+	commandName := filepath.Base(fs.Name())
+	if commandName == "." || commandName == string(filepath.Separator) {
+		commandName = "dracpu"
+	}
+
+	fmt.Fprintf(fs.Output(), "Usage:\n  %s [flags]\n  %s gatherinfo [flags]\n  %s introspect metrics\n\nCompatibility paths:\n  dracpu-gatherinfo [flags]\n\nFlags:\n", commandName, commandName, commandName)
+	fs.PrintDefaults()
 }
 
 func main() {
 	if filepath.Base(os.Args[0]) == "dracpu-gatherinfo" {
-		logger := ctxlog.Setup()
-		if err := gatherinfo.Run(os.Args[1:], gatherinfo.Options{
-			DriverConfig: driverFlags,
-		}, logger); err != nil {
-			fmt.Fprintf(os.Stderr, "dracpu-gatherinfo: %v\n", err)
-			os.Exit(1)
-		}
-		return
+		os.Args = append([]string{"dracpu", "gatherinfo"}, os.Args[1:]...)
 	}
 
 	ctxlog.AddFlags(flag.CommandLine)
 	flag.Parse()
+	logger := ctxlog.Setup()
 
-	if driverFlags.ShowMetrics {
-		if err := printMetricsMetadata(os.Stdout); err != nil {
-			fmt.Fprintf(os.Stderr, "print metrics metadata: %v\n", err)
+	if len(flag.Args()) > 0 {
+		if flag.NFlag() > 0 {
+			fmt.Fprintln(os.Stderr, "dracpu: root flags cannot be combined with subcommands")
+			os.Exit(1)
+		}
+
+		opts := subcommands.Options{
+			DriverConfig: driverFlags,
+			Logger:       logger,
+			Stdout:       os.Stdout,
+			Stderr:       os.Stderr,
+		}
+
+		if err := subcommands.Run(flag.Args(), opts); err != nil {
+			fmt.Fprintf(os.Stderr, "dracpu: %v\n", err)
 			os.Exit(1)
 		}
 		return
 	}
-
-	logger := ctxlog.Setup()
 
 	cfg, err := driverconfig.Load(driverFlags, configFile, flag.CommandLine, logger)
 	if err != nil {
@@ -252,8 +268,4 @@ func printVersion(logger logr.Logger) {
 		return
 	}
 	logger.Info("dracpu", "goVersion", info.GoVersion, "build", info.VCSRevision, "time", info.VCSTime)
-}
-
-func printMetricsMetadata(w io.Writer) error {
-	return cpumetrics.WriteJSON(w)
 }

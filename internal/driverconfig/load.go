@@ -33,7 +33,6 @@ var flagToJSONKey = map[string]string{
 	"cpu-device-mode":   "cpuDeviceMode",
 	"group-by":          "groupBy",
 	"expose-pcie-roots": "exposePCIeRoots",
-	"show-metrics":      "showMetrics",
 	"sysfs-overlay":     "sysfsOverlay",
 }
 

@@ -84,11 +84,14 @@ type Options struct {
 }
 
 func Run(args []string, opts Options, logger logr.Logger) error {
-	fs := flag.NewFlagSet("dracpu-gatherinfo", flag.ExitOnError)
+	fs := flag.NewFlagSet("dracpu gatherinfo", flag.ContinueOnError)
 	outputDir := fs.String("output-dir", opts.OutputParentDir, "Parent directory for debug artifacts (default: temporary directory)")
 	emitStdout := fs.Bool("stdout", false, "Write the YAML report to stdout instead of a file")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if *emitStdout && *outputDir != "" {
