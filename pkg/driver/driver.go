@@ -185,16 +185,11 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	plugin.refreshAllocationMetrics()
 	plugin.podConfigStore = store.NewPodConfig()
 
-	var buildDevices device.DeviceBuilderFunc
-	if plugin.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
-		buildDevices = device.NewGroupedDeviceBuilder(plugin.cpuDeviceGroupBy, plugin.cpuTopology, plugin.onlineCPUs, plugin.reservedCPUs, plugin.pcieRootMapper)
-	} else {
-		buildDevices = device.NewDeviceBuilder(plugin.cpuTopology, plugin.reservedCPUs, plugin.pcieRootMapper)
-	}
-
-	devices, nameToID := buildDevices(logger)
+	var devices []resourceapi.Device
 
 	if plugin.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
+		var nameToID map[string]int
+		devices, nameToID = device.BuildGrouped(logger, plugin.cpuDeviceGroupBy, plugin.cpuTopology, plugin.onlineCPUs, plugin.reservedCPUs, plugin.pcieRootMapper)
 		switch plugin.cpuDeviceGroupBy {
 		case device.GROUP_BY_SOCKET:
 			plugin.deviceNameToSocketID = nameToID
@@ -202,7 +197,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 			plugin.deviceNameToNUMANodeID = nameToID
 		}
 	} else {
-		plugin.deviceNameToCPUID = nameToID
+		devices, plugin.deviceNameToCPUID = device.Build(plugin.cpuTopology, plugin.reservedCPUs, plugin.pcieRootMapper)
 	}
 
 	if len(devices) > 0 {

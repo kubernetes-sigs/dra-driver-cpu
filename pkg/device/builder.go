@@ -38,35 +38,27 @@ const (
 	CPUDeviceMachineGrouped      = "cpudevmachine"
 )
 
-// DeviceBuilderFunc produces DRA device objects and the device-name-to-device-id mapping.
-// The mapping is needed at claim preparation time to resolve internal devices.
-type DeviceBuilderFunc func(logger logr.Logger) ([]resourceapi.Device, map[string]int)
-
-func NewDeviceBuilder(topo *cpuinfo.CPUTopology, reservedCPUSet cpuset.CPUSet, pcieRootMapper *store.PCIeRootMapper) DeviceBuilderFunc {
+func Build(topo *cpuinfo.CPUTopology, reservedCPUSet cpuset.CPUSet, pcieRootMapper *store.PCIeRootMapper) ([]resourceapi.Device, map[string]int) {
 	deviceInfos := cpuDeviceInfos(topo, reservedCPUSet)
-	return func(_ logr.Logger) ([]resourceapi.Device, map[string]int) {
-		nameToID := make(map[string]int)
-		for _, dev := range deviceInfos {
-			nameToID[dev.name] = dev.cpu.CpuID
-		}
-		return createCPUDeviceSlices(deviceInfos, pcieRootMapper, topo.SMTEnabled), nameToID
+	nameToID := make(map[string]int)
+	for _, dev := range deviceInfos {
+		nameToID[dev.name] = dev.cpu.CpuID
 	}
+	return createCPUDeviceSlices(deviceInfos, pcieRootMapper, topo.SMTEnabled), nameToID
 }
 
-func NewGroupedDeviceBuilder(groupBy string, topo *cpuinfo.CPUTopology, onlineCPUs, reservedCPUSet cpuset.CPUSet, pcieRootMapper *store.PCIeRootMapper) DeviceBuilderFunc {
+func BuildGrouped(logger logr.Logger, groupBy string, topo *cpuinfo.CPUTopology, onlineCPUs, reservedCPUSet cpuset.CPUSet, pcieRootMapper *store.PCIeRootMapper) ([]resourceapi.Device, map[string]int) {
 	deviceInfos := groupedCPUDeviceInfos(groupBy, topo, onlineCPUs, reservedCPUSet)
-	return func(logger logr.Logger) ([]resourceapi.Device, map[string]int) {
-		nameToID := make(map[string]int)
-		for _, dev := range deviceInfos {
-			switch groupBy {
-			case GROUP_BY_SOCKET:
-				nameToID[dev.name] = dev.socketID
-			case GROUP_BY_NUMA_NODE:
-				nameToID[dev.name] = dev.numaNodeID
-			}
+	nameToID := make(map[string]int)
+	for _, dev := range deviceInfos {
+		switch groupBy {
+		case GROUP_BY_SOCKET:
+			nameToID[dev.name] = dev.socketID
+		case GROUP_BY_NUMA_NODE:
+			nameToID[dev.name] = dev.numaNodeID
 		}
-		return createGroupedCPUDeviceSlices(logger, groupBy, deviceInfos, pcieRootMapper, topo.SMTEnabled), nameToID
 	}
+	return createGroupedCPUDeviceSlices(logger, groupBy, deviceInfos, pcieRootMapper, topo.SMTEnabled), nameToID
 }
 
 type groupedCPUDeviceInfo struct {
