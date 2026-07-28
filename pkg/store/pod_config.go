@@ -92,19 +92,20 @@ func (s *PodConfig) GetContainerState(podUID types.UID, containerName string) *C
 	return nil
 }
 
-// RemoveContainerState removes a container's state from the store.
-func (s *PodConfig) RemoveContainerState(podUID types.UID, containerName string) []types.UID {
+// RemoveContainerState removes a container's state if its runtime ID still matches.
+// A replacement container can have the same name while an old Remove event is in flight.
+func (s *PodConfig) RemoveContainerState(podUID types.UID, containerName string, containerUID types.UID) ([]types.UID, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	podAssignments, ok := s.configs[podUID]
 	if !ok {
-		return []types.UID{}
+		return []types.UID{}, false
 	}
 
 	cs, ok := podAssignments[containerName]
-	if !ok {
-		return []types.UID{}
+	if !ok || cs.containerUID != containerUID {
+		return []types.UID{}, false
 	}
 
 	claimUIDs := cs.resourceClaimUIDs
@@ -120,7 +121,7 @@ func (s *PodConfig) RemoveContainerState(podUID types.UID, containerName string)
 		delete(s.configs, podUID)
 	}
 
-	return claimUIDs
+	return claimUIDs, true
 }
 
 // GetContainersWithSharedCPUs returns a list of container UIDs that have shared CPU allocation.
