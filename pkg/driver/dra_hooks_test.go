@@ -798,7 +798,11 @@ func TestPrepareResourceClaims(t *testing.T) {
 					require.Empty(t, result.Devices)
 				} else {
 					require.NoError(t, result.Err)
-					require.ElementsMatch(t, tc.expectedPreparedDevices, result.Devices)
+					expected := tc.expectedPreparedDevices
+					for i := range expected {
+						expected[i].Metadata = expectedDeviceMetadata(driver, expected[i].DeviceName)
+					}
+					require.ElementsMatch(t, expected, result.Devices)
 				}
 			}
 
@@ -1229,6 +1233,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 								DeviceName:   res.Device,
 								CDIDeviceIDs: []string{cdiQualifiedName},
 								Requests:     []string{res.Request},
+								Metadata:     expectedDeviceMetadata(driver, res.Device),
 							})
 						}
 					}
@@ -2109,4 +2114,21 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 		}
 	}
 	return driver
+}
+
+// expectedDeviceMetadata builds the DeviceMetadata that prepareDevices would
+// produce for a device, by looking up its attributes from the driver's
+// deviceSlices. Returns nil if the device is not found or has no attributes.
+func expectedDeviceMetadata(driver *CPUDriver, deviceName string) *kubeletplugin.DeviceMetadata {
+	attrs, ok := driver.getDeviceAttributes(deviceName)
+	if !ok || len(attrs) == 0 {
+		return nil
+	}
+	metadataAttrs := make(map[string]resourceapi.DeviceAttribute, len(attrs))
+	for k, v := range attrs {
+		metadataAttrs[string(k)] = v
+	}
+	return &kubeletplugin.DeviceMetadata{
+		Attributes: metadataAttrs,
+	}
 }
