@@ -35,13 +35,13 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | affinity | object | `{}` | Affinity rules for scheduling the DaemonSet pods |
-| args.cpuDeviceMode | string | `""` | CPU exposure mode: `grouped` (expose NUMA nodes or sockets as devices) or `individual` (expose each CPU as a device); when empty, defers to `driverConfig.cpuDeviceMode` or the built-in default (`grouped`) |
+| args.cpuDeviceMode | string | `""` | **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.cpuDeviceMode` instead. CPU exposure mode: `grouped` (expose NUMA nodes or sockets as devices) or `individual` (expose each CPU as a device); defaults to `grouped` when empty. |
 | args.exposePCIeRoots | bool | `false` | Discover and expose PCIe roots as device attributes. Requires the `DRAListTypeAttributes=true` feature gate in the cluster. Not configurable via `driverConfig`; use this flag instead |
-| args.groupBy | string | `""` | Grouping criteria when `cpuDeviceMode=grouped`: `numanode`, `socket` or `machine`; when empty, defers to `driverConfig.groupBy` or the built-in default (`numanode`) |
-| args.hostnameOverride | string | `""` | Override the node name the driver registers under; omitted when empty |
+| args.groupBy | string | `""` | **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.groupBy` instead. Grouping criteria when `cpuDeviceMode=grouped`: `numanode`, `socket` or `machine`; defaults to `numanode` when empty. |
+| args.hostnameOverride | string | `""` | **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.hostnameOverride` instead. Overrides the node name the driver registers under. |
 | args.logLevel | int | `4` | Log verbosity level passed as `--v` |
-| args.reservedCPUs | string | `""` | CPUs reserved for the OS and kubelet, excluded from DRA management (e.g. `"0-1"`); omitted when empty |
-| driverConfig | object | `{}` | Driver config file contents. When non-empty, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. Fields in `args.*` that are non-empty always take priority over values set here. Example:   driverConfig:     cpuDeviceMode: individual     groupBy: socket     reservedCPUs: "0-3" |
+| args.reservedCPUs | string | `""` | **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.reservedCPUs` instead. CPUs reserved for the OS and kubelet, excluded from DRA management (e.g. `"0-1"`). |
+| driverConfig | object | `{}` | Driver config file contents. When non-empty, or when a deprecated `args.*` field below is set, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. `args.*` fields that mirror a deprecated CLI flag (`cpuDeviceMode`, `groupBy`, `reservedCPUs`, `hostnameOverride`) are folded into the generated config automatically and take priority over the same field set here. Example:   driverConfig:     cpuDeviceMode: individual     groupBy: socket     reservedCPUs: "0-3" |
 | extraArgs | list | `[]` | Extra command-line arguments appended to the driver arguments |
 | extraVolumeMounts | list | `[]` | Extra volume mounts for the driver container |
 | extraVolumes | list | `[]` | Extra volumes for the DaemonSet pod |

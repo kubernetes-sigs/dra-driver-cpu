@@ -18,7 +18,7 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
 
 See the [Helm chart README](../../deployment/helm/dra-driver-cpu/README.md) for the full list of configuration options.
 
-For environments with incomplete or synthetic sysfs topology, e.g. Docker Desktop for macOS see the [sysfs overlay example](../../hack/examples/sysfs-overlay/README.md). It demonstrates how to supply an overlay through the chart's generic extra arguments, volume mounts, and volumes.
+For environments with incomplete or synthetic sysfs topology, e.g. Docker Desktop for macOS see the [sysfs overlay example](../../hack/examples/sysfs-overlay/README.md). It demonstrates how to supply an overlay through `driverConfig.sysfsOverlay`, volume mounts, and volumes.
 
 ## Example Usage
 

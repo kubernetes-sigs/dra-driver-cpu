@@ -9,19 +9,19 @@ one can be enabled at a time on any given node. See [Configuration](docs/user/co
 
 ## Key Features
 
-- **Topology-Aware CPU Discovery:** Discovers the node's full CPU topology by reading sysfs, including sockets, NUMA nodes, cores, SMT siblings, Last-Level Cache (LLC), core types (Performance/Efficiency), and optionally PCIe root locality.
-- **Exclusive CPU Allocation:** Pods requesting CPUs via a `ResourceClaim` are pinned to exclusive, guaranteed CPUs enforced through CDI and NRI.
-- **Shared Pool Management:** All other containers are dynamically confined to a shared pool made up of CPUs not exclusively assigned to any guaranteed container.
-- **Two Device Exposure Modes:** `individual` mode exposes each CPU as a selectable device for fine-grained placement; `grouped` mode exposes larger aggregates (NUMA node/socket) as consumable capacity for better scalability on large systems.
-- **CPU Manager Feature Parity:** Aims to match key kubelet CPUManager static policy options (e.g. `PreferAlignByUnCoreCache`, `StrictCPUReservation`) - see [Feature Support](docs/user/feature-support.md) for the full comparison.
-- **Stateful Restarts:** Synchronizes with existing pods on restart by inspecting CDI-injected environment variables, rebuilding its allocation state without disrupting running workloads.
+- Topology-Aware CPU Discovery: Discovers the node's full CPU topology by reading sysfs, including sockets, NUMA nodes, cores, SMT siblings, Last-Level Cache (LLC), core types (Performance/Efficiency), and optionally PCIe root locality.
+- Exclusive CPU Allocation: Pods requesting CPUs via a `ResourceClaim` are pinned to exclusive, guaranteed CPUs enforced through CDI and NRI.
+- Shared Pool Management: All other containers are dynamically confined to a shared pool made up of CPUs not exclusively assigned to any guaranteed container.
+- Two Device Exposure Modes: `individual` mode exposes each CPU as a selectable device for fine-grained placement; `grouped` mode exposes larger aggregates (NUMA node/socket) as consumable capacity for better scalability on large systems.
+- CPU Manager Feature Parity: Aims to match key kubelet CPUManager static policy options (e.g. `PreferAlignByUnCoreCache`, `StrictCPUReservation`) - see [Feature Support](docs/user/feature-support.md) for the full comparison.
+- Stateful Restarts: Synchronizes with existing pods on restart by inspecting CDI-injected environment variables, rebuilding its allocation state without disrupting running workloads.
 
 ## How It Works
 
 The driver runs as a single executable, deployed as a DaemonSet, that implements two core interfaces working together on each node:
 
-- The **DRA driver** control loop discovers CPU topology, publishes `ResourceSlice` objects to the API server, and handles `ResourceClaim` allocation requests, writing the result as a [CDI](https://github.com/cncf-tags/container-device-interface) spec.
-- An **NRI plugin** reads the CDI-injected cpuset for guaranteed containers and pins them via the cgroup cpuset controller, while dynamically managing the shared pool for everything else.
+- The DRA driver control loop discovers CPU topology, publishes `ResourceSlice` objects to the API server, and handles `ResourceClaim` allocation requests, writing the result as a [CDI](https://github.com/cncf-tags/container-device-interface) spec.
+- An NRI plugin reads the CDI-injected cpuset for guaranteed containers and pins them via the cgroup cpuset controller, while dynamically managing the shared pool for everything else.
 
 See [How it Works](docs/user/how-it-works.md) for the detailed architecture, and [Example ResourceSlices](docs/user/resourceslices-examples.md) for sample driver output.
 
@@ -46,8 +46,8 @@ when filing an issue — it collects the CPU topology and driver configuration n
 ### User Documentation
 
 - [Prerequisites](docs/user/prerequisites.md) - container runtime (NRI/CDI) requirements.
-- [Getting Started](docs/user/installation.md) - installation, migration from `install.yaml`, and example usage.
-- [Configuration](docs/user/configuration.md) - kubelet prerequisites, command-line flags, and the Helm `driverConfig` file schema.
+- [Getting Started](docs/user/installation.md) - installation, migration from install.yaml, and example usage.
+- [Configuration](docs/user/configuration.md) - the config file schema, command-line flags, and kubelet prerequisites.
 - [How it Works](docs/user/how-it-works.md) - driver architecture, CDI, and NRI integration.
 - [Feature Support](docs/user/feature-support.md) - supported/unsupported features and [CPU Manager Options mapping](docs/user/cpu-manager-mapping.md).
 - [Matching CPU Manager Options](docs/user/cpu-manager-mapping.md) - kubelet cpumanager policy options and their driver equivalents.
