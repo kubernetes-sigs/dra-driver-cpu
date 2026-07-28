@@ -29,6 +29,10 @@ type Config struct {
 	GroupBy          string `json:"groupBy,omitempty"`
 	ExposePCIeRoots  bool   `json:"exposePCIeRoots,omitempty"`
 	SysFSOverlay     string `json:"sysfsOverlay,omitempty"`
+	// PublishNodeAllocatableResourceMapping publishes KEP-5517 nodeAllocatableResources
+	// mappings in ResourceSlice devices. Requires the DRANodeAllocatableResources
+	// feature gate in the cluster. Defaults to false.
+	PublishNodeAllocatableResourceMapping bool `json:"publishNodeAllocatableResourceMapping,omitempty"`
 }
 
 // LogValues returns key-value pairs for structured logging of the config.
@@ -42,5 +46,6 @@ func (c Config) LogValues() []any {
 		"hostnameOverride", c.HostnameOverride,
 		"exposePCIeRoots", c.ExposePCIeRoots,
 		"sysfsOverlay", c.SysFSOverlay,
+		"publishNodeAllocatableResourceMapping", c.PublishNodeAllocatableResourceMapping,
 	}
 }

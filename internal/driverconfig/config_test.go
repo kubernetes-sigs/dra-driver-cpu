@@ -70,6 +70,7 @@ cpuDeviceMode: individual
 groupBy: socket
 reservedCPUs: "0-3"
 sysfsOverlay: /custom/sysfs
+publishNodeAllocatableResourceMapping: true
 `)
 
 	cfg := driverconfig.Default()
@@ -82,6 +83,7 @@ sysfsOverlay: /custom/sysfs
 	assert.Equal(t, device.GROUP_BY_SOCKET, result.GroupBy)
 	assert.Equal(t, "0-3", result.ReservedCPUs)
 	assert.Equal(t, "/custom/sysfs", result.SysFSOverlay)
+	assert.True(t, result.PublishNodeAllocatableResourceMapping)
 }
 
 // TestLoad_CLIFlagWinsOverFile: an explicitly-passed CLI flag beats the file value.
@@ -226,6 +228,7 @@ func TestDefault(t *testing.T) {
 	assert.Empty(t, d.HostnameOverride)
 	assert.Empty(t, d.ReservedCPUs)
 	assert.False(t, d.ExposePCIeRoots)
+	assert.False(t, d.PublishNodeAllocatableResourceMapping)
 }
 
 // TestLoad_InvalidCPUDeviceModeIsError: an invalid cpuDeviceMode in the file is rejected.

@@ -126,6 +126,9 @@ type Config struct {
 	CPUDeviceGroupBy string
 	ExposePCIeRoots  bool
 	Metrics          cpumetrics.Recorder
+	// PublishNodeAllocatableResourceMapping publishes KEP-5517 nodeAllocatableResources mappings in
+	// ResourceSlice devices. Requires the DRANodeAllocatableResources feature gate to be enabled in the cluster.
+	PublishNodeAllocatableResourceMapping bool
 }
 
 func (cfg Config) DevicesPerResourceSlice() int {
