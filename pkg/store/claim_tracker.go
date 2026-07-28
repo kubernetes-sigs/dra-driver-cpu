@@ -57,26 +57,42 @@ func NewClaimTracker() *ClaimTracker {
 }
 
 func (ctk *ClaimTracker) SetOwner(logger logr.Logger, claimUID, podUID k8stypes.UID, containerName string) error {
+	_, err := ctk.SetOwners(logger, []k8stypes.UID{claimUID}, podUID, containerName)
+	return err
+}
+
+// SetOwners atomically binds claims to a single container. It returns the claims
+// which were newly bound so callers can roll them back if a later operation fails.
+func (ctk *ClaimTracker) SetOwners(logger logr.Logger, claimUIDs []k8stypes.UID, podUID k8stypes.UID, containerName string) ([]k8stypes.UID, error) {
 	curIdent := OwnerIdent{
 		PodUID:        podUID,
 		ContainerName: containerName,
 	}
 	ctk.mu.Lock()
 	defer ctk.mu.Unlock()
-	owner, ok := ctk.ownerByClaimUID[claimUID]
-	if ok {
-		if owner.Equal(curIdent) {
-			logger.V(2).Info("claim bound again to the same owner")
-			return nil // not wrong, not suspicious enough to bail out
+
+	for _, claimUID := range claimUIDs {
+		owner, ok := ctk.ownerByClaimUID[claimUID]
+		if !ok || owner.Equal(curIdent) {
+			continue
 		}
-		return AlreadyOwned{
+		return nil, AlreadyOwned{
 			ClaimUID: claimUID,
 			Owner:    owner,
 		}
 	}
-	ctk.ownerByClaimUID[claimUID] = curIdent
-	logger.V(4).Info("claim bound")
-	return nil
+
+	newlyBound := make([]k8stypes.UID, 0, len(claimUIDs))
+	for _, claimUID := range claimUIDs {
+		if _, ok := ctk.ownerByClaimUID[claimUID]; ok {
+			logger.V(2).Info("claim bound again to the same owner", "claimUID", claimUID)
+			continue
+		}
+		ctk.ownerByClaimUID[claimUID] = curIdent
+		newlyBound = append(newlyBound, claimUID)
+		logger.V(4).Info("claim bound", "claimUID", claimUID)
+	}
+	return newlyBound, nil
 }
 
 func (ctk *ClaimTracker) Cleanup(claimUIDs ...k8stypes.UID) {

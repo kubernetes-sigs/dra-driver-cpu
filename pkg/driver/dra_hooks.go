@@ -193,6 +193,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		return kubeletplugin.PrepareResult{}
 	}
 
+	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.
 	if err := cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claim.UID, cpuAssignment); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
@@ -254,6 +255,7 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 		}
 	}
 
+	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.
 	if err := cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claim.UID, claimCPUSet); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
@@ -448,7 +450,7 @@ func (cp *CPUDriver) validateOpaqueCPUSet(opaqueCPUSet cpuset.CPUSet, onlineCPUs
 	}
 
 	// Verify cores do not overlap with other active claims on this node
-	existingClaimCPUs := cp.cpuAllocationStore.GetAllocatedCPUs()
+	existingClaimCPUs := cp.cpuAllocationStore.GetPreparedCPUs()
 	if opaqueCPUSet.Intersection(existingClaimCPUs).Size() > 0 {
 		return fmt.Errorf("requested CPUs %s from opaque config conflict with already allocated claims", opaqueCPUSet.String())
 	}

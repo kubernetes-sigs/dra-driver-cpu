@@ -149,6 +149,39 @@ func TestSetOwner(t *testing.T) {
 	}
 }
 
+func TestSetOwners(t *testing.T) {
+	logger := testr.New(t)
+	owner := OwnerIdent{PodUID: "pod-AAA", ContainerName: "cnt-1"}
+
+	t.Run("binds all claims atomically", func(t *testing.T) {
+		tracker := NewClaimTracker()
+		newlyBound, err := tracker.SetOwners(logger, []k8stypes.UID{"claim-1", "claim-2"}, owner.PodUID, owner.ContainerName)
+		require.NoError(t, err)
+		require.ElementsMatch(t, []k8stypes.UID{"claim-1", "claim-2"}, newlyBound)
+		require.Equal(t, 2, tracker.Len())
+	})
+
+	t.Run("conflict leaves new claims unbound", func(t *testing.T) {
+		tracker := NewClaimTracker()
+		require.NoError(t, tracker.SetOwner(logger, "claim-2", "pod-BBB", "cnt-2"))
+
+		newlyBound, err := tracker.SetOwners(logger, []k8stypes.UID{"claim-1", "claim-2"}, owner.PodUID, owner.ContainerName)
+		require.Error(t, err)
+		require.Empty(t, newlyBound)
+		require.Equal(t, 1, tracker.Len())
+	})
+
+	t.Run("returns only newly bound claims", func(t *testing.T) {
+		tracker := NewClaimTracker()
+		require.NoError(t, tracker.SetOwner(logger, "claim-1", owner.PodUID, owner.ContainerName))
+
+		newlyBound, err := tracker.SetOwners(logger, []k8stypes.UID{"claim-1", "claim-2"}, owner.PodUID, owner.ContainerName)
+		require.NoError(t, err)
+		require.Equal(t, []k8stypes.UID{"claim-2"}, newlyBound)
+		require.Equal(t, 2, tracker.Len())
+	})
+}
+
 func TestLen(t *testing.T) {
 	logger := testr.New(t)
 	bindings := []binding{

@@ -140,7 +140,7 @@ func TestCreateContainer(t *testing.T) {
 			podConfigStore: store.NewPodConfig(),
 			cpuAllocationStore: func() *store.CPUAllocation {
 				store := store.NewCPUAllocation(topo, cpuset.New())
-				store.AddResourceClaimAllocation(logger, types.UID(claimUID), cpuset.New(0, 1, 2, 3))
+				requireEnforcedResourceClaim(t, logger, store, types.UID(claimUID), cpuset.New(0, 1, 2, 3))
 				return store
 			}(),
 			claimTracker: store.NewClaimTracker(),
@@ -166,7 +166,7 @@ func TestCreateContainer(t *testing.T) {
 			podConfigStore: store.NewPodConfig(),
 			cpuAllocationStore: func() *store.CPUAllocation {
 				store := store.NewCPUAllocation(topo, cpuset.New())
-				store.AddResourceClaimAllocation(logger, types.UID(claimUID), cpuset.New(0, 1, 2, 3))
+				requireEnforcedResourceClaim(t, logger, store, types.UID(claimUID), cpuset.New(0, 1, 2, 3))
 				return store
 			}(),
 			claimTracker: store.NewClaimTracker(),
@@ -186,7 +186,7 @@ func TestCreateContainer(t *testing.T) {
 			}(),
 			cpuAllocationStore: func() *store.CPUAllocation {
 				store := store.NewCPUAllocation(topo, cpuset.New())
-				store.AddResourceClaimAllocation(logger, types.UID(claimUID), cpuset.New(2, 3))
+				requireEnforcedResourceClaim(t, logger, store, types.UID(claimUID), cpuset.New(2, 3))
 				return store
 			}(),
 			claimTracker: store.NewClaimTracker(),
@@ -234,7 +234,7 @@ func TestCreateContainer(t *testing.T) {
 			podConfigStore: store.NewPodConfig(),
 			cpuAllocationStore: func() *store.CPUAllocation {
 				store := store.NewCPUAllocation(topo, cpuset.New())
-				store.AddResourceClaimAllocation(logger, types.UID(claimUID), cpuset.New(0, 1))
+				requireEnforcedResourceClaim(t, logger, store, types.UID(claimUID), cpuset.New(0, 1))
 				return store
 			}(),
 			claimTracker: store.NewClaimTracker(),
@@ -261,6 +261,7 @@ func TestCreateContainer(t *testing.T) {
 				require.Contains(t, err.Error(), tc.expectedErrorContains)
 				require.Nil(t, adjust)
 				require.Nil(t, updates)
+				require.Zero(t, tc.claimTracker.Len(), "failed CreateContainer must not retain claim owners")
 				return
 			}
 
@@ -300,7 +301,9 @@ func TestStopContainer(t *testing.T) {
 					claimTracker:       store.NewClaimTracker(),
 					topology:           deviceTopology{cpuTopology: topo},
 				}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id), types.UID("claim-uid-1")))
+				claimUID := types.UID("claim-uid-1")
+				requireEnforcedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, cpuset.New(0, 1))
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id), claimUID))
 				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
 				return driver
 			}(),
@@ -385,6 +388,21 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 	require.Equal(t, claimCPUs.String(), adjustment.Linux.Resources.Cpu.Cpus)
 	require.True(t, cpuStore.GetSharedCPUs().Equals(cpuset.New(2, 3)))
 	require.Equal(t, 1, driver.claimTracker.Len())
+
+	// Delayed events for the old runtime ID must not remove or release the replacement.
+	require.NoError(t, driver.RemoveContainer(context.Background(), pod, first))
+	require.NotNil(t, driver.podConfigStore.GetContainerState(types.UID(pod.Uid), restarted.Name))
+	require.True(t, cpuStore.GetSharedCPUs().Equals(cpuset.New(2, 3)))
+
+	_, err = driver.StopContainer(context.Background(), pod, first)
+	require.NoError(t, err)
+	require.NotNil(t, driver.podConfigStore.GetContainerState(types.UID(pod.Uid), restarted.Name))
+	require.True(t, cpuStore.GetSharedCPUs().Equals(cpuset.New(2, 3)))
+
+	_, err = driver.StopContainer(context.Background(), pod, restarted)
+	require.NoError(t, err)
+	require.Nil(t, driver.podConfigStore.GetContainerState(types.UID(pod.Uid), restarted.Name))
+	require.True(t, cpuStore.GetSharedCPUs().Equals(allCPUs))
 }
 
 func TestNRISynchronize(t *testing.T) {
@@ -586,7 +604,7 @@ func TestStopContainerReleasesClaimToSharedPool(t *testing.T) {
 	claimedCPUs := cpuset.New(0, 1)
 
 	cpuAllocationStore := store.NewCPUAllocation(topo, cpuset.New())
-	cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, claimedCPUs)
+	requireEnforcedResourceClaim(t, logger, cpuAllocationStore, claimUID, claimedCPUs)
 
 	driver := &CPUDriver{
 		podConfigStore:     store.NewPodConfig(),
