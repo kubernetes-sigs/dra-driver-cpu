@@ -35,9 +35,10 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
 	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
-	drametadatav1alpha1 "k8s.io/dynamic-resource-allocation/api/metadata/v1alpha1"
+	drametadatav1beta1 "k8s.io/dynamic-resource-allocation/api/metadata/v1beta1"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	registerapi "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
@@ -300,8 +301,7 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 		kubeletplugin.KubeClient(cp.kubeClient),
 		kubeletplugin.RegistrarDirectoryPath(registrarDir(cp.kubeletRootDir)),
 		kubeletplugin.PluginDataDirectoryPath(driverPluginPath),
-		kubeletplugin.EnableDeviceMetadata(true),
-		kubeletplugin.MetadataVersions(drametadatav1alpha1.SchemeGroupVersion),
+		kubeletplugin.EnableDeviceMetadata(true, []schema.GroupVersion{drametadatav1beta1.SchemeGroupVersion}),
 	}
 	d, err := kubeletplugin.Start(ctx, cp, kubeletOpts...)
 	if err != nil {
