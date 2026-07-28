@@ -142,6 +142,9 @@ type Config struct {
 	// driverconfig.Resolve refuses an empty or relative value, and New takes it as
 	// given rather than checking it again.
 	KubeletRootDir string
+	// PublishNodeAllocatableResourceMapping publishes KEP-5517 nodeAllocatableResources mappings in
+	// ResourceSlice devices. Requires the DRANodeAllocatableResources feature gate to be enabled in the cluster.
+	PublishNodeAllocatableResourceMapping bool
 }
 
 func (cfg Config) DevicesPerResourceSlice() int {

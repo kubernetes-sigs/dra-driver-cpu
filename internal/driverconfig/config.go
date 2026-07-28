@@ -35,7 +35,15 @@ type Config struct {
 	GroupBy          string `json:"groupBy,omitempty"`
 	ExposePCIeRoots  bool   `json:"exposePCIeRoots,omitempty"`
 	SysFSOverlay     string `json:"sysfsOverlay,omitempty"`
-	KubeletRootDir   string `json:"kubeletRootDir,omitempty"`
+	// KubeletRootDir is the kubelet root directory. The plugin registration and
+	// plugins directories are derived from it as <root>/plugins_registry and
+	// <root>/plugins. Set it when the kubelet --root-dir is not the default
+	// /var/lib/kubelet.
+	KubeletRootDir string `json:"kubeletRootDir,omitempty"`
+	// PublishNodeAllocatableResourceMapping publishes KEP-5517 nodeAllocatableResources
+	// mappings in ResourceSlice devices. Requires the DRANodeAllocatableResources
+	// feature gate in the cluster. Defaults to false.
+	PublishNodeAllocatableResourceMapping bool `json:"publishNodeAllocatableResourceMapping,omitempty"`
 }
 
 // LogValues returns key-value pairs for structured logging of the config.
@@ -50,21 +58,23 @@ func (c Config) LogValues() []any {
 		"exposePCIeRoots", c.ExposePCIeRoots,
 		"sysfsOverlay", c.SysFSOverlay,
 		"kubeletRootDir", c.KubeletRootDir,
+		"publishNodeAllocatableResourceMapping", c.PublishNodeAllocatableResourceMapping,
 	}
 }
 
 // dumpConfig mirrors Config field-for-field but drops the omitempty json
 // tags, so Dump also prints zero values (e.g. exposePCIeRoots=false).
 type dumpConfig struct {
-	Kubeconfig       string `json:"kubeconfig"`
-	HostnameOverride string `json:"hostnameOverride"`
-	BindAddress      string `json:"bindAddress"`
-	ReservedCPUs     string `json:"reservedCPUs"`
-	CPUDeviceMode    string `json:"cpuDeviceMode"`
-	GroupBy          string `json:"groupBy"`
-	ExposePCIeRoots  bool   `json:"exposePCIeRoots"`
-	SysFSOverlay     string `json:"sysfsOverlay"`
-	KubeletRootDir   string `json:"kubeletRootDir"`
+	Kubeconfig                            string `json:"kubeconfig"`
+	HostnameOverride                      string `json:"hostnameOverride"`
+	BindAddress                           string `json:"bindAddress"`
+	ReservedCPUs                          string `json:"reservedCPUs"`
+	CPUDeviceMode                         string `json:"cpuDeviceMode"`
+	GroupBy                               string `json:"groupBy"`
+	ExposePCIeRoots                       bool   `json:"exposePCIeRoots"`
+	SysFSOverlay                          string `json:"sysfsOverlay"`
+	KubeletRootDir                        string `json:"kubeletRootDir"`
+	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping"`
 }
 
 // Dump renders the Config as YAML, for logging a human-readable snapshot of
