@@ -877,7 +877,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 				deviceNameToNUMANodeID: map[string]int{},
 			},
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
-			cpuAllocator:       cpumanager.NewAllocator(topo),
+			cpuAllocator:       cpumanager.NewAllocator(testDriverName, topo),
 		}
 		if withExistingAllocation {
 			requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, existingCPUs)
@@ -1515,7 +1515,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 				deviceNameToNUMANodeID: map[string]int{},
 			},
 			cpuAllocationStore: cpuStore,
-			cpuAllocator:       cpumanager.NewAllocator(topo),
+			cpuAllocator:       cpumanager.NewAllocator(testDriverName, topo),
 			cdiMgr:             cdiMgr,
 		}, cpuStore, cdiMgr
 	}
@@ -1534,7 +1534,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 				deviceNameToNUMANodeID: map[string]int{"cpudevnuma0": 0, "cpudevnuma1": 1},
 			},
 			cpuAllocationStore: cpuStore,
-			cpuAllocator:       cpumanager.NewAllocator(topo),
+			cpuAllocator:       cpumanager.NewAllocator(testDriverName, topo),
 			cdiMgr:             cdiMgr,
 		}, cpuStore, cdiMgr
 	}
@@ -2139,6 +2139,7 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 
 	topo, err := mockProvider.GetCPUTopology(logger)
 	require.NoError(t, err)
+	driver.cpuAllocator = cpumanager.NewAllocator(testDriverName, topo)
 
 	switch driver.cpuDeviceGroupBy {
 	case devattr.GROUP_BY_SOCKET:
