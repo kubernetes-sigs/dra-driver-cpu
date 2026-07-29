@@ -18,7 +18,6 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"time"
 
@@ -95,7 +94,7 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create discovery pod: %v", err)
 		data, err := e2epod.GetLogs(ctx, infraFxt.K8SClientset, infoPod)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs from discovery pod: %v", err)
-		gomega.Expect(json.Unmarshal([]byte(data), &targetNodeCPUInfo)).To(gomega.Succeed())
+		gomega.Expect(unmarshalLatestReport(data, &targetNodeCPUInfo)).To(gomega.Succeed())
 
 		allocatableCPUs := makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
 		availableCPUs = allocatableCPUs.Difference(reservedCPUs)
@@ -177,10 +176,26 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			gomega.Expect(createdPod1).ToNot(gomega.BeNil())
 
-			fixture.By("creating a second pod consuming the ResourceClaim on %q, ensuring it gets ContainerCreate Error", fxt.Namespace.Name)
 			createdPod2, err := fxt.K8SClientset.CoreV1().Pods(testPod.Namespace).Create(ctx, &testPod, metav1.CreateOptions{})
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-			EventuallyFailedToCreate(ctx, fxt, createdPod2)
+			driverConfig := getDriverConfig(ctx, fxt.K8SClientset)
+			if driverConfig.PublishNodeAllocatableResourceMapping {
+				// With the node allocatable mapping, kube-scheduler rejects sharing a mapped claim across pods, so the second pod never
+				// reaches the node. The message check ties the failure to the sharing
+				// rejection rather than any scheduling failure.
+				fixture.By("ensuring the second pod consuming the ResourceClaim on %q stays unscheduled", fxt.Namespace.Name)
+				gomega.Eventually(func(ctx context.Context) (*v1.Pod, error) {
+					return fxt.K8SClientset.CoreV1().Pods(createdPod2.Namespace).Get(ctx, createdPod2.Name, metav1.GetOptions{})
+				}).WithContext(ctx).WithTimeout(time.Minute).WithPolling(2*time.Second).Should(
+					gomega.HaveField("Status.Conditions", gomega.ContainElement(gomega.SatisfyAll(
+						gomega.HaveField("Type", v1.PodScheduled),
+						gomega.HaveField("Status", v1.ConditionFalse),
+						gomega.HaveField("Message", gomega.ContainSubstring("cannot be shared across pods")),
+					))), "pod sharing a mapped claim must be rejected by the scheduler")
+			} else {
+				fixture.By("ensuring the second pod consuming the ResourceClaim on %q gets ContainerCreate Error", fxt.Namespace.Name)
+				EventuallyFailedToCreate(ctx, fxt, createdPod2)
+			}
 		})
 
 		ginkgo.It("should fail to run a pod with multiple containers which share a claim", ginkgo.Label("negative"), func(ctx context.Context) {

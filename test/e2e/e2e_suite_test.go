@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +108,52 @@ func EventuallyFailedToCreate(ctx context.Context, fxt *fixture.Fixture, pod *v1
 	}).WithTimeout(time.Minute).WithPolling(2 * time.Second).Should(podmatchers.BeFailedToCreate(fxt.Log))
 }
 
+// expectNodeAllocClaimStatus verifies the scheduler-populated node allocatable claim status
+// on a pod using one CPU claim: with the node allocatable mapping enabled it must report the
+// claim's CPUs, otherwise the field must be absent. The scheduler writes the status at
+// PreBind, so it is final by the time the pod runs; polling is defensive.
+func expectNodeAllocClaimStatus(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod, wantCPUs int64, nodeAllocatableMapping bool) {
+	ginkgo.GinkgoHelper()
+
+	if !nodeAllocatableMapping {
+		current, err := cs.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		gomega.Expect(current.Status.NodeAllocatableResourceClaimStatuses).To(gomega.BeEmpty(),
+			"nodeAllocatableResourceClaimStatuses must be absent when the node allocatable mapping is disabled")
+		return
+	}
+
+	gomega.Eventually(func(g gomega.Gomega) {
+		current, err := cs.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		g.Expect(current.Status.NodeAllocatableResourceClaimStatuses).To(gomega.HaveLen(1),
+			"expected exactly one node allocatable claim status")
+		claimStatus := current.Status.NodeAllocatableResourceClaimStatuses[0]
+		g.Expect(claimStatus.Containers).To(gomega.ContainElement(pod.Spec.Containers[0].Name))
+		g.Expect(claimStatus.Mapping).To(gomega.HaveLen(1))
+		g.Expect(claimStatus.Mapping[0].Name).To(gomega.Equal(v1.ResourceCPU))
+		g.Expect(claimStatus.Mapping[0].Quantity).ToNot(gomega.BeNil())
+		g.Expect(claimStatus.Mapping[0].Quantity.Value()).To(gomega.Equal(wantCPUs))
+		// The claim may be created from a template with a generated name; cross-check the
+		// reported name against the pod's resource claim statuses.
+		if len(current.Status.ResourceClaimStatuses) == 1 && current.Status.ResourceClaimStatuses[0].ResourceClaimName != nil {
+			g.Expect(claimStatus.ResourceClaimName).To(gomega.Equal(*current.Status.ResourceClaimStatuses[0].ResourceClaimName))
+		}
+	}).WithTimeout(time.Minute).WithPolling(2 * time.Second).Should(gomega.Succeed())
+}
+
+// getDriverConfig fetches the dracpu DaemonSet and returns the deployed driver's
+// configuration via getDriverConfigValues. Fields the deployment does not set are
+// zero values, mirroring the driver's own defaults for booleans.
+func getDriverConfig(ctx context.Context, cs kubernetes.Interface) driverConfigValues {
+	ginkgo.GinkgoHelper()
+	daemonSet, err := cs.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, "dracpu", metav1.GetOptions{})
+	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get dracpu daemonset")
+	values, err := getDriverConfigValues(ctx, cs, daemonSetNamespace, daemonSet)
+	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot read dracpu driver config values")
+	return values
+}
+
 func makeCPUSetFromDiscoveredCPUInfo(cpuInfo discovery.DRACPUInfo) cpuset.CPUSet {
 	coreIDs := make([]int, len(cpuInfo.CPUs))
 	for idx, cpu := range cpuInfo.CPUs {
@@ -120,19 +167,27 @@ type CPUAllocation struct {
 	CPUAffinity cpuset.CPUSet
 }
 
+func unmarshalLatestReport(data string, v any) error {
+	lines := strings.Split(strings.TrimSpace(data), "\n")
+	var lastErr error
+	for _, line := range slices.Backward(lines) {
+		err := json.Unmarshal([]byte(line), v)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+	}
+	return fmt.Errorf("no JSON line found in %d log lines: %w", len(lines), lastErr)
+}
+
 func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod *v1.Pod) CPUAllocation {
 	ginkgo.GinkgoHelper()
 
 	data, err := e2epod.GetLogs(ctx, cs, pod)
 	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs for %s/%s/%s", pod.Namespace, pod.Name, pod.Spec.Containers[0].Name)
 
-	// Split logs by newline and find the last non-empty line
-	lines := strings.Split(strings.TrimSpace(data), "\n")
-	gomega.Expect(len(lines)).To(gomega.BeNumerically(">", 0), "logs should not be empty")
-	lastLine := lines[len(lines)-1]
-
 	testerInfo := discovery.DRACPUTester{}
-	gomega.Expect(json.Unmarshal([]byte(lastLine), &testerInfo)).To(gomega.Succeed(), "cannot unmarshal last log line: %q", lastLine)
+	gomega.Expect(unmarshalLatestReport(data, &testerInfo)).To(gomega.Succeed(), "cannot unmarshal tester report from logs")
 
 	ret := CPUAllocation{}
 	ret.CPUAssigned, err = cpuset.Parse(testerInfo.Allocation.CPUs)
@@ -142,11 +197,28 @@ func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod
 	return ret
 }
 
-func makeTesterPodWithExclusiveCPUClaim(ns, image, cpuClaimTemplateName string, numCPUs int64, nodeName string) *v1.Pod {
+// claimContainerResources returns the standard resources for a container using a CPU claim
+// of numCPUs, following docs/user/workload-requirements.md for the given mode:
+// with the node allocatable mapping the claim's CPUs must not be duplicated in the spec,
+// without it they must be mirrored in requests and limits.
+func claimContainerResources(numCPUs int64, nodeAllocatableMapping bool) (requests, limits v1.ResourceList) {
 	ginkgo.GinkgoHelper()
-	cpuQty := resource.NewQuantity(numCPUs, resource.DecimalSI)
 	memQty, err := resource.ParseQuantity("256Mi") // random "low enough" value
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	requests = v1.ResourceList{v1.ResourceMemory: memQty}
+	limits = v1.ResourceList{v1.ResourceMemory: memQty}
+	if !nodeAllocatableMapping {
+		cpuQty := resource.NewQuantity(numCPUs, resource.DecimalSI)
+		requests[v1.ResourceCPU] = *cpuQty
+		limits[v1.ResourceCPU] = *cpuQty
+	}
+	return requests, limits
+}
+
+func makeTesterPodWithExclusiveCPUClaim(ns, image, cpuClaimTemplateName string, numCPUs int64, nodeName string, nodeAllocatableMapping bool) *v1.Pod {
+	ginkgo.GinkgoHelper()
+	requests, limits := claimContainerResources(numCPUs, nodeAllocatableMapping)
 
 	podWithClaim := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -160,14 +232,8 @@ func makeTesterPodWithExclusiveCPUClaim(ns, image, cpuClaimTemplateName string, 
 					Image:   image,
 					Command: []string{"/dracputester"},
 					Resources: v1.ResourceRequirements{
-						Requests: v1.ResourceList{
-							v1.ResourceCPU:    *cpuQty,
-							v1.ResourceMemory: memQty,
-						},
-						Limits: v1.ResourceList{
-							v1.ResourceCPU:    *cpuQty,
-							v1.ResourceMemory: memQty,
-						},
+						Requests: requests,
+						Limits:   limits,
 						Claims: []v1.ResourceClaim{
 							{
 								Name: "tester-container-1-claim",
@@ -231,9 +297,10 @@ func findArgInContainer(container *v1.Container, prefix string) (string, bool) {
 
 // driverConfigValues holds cpuDeviceMode/groupBy/reservedCPUs read back from a daemonset.
 type driverConfigValues struct {
-	CPUDeviceMode string `json:"cpuDeviceMode,omitempty"`
-	GroupBy       string `json:"groupBy,omitempty"`
-	ReservedCPUs  string `json:"reservedCPUs,omitempty"`
+	CPUDeviceMode                         string `json:"cpuDeviceMode,omitempty"`
+	GroupBy                               string `json:"groupBy,omitempty"`
+	ReservedCPUs                          string `json:"reservedCPUs,omitempty"`
+	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping,omitempty"`
 }
 
 // getDriverConfigValues reads the ConfigMap if the daemonset uses --config=, else falls back to
@@ -263,11 +330,9 @@ func getDriverConfigValues(ctx context.Context, client kubernetes.Interface, nam
 	return values, nil
 }
 
-func makeTesterPodWithNamedClaim(ns, image, claimName string, nodeName string) *v1.Pod {
+func makeTesterPodWithNamedClaim(ns, image, claimName string, nodeName string, nodeAllocatableMapping bool) *v1.Pod {
 	ginkgo.GinkgoHelper()
-	cpuQty := resource.NewQuantity(2, resource.DecimalSI)
-	memQty, err := resource.ParseQuantity("256Mi")
-	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	requests, limits := claimContainerResources(2, nodeAllocatableMapping)
 
 	pod := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -281,14 +346,8 @@ func makeTesterPodWithNamedClaim(ns, image, claimName string, nodeName string) *
 					Image:   image,
 					Command: []string{"/dracputester"},
 					Resources: v1.ResourceRequirements{
-						Requests: v1.ResourceList{
-							v1.ResourceCPU:    *cpuQty,
-							v1.ResourceMemory: memQty,
-						},
-						Limits: v1.ResourceList{
-							v1.ResourceCPU:    *cpuQty,
-							v1.ResourceMemory: memQty,
-						},
+						Requests: requests,
+						Limits:   limits,
 						Claims: []v1.ResourceClaim{
 							{Name: "cpu-claim"},
 						},
