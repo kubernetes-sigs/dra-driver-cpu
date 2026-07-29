@@ -50,6 +50,14 @@ honor these settings, where applicable.
   NOTE: the Makefile defaults to "grouped" if not set, because a nonempty value is needed internally.
   NOTE: Likewise the e2e tests, the Makefile also behaves differently depending on this setting.
   It is recommended to set it before to run targets like `make ci-manifests`.
+- `DRACPU_E2E_NODE_ALLOCATABLE`: (optional): if set (any nonempty value), *the Makefile*
+  `ci-kind-setup` target deploys the driver with the
+  `driverConfig.publishNodeAllocatableResourceMapping: true` option. This requires a cluster
+  whose node image supports the `DRANodeAllocatableResources` feature gate (Kubernetes 1.37+)
+  with the gate enabled; the stock CI kind config does not enable it. The e2e tests do not
+  read this variable: they detect the active driver configuration from the deployed
+  DaemonSet's ConfigMap and adapt their expectations (workload spec shape, ResourceSlice
+  content, pod status, claim-sharing failure mode) accordingly.
 - `DRACPU_E2E_DUMP_RAW_LOGS`: (optional): if set to any value which is true-ish (e.g. `1`, `true`...)
   makes the tests which verify the contextual logging integrity dump the full raw captured logs
   before to run any actual test. Useful for troubleshooting and test fixing/tuning.
