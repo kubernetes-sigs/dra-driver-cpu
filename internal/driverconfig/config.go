@@ -17,6 +17,7 @@ limitations under the License.
 package driverconfig
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"sigs.k8s.io/yaml"
@@ -76,4 +77,28 @@ func (c Config) Dump() string {
 		return fmt.Sprintf("<!!! FAILED TO MARSHAL Config: %v !!!>", err)
 	}
 	return string(out)
+}
+
+// DumpFile renders the Config as YAML accepted back by as configuration file.
+// Add versioning, hardcoding the most recent, and removes fields which
+// the configuration file is not allowed to set.
+func (c Config) DumpAsFile() (string, error) {
+	data, err := json.Marshal(dumpConfig(c))
+	if err != nil {
+		return "", err
+	}
+	fields := map[string]any{}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return "", err
+	}
+	for excluded := range schemaExcludedFields {
+		delete(fields, excluded)
+	}
+	fields["apiVersion"] = ConfigAPIVersion
+
+	out, err := yaml.Marshal(fields)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }

@@ -80,7 +80,7 @@ func printRootUsage(fs *flag.FlagSet) {
 	fmt.Fprintf(fs.Output(), `Usage:
 %s [flags]
 %s gatherinfo [flags]
-%s introspect metrics
+%s introspect [metrics|config]
 
 Compatibility paths:
 dracpu-gatherinfo [flags]
