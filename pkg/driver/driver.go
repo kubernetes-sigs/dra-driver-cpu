@@ -29,6 +29,7 @@ import (
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
@@ -168,6 +169,7 @@ type Config struct {
 	ReservedCPUs     cpuset.CPUSet
 	CPUDeviceMode    string
 	CPUDeviceGroupBy string
+	Allocator        string
 	ExposePCIeRoots  bool
 	Metrics          cpumetrics.Recorder
 	// KubeletRootDir is the kubelet root directory, from which the registrar
@@ -243,7 +245,15 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.topology.cpuTopology, config.ReservedCPUs)
 	plugin.refreshAllocationMetrics()
 	plugin.podConfigStore = store.NewPodConfig()
-	plugin.cpuAllocator = cpuallocator.NewKubelet(plugin.driverName, topo)
+
+	allocMode := findAllocatorMode(logger, config)
+	logger.Info("creating CPU allocator", "method", allocMode)
+	switch allocMode {
+	case driverconfig.AllocatorExternal:
+		plugin.cpuAllocator = cpuallocator.NewExternal(config.DriverName, topo, plugin.topology.onlineCPUs, config.ReservedCPUs)
+	default:
+		plugin.cpuAllocator = cpuallocator.NewKubelet(config.DriverName, topo)
+	}
 
 	var devices []resourceapi.Device
 
@@ -460,4 +470,16 @@ func generateShortID(length int) string {
 		b[i] = hexDigits[rand.IntN(len(hexDigits))] //nolint:gosec
 	}
 	return string(b)
+}
+
+func findAllocatorMode(logger logr.Logger, config *Config) string {
+	if config.Allocator == driverconfig.AllocatorExternal {
+		// easy case: explicit user preference
+		return config.Allocator
+	}
+	if config.CPUDeviceMode == device.CPU_DEVICE_MODE_GROUPED && config.CPUDeviceGroupBy == device.GROUP_BY_MACHINE {
+		logger.Info("machine grouping in grouped device mode requires external allocator, forcing")
+		return driverconfig.AllocatorExternal
+	}
+	return driverconfig.AllocatorCPUManager
 }

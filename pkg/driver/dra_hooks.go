@@ -25,7 +25,6 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
-	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	resourceapi "k8s.io/api/resource/v1"
@@ -145,12 +144,14 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		topo := cp.topology.cpuTopology
 		// TODO: what if `claimCPUCount==0`?
 
-		var cur cpuset.CPUSet
+		// The preferred hint comes from the request's opaque config (if any); the
+		// group-specific branches below pick the actual CPUs out of it.
 		preferredCPUs, err := cp.cpuAllocator.GetPreferredCPUs(logger, claim.Status.Allocation, alloc)
 		if err != nil {
 			return kubeletplugin.PrepareResult{Err: err}
 		}
 
+		var cur cpuset.CPUSet
 		switch cp.cpuDeviceGroupBy {
 		case device.GROUP_BY_SOCKET:
 			socketID, ok := cp.topology.deviceNameToSocketID[alloc.Device]
@@ -171,18 +172,10 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			logger.V(4).Info("NUMA node CPU availability", "numaNodeID", numaNodeID, "numaCPUs", numaCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
 			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, preferredCPUs, claimCPUCount)
 		case device.GROUP_BY_MACHINE:
-			opaqueCPUSet, ok, err := cpuallocator.GetOpaqueCPUSet(logger, cp.driverName, claim.Status.Allocation, alloc)
-			if err != nil {
-				return kubeletplugin.PrepareResult{Err: err}
-			}
-			if !ok {
-				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no opaque cpuset configuration found for allocation request %q", alloc.Request)}
-			}
-
-			if err := cpuallocator.ValidateOpaqueCPUSet(cp.cpuAllocationStore.GetPreparedCPUs(), opaqueCPUSet, assignedCPUs, claimCPUCount, cp.topology.onlineCPUs, cp.topology.reservedCPUs); err != nil {
-				return kubeletplugin.PrepareResult{Err: err}
-			}
-			cur = opaqueCPUSet
+			// no mapping needed in machine mode - just one device = the whole machine
+			availableCPUs := cp.topology.onlineCPUs.Difference(cp.topology.reservedCPUs)
+			logger.V(4).Info("Machine CPU availability", "availableCPUs", availableCPUs.String())
+			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUs, preferredCPUs, claimCPUCount)
 			logger.V(2).Info("using opaque config CPU assignment", "device", alloc.Device, "assigned", cur.String())
 		}
 
