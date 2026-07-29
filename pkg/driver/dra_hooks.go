@@ -123,10 +123,10 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 	var cpuAssignment cpuset.CPUSet
 	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
 	for _, alloc := range claim.Status.Allocation.Devices.Results {
-		claimCPUCount := 0
 		if alloc.Driver != cp.driverName {
 			continue
 		}
+		claimCPUCount := 0
 		if quantity, ok := alloc.ConsumedCapacity[device.CPUResourceQualifiedName]; ok {
 			if quantity.Sign() <= 0 {
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity for device %q must be positive, got %s", alloc.Device, quantity.String())}
@@ -140,7 +140,9 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		}
 
 		topo := cp.topology.cpuTopology
+		// TODO: what if `claimCPUCount==0`?
 
+		var preferredCPUs cpuset.CPUSet
 		var cur cpuset.CPUSet
 		var err error
 
@@ -153,7 +155,11 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			socketCPUs := topo.CPUDetails.CPUsInSockets(socketID)
 			availableCPUsForDevice := sharedCPUs.Difference(cpuAssignment).Intersection(socketCPUs)
 			logger.V(4).Info("socket CPU availability", "socketID", socketID, "socketCPUs", socketCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
-			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, cpuset.New(), claimCPUCount)
+			preferredCPUs, err = cp.cpuAllocator.GetPreferredCPUs(logger, claim.Status.Allocation, alloc, claimCPUCount)
+			if err != nil {
+				return kubeletplugin.PrepareResult{Err: err}
+			}
+			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, preferredCPUs, claimCPUCount)
 		case device.GROUP_BY_NUMA_NODE:
 			numaNodeID, ok := cp.topology.deviceNameToNUMANodeID[alloc.Device]
 			if !ok {
@@ -162,7 +168,11 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			numaCPUs := topo.CPUDetails.CPUsInNUMANodes(numaNodeID)
 			availableCPUsForDevice := sharedCPUs.Difference(cpuAssignment).Intersection(numaCPUs)
 			logger.V(4).Info("NUMA node CPU availability", "numaNodeID", numaNodeID, "numaCPUs", numaCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
-			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, cpuset.New(), claimCPUCount)
+			preferredCPUs, err = cp.cpuAllocator.GetPreferredCPUs(logger, claim.Status.Allocation, alloc, claimCPUCount)
+			if err != nil {
+				return kubeletplugin.PrepareResult{Err: err}
+			}
+			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, preferredCPUs, claimCPUCount)
 		case device.GROUP_BY_MACHINE:
 			opaqueCPUSet, ok, err := extalloc.GetOpaqueCPUSet(logger, cp.driverName, claim.Status.Allocation, alloc)
 			if err != nil {
@@ -180,6 +190,9 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		}
 
 		if err != nil {
+			return kubeletplugin.PrepareResult{Err: err}
+		}
+		if err := cp.cpuAllocator.Validate(cur, cp.cpuAllocationStore.GetAllocatedCPUs(), cpuAssignment); err != nil {
 			return kubeletplugin.PrepareResult{Err: err}
 		}
 		cpuAssignment = cpuAssignment.Union(cur)

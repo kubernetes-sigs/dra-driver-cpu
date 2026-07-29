@@ -827,7 +827,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 				deviceNameToNUMANodeID: map[string]int{},
 			},
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
-			cpuAllocator:       cpumanager.NewAllocator(topo),
+			cpuAllocator:       cpumanager.NewAllocator(testDriverName, topo),
 		}
 		if withExistingAllocation {
 			driver.cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, existingCPUs)
@@ -1413,7 +1413,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 				deviceNameToNUMANodeID: map[string]int{},
 			},
 			cpuAllocationStore: cpuStore,
-			cpuAllocator:       cpumanager.NewAllocator(topo),
+			cpuAllocator:       cpumanager.NewAllocator(testDriverName, topo),
 			cdiMgr:             cdiMgr,
 		}, cpuStore, cdiMgr
 	}
@@ -1432,7 +1432,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 				deviceNameToNUMANodeID: map[string]int{"cpudevnuma0": 0, "cpudevnuma1": 1},
 			},
 			cpuAllocationStore: cpuStore,
-			cpuAllocator:       cpumanager.NewAllocator(topo),
+			cpuAllocator:       cpumanager.NewAllocator(testDriverName, topo),
 			cdiMgr:             cdiMgr,
 		}, cpuStore, cdiMgr
 	}
