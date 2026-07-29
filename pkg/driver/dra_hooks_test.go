@@ -51,6 +51,20 @@ const (
 	testDriverName = "dra-driver-cpu.k8s.io"
 )
 
+type machineModeTestAllocator struct{}
+
+func (machineModeTestAllocator) GetPreferredCPUs(logr.Logger, *resourceapi.AllocationResult, resourceapi.DeviceRequestAllocationResult) (cpuset.CPUSet, error) {
+	return cpuset.New(), nil
+}
+
+func (machineModeTestAllocator) Allocate(logr.Logger, cpuset.CPUSet, cpuset.CPUSet, int) (cpuset.CPUSet, error) {
+	return cpuset.New(), fmt.Errorf("unexpected Allocate call in machine-mode test allocator")
+}
+
+func (machineModeTestAllocator) Validate(cpuset.CPUSet, cpuset.CPUSet, cpuset.CPUSet) error {
+	return nil
+}
+
 func requirePreparedResourceClaim(t testing.TB, logger logr.Logger, allocationStore *store.CPUAllocation, claimUID types.UID, cpus cpuset.CPUSet) {
 	t.Helper()
 	require.NoError(t, allocationStore.ReserveResourceClaimAllocation(logger, claimUID, cpus, false))
@@ -947,7 +961,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			},
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 			podConfigStore:     store.NewPodConfig(),
-			cpuAllocator:       cpuallocator.NewCPUManager(topo),
+			cpuAllocator:       cpuallocator.NewCPUManager(testDriverName, topo),
 		}
 		if withExistingAllocation {
 			requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, existingCPUs)
@@ -1055,6 +1069,9 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 		require.NoError(t, err)
 		for claimUID, cpus := range initialAllocations {
 			requirePreparedResourceClaim(t, testr.New(t), driver.cpuAllocationStore, claimUID, cpus)
+		}
+		if groupBy == devattr.GROUP_BY_MACHINE {
+			driver.cpuAllocator = machineModeTestAllocator{}
 		}
 		return driver
 	}
@@ -1590,7 +1607,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 				deviceNameToNUMANodeID: map[string]int{},
 			},
 			cpuAllocationStore: cpuStore,
-			cpuAllocator:       cpuallocator.NewCPUManager(topo),
+			cpuAllocator:       cpuallocator.NewCPUManager(testDriverName, topo),
 			cdiMgr:             cdiMgr,
 			podConfigStore:     store.NewPodConfig(),
 		}, cpuStore, cdiMgr
@@ -1610,7 +1627,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 				deviceNameToNUMANodeID: map[string]int{"cpudevnuma0": 0, "cpudevnuma1": 1},
 			},
 			cpuAllocationStore: cpuStore,
-			cpuAllocator:       cpuallocator.NewCPUManager(topo),
+			cpuAllocator:       cpuallocator.NewCPUManager(testDriverName, topo),
 			cdiMgr:             cdiMgr,
 			podConfigStore:     store.NewPodConfig(),
 		}, cpuStore, cdiMgr
@@ -2218,6 +2235,11 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 
 	topo, err := mockProvider.GetCPUTopology(logger)
 	require.NoError(t, err)
+	if groupBy == devattr.GROUP_BY_MACHINE {
+		driver.cpuAllocator = machineModeTestAllocator{}
+	} else {
+		driver.cpuAllocator = cpuallocator.NewCPUManager(testDriverName, topo)
+	}
 
 	switch driver.cpuDeviceGroupBy {
 	case devattr.GROUP_BY_SOCKET:
