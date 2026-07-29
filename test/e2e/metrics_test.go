@@ -132,7 +132,7 @@ var _ = ginkgo.Describe("Metrics", ginkgo.Serial, func() {
 		createdClaimTemplate, err := metricsFxt.K8SClientset.ResourceV1().ResourceClaimTemplates(metricsFxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
-		testerPod := makeTesterPodWithExclusiveCPUClaim(metricsFxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, 1, targetNode.Name)
+		testerPod := makeTesterPodWithExclusiveCPUClaim(metricsFxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, 1, targetNode.Name, getDriverConfig(ctx, metricsFxt.K8SClientset).PublishNodeAllocatableResourceMapping)
 		createdPod, err := e2epod.CreateSync(ctx, metricsFxt.K8SClientset, testerPod)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
