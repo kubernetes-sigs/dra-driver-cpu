@@ -77,7 +77,16 @@ func printRootUsage(fs *flag.FlagSet) {
 		commandName = "dracpu"
 	}
 
-	fmt.Fprintf(fs.Output(), "Usage:\n  %s [flags]\n  %s gatherinfo [flags]\n  %s introspect metrics\n\nCompatibility paths:\n  dracpu-gatherinfo [flags]\n\nFlags:\n", commandName, commandName, commandName)
+	fmt.Fprintf(fs.Output(), `Usage:
+%s [flags]
+%s gatherinfo [flags]
+%s introspect metrics
+
+Compatibility paths:
+dracpu-gatherinfo [flags]
+
+Flags:
+`, commandName, commandName, commandName)
 	fs.PrintDefaults()
 }
 
