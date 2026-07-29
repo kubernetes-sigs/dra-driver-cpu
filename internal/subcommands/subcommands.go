@@ -59,7 +59,11 @@ func runIntrospect(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("dracpu introspect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: %s <subcommand>\n\nAvailable subcommands:\n  metrics\tPrint JSON metadata for custom dra_cpu_* metrics.\n", fs.Name())
+		fmt.Fprintf(fs.Output(), `Usage: %s <subcommand>
+
+Available subcommands:
+metrics\tPrint JSON metadata for custom dra_cpu_* metrics.
+`, fs.Name())
 	}
 
 	if err := fs.Parse(args); err != nil {
