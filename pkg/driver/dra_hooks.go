@@ -181,8 +181,8 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			if !ok {
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no opaque cpuset configuration found for allocation request %q", alloc.Request)}
 			}
-
-			if err := extalloc.ValidateOpaqueCPUSet(opaqueCPUSet, cp.topology.onlineCPUs, cpuAssignment, claimCPUCount, cp.topology.onlineCPUs, cp.topology.reservedCPUs); err != nil {
+			err = extalloc.ValidateOpaqueCPUSet(opaqueCPUSet, cp.topology.onlineCPUs, cp.topology.reservedCPUs, claimCPUCount)
+			if err != nil {
 				return kubeletplugin.PrepareResult{Err: err}
 			}
 			cur = opaqueCPUSet

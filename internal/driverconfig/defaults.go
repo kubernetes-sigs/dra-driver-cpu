@@ -24,5 +24,6 @@ func Default() Config {
 		BindAddress:   ":8080",
 		CPUDeviceMode: device.CPU_DEVICE_MODE_GROUPED,
 		GroupBy:       device.GROUP_BY_NUMA_NODE,
+		Allocator:     AllocatorCPUManager,
 	}
 }
