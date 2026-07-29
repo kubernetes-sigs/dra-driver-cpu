@@ -29,6 +29,7 @@ import (
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
@@ -176,6 +177,7 @@ type Config struct {
 	ReservedCPUs     cpuset.CPUSet
 	CPUDeviceMode    string
 	CPUDeviceGroupBy string
+	Allocator        string
 	ExposePCIeRoots  bool
 	Metrics          cpumetrics.Recorder
 	// KubeletRootDir is the kubelet root directory, from which the registrar
@@ -252,7 +254,14 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.topology.cpuTopology, config.ReservedCPUs)
 	plugin.refreshAllocationMetrics()
 	plugin.podConfigStore = store.NewPodConfig()
-	plugin.cpuAllocator = cpuallocator.NewCPUManager(plugin.driverName, topo)
+
+	logger.Info("creating CPU allocator", "method", config.Allocator)
+	switch config.Allocator {
+	case driverconfig.AllocatorExternal:
+		plugin.cpuAllocator = cpuallocator.NewExternal(config.DriverName, plugin.topology.onlineCPUs, config.ReservedCPUs)
+	default:
+		plugin.cpuAllocator = cpuallocator.NewCPUManager(config.DriverName, topo)
+	}
 
 	var devices []resourceapi.Device
 

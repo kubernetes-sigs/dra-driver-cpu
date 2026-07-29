@@ -27,6 +27,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/testr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	devattr "github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
@@ -50,20 +51,6 @@ const (
 	testNodeName   = "test-node"
 	testDriverName = "dra-driver-cpu.k8s.io"
 )
-
-type machineModeTestAllocator struct{}
-
-func (machineModeTestAllocator) GetPreferredCPUs(logr.Logger, *resourceapi.AllocationResult, resourceapi.DeviceRequestAllocationResult) (cpuset.CPUSet, error) {
-	return cpuset.New(), nil
-}
-
-func (machineModeTestAllocator) Allocate(logr.Logger, cpuset.CPUSet, cpuset.CPUSet, int) (cpuset.CPUSet, error) {
-	return cpuset.New(), fmt.Errorf("unexpected Allocate call in machine-mode test allocator")
-}
-
-func (machineModeTestAllocator) Validate(cpuset.CPUSet, cpuset.CPUSet, cpuset.CPUSet) error {
-	return nil
-}
 
 func requirePreparedResourceClaim(t testing.TB, logger logr.Logger, allocationStore *store.CPUAllocation, claimUID types.UID, cpus cpuset.CPUSet) {
 	t.Helper()
@@ -1058,20 +1045,22 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			},
 			SysFS: testSysFS(cpuInfos),
 		}
+		allocator := driverconfig.AllocatorCPUManager
+		if groupBy == devattr.GROUP_BY_MACHINE {
+			allocator = driverconfig.AllocatorExternal
+		}
 		conf := Config{
 			DriverName:       testDriverName,
 			NodeName:         testNodeName,
 			CPUDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
 			CPUDeviceGroupBy: groupBy,
 			ReservedCPUs:     reservedCPUs,
+			Allocator:        allocator,
 		}
 		driver, err := New(testr.New(t), prov, &conf)
 		require.NoError(t, err)
 		for claimUID, cpus := range initialAllocations {
 			requirePreparedResourceClaim(t, testr.New(t), driver.cpuAllocationStore, claimUID, cpus)
-		}
-		if groupBy == devattr.GROUP_BY_MACHINE {
-			driver.cpuAllocator = machineModeTestAllocator{}
 		}
 		return driver
 	}
@@ -2172,7 +2161,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 				}(),
 			},
 			expectedErrors: map[string]string{
-				"claim-1": "are already assigned to another device in this claim",
+				"claim-1": "opaque cpuset size 2 does not match the request total of 4 CPUs",
 			},
 		},
 	}
@@ -2184,7 +2173,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 				testReserved = tc.reservedCPUs
 			}
 			mockCdi := newMockCdiMgr()
-			driver := createCPUDriverForTest(t, devattr.GROUP_BY_MACHINE, cpuInfos, tc.initialAllocations, testReserved, mockCdi)
+			driver := createCPUDriverExternalAllocForTest(t, devattr.GROUP_BY_MACHINE, cpuInfos, tc.initialAllocations, testReserved, mockCdi)
 
 			prepared, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
 			require.NoError(t, err)
@@ -2213,7 +2202,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 	}
 }
 
-func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet, cdiMgr cdiManager) *CPUDriver {
+func createCPUDriverExternalAllocForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet, cdiMgr cdiManager) *CPUDriver {
 	t.Helper()
 	logger := testr.New(t)
 	driver := &CPUDriver{}
@@ -2229,17 +2218,13 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 	driver.topology.reservedCPUs = reservedCPUs
 	driver.cpuAllocationStore = store.NewCPUAllocation(driver.topology.cpuTopology, reservedCPUs)
 	driver.podConfigStore = store.NewPodConfig()
+	driver.cpuAllocator = cpuallocator.NewExternal(testDriverName, driver.topology.onlineCPUs, reservedCPUs)
 	for claimUID, cpus := range initialAllocations {
 		requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, cpus)
 	}
 
 	topo, err := mockProvider.GetCPUTopology(logger)
 	require.NoError(t, err)
-	if groupBy == devattr.GROUP_BY_MACHINE {
-		driver.cpuAllocator = machineModeTestAllocator{}
-	} else {
-		driver.cpuAllocator = cpuallocator.NewCPUManager(testDriverName, topo)
-	}
 
 	switch driver.cpuDeviceGroupBy {
 	case devattr.GROUP_BY_SOCKET:
