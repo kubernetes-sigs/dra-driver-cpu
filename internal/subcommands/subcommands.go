@@ -27,6 +27,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/gatherinfo"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
+	"sigs.k8s.io/yaml"
 )
 
 // Options configures subcommand execution.
@@ -49,15 +50,15 @@ func Run(args []string, opts Options) error {
 			DriverConfig: opts.DriverConfig,
 		}, opts.Logger)
 	case "introspect":
-		return runIntrospect(args[1:], opts.Stdout, opts.Stderr)
+		return runIntrospect(args[1:], opts)
 	default:
 		return fmt.Errorf("unknown subcommand %q; supported subcommands: gatherinfo, introspect", args[0])
 	}
 }
 
-func runIntrospect(args []string, stdout, stderr io.Writer) error {
+func runIntrospect(args []string, opts Options) error {
 	fs := flag.NewFlagSet("dracpu introspect", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs.SetOutput(opts.Stderr)
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), `Usage: %s <subcommand>
 
@@ -73,14 +74,16 @@ metrics\tPrint JSON metadata for custom dra_cpu_* metrics.
 		return err
 	}
 	if fs.NArg() == 0 {
-		return fmt.Errorf("introspect requires a subcommand; supported subcommands: metrics")
+		return fmt.Errorf("introspect requires a subcommand; supported subcommands: metrics|config")
 	}
 
 	switch fs.Arg(0) {
 	case "metrics":
-		return runMetrics(fs.Args()[1:], stdout, stderr)
+		return runMetrics(fs.Args()[1:], opts.Stdout, opts.Stderr)
+	case "config":
+		return runConfig(fs.Args()[1:], opts)
 	default:
-		return fmt.Errorf("unknown introspect subcommand %q; supported subcommands: metrics", fs.Arg(0))
+		return fmt.Errorf("unknown introspect subcommand %q; supported subcommands: metrics|config", fs.Arg(0))
 	}
 }
 
@@ -102,4 +105,39 @@ func runMetrics(args []string, stdout, stderr io.Writer) error {
 	}
 
 	return cpumetrics.WriteJSON(stdout)
+}
+
+func runConfig(args []string, opts Options) error {
+	fs := flag.NewFlagSet("dracpu introspect config", flag.ContinueOnError)
+	fs.SetOutput(opts.Stderr)
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage: %s\n", fs.Name())
+	}
+
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() > 1 {
+		return fmt.Errorf("config accepts up to 1 positional arguments: %s", strings.Join(fs.Args(), " "))
+	}
+	configFile := ""
+	if fs.NArg() > 0 {
+		configFile = fs.Args()[0]
+	}
+
+	cfg, err := driverconfig.Load(opts.DriverConfig, configFile, fs, opts.Logger)
+	if err != nil {
+		return err
+	}
+
+	bindata, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprint(opts.Stdout, string(bindata))
+	return nil
 }

@@ -65,7 +65,7 @@ var _ = ginkgo.Describe("[Local] dracpu root usage", func() {
 
 		usage := string(out)
 		gomega.Expect(usage).To(gomega.ContainSubstring("dracpu gatherinfo [flags]"))
-		gomega.Expect(usage).To(gomega.ContainSubstring("dracpu introspect metrics"))
+		gomega.Expect(usage).To(gomega.ContainSubstring("dracpu introspect [metrics|config]"))
 		gomega.Expect(usage).To(gomega.ContainSubstring("dracpu-gatherinfo [flags]"))
 		gomega.Expect(usage).ToNot(gomega.ContainSubstring("--show-metrics"))
 	})

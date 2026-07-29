@@ -23,6 +23,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-logr/logr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 )
 
@@ -50,7 +52,12 @@ func TestRunIntrospectMetrics(t *testing.T) {
 }
 
 func TestRunIntrospectRequiresNestedSubcommand(t *testing.T) {
-	err := runIntrospect(nil, io.Discard, io.Discard)
+	err := runIntrospect(nil, Options{
+		DriverConfig: driverconfig.Default(),
+		Logger:       logr.Discard(),
+		Stdout:       io.Discard,
+		Stderr:       io.Discard,
+	})
 	if err == nil {
 		t.Fatal("runIntrospect() succeeded, want error")
 	}
