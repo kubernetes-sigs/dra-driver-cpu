@@ -30,16 +30,7 @@ import (
 
 var _ = ginkgo.Describe("[Local] dracpu introspect config", func() {
 	ginkgo.It("should output defaults matching compiled-in defaults", func() {
-		cmdline := []string{binPath, "introspect", "config"}
-		fmt.Fprintf(ginkgo.GinkgoWriter, "running: %v\n", cmdline)
-
-		cmd := exec.Command(cmdline[0], cmdline[1:]...)
-		cmd.Stderr = ginkgo.GinkgoWriter
-
-		out, err := cmd.Output()
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-
-		fmt.Fprintf(ginkgo.GinkgoWriter, "output:\n%s\n", string(out))
+		out := runCommand(binPath, "introspect", "config")
 
 		expected := driverconfig.Default()
 		got := driverconfig.Config{}
@@ -61,16 +52,7 @@ cpuDeviceMode: individual
 `)
 		gomega.Expect(os.WriteFile(cfgPath, cfgContent, 0600)).To(gomega.Succeed())
 
-		cmdline := []string{binPath, "introspect", "config", cfgPath}
-		fmt.Fprintf(ginkgo.GinkgoWriter, "running: %v\n", cmdline)
-
-		cmd := exec.Command(cmdline[0], cmdline[1:]...)
-		cmd.Stderr = ginkgo.GinkgoWriter
-
-		out, err := cmd.Output()
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-
-		fmt.Fprintf(ginkgo.GinkgoWriter, "output:\n%s\n", string(out))
+		out := runCommand(binPath, "introspect", "config", cfgPath)
 
 		var got driverconfig.Config
 		gomega.Expect(yaml.Unmarshal(out, &got)).To(gomega.Succeed())
