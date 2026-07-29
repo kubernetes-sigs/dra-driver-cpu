@@ -1,0 +1,84 @@
+# This example illustrates a Pod consuming exclusive CPUs when the driver publishes
+# node allocatable resource mappings (KEP-5517).
+#
+# Prerequisites:
+#   - Kubernetes 1.37+ with the DRANodeAllocatableResources feature gate enabled.
+#   - Driver deployed with driverConfig.publishNodeAllocatableResourceMapping: true.
+#
+# The scheduler counts the claim's CPUs against node allocatable and the kubelet accounts
+# for them in the cgroup limits, so the claim's CPU count must NOT be replicated in the
+# container's standard resource requests (doing so would count the CPUs twice).
+#
+# The container's standard resources only determine the QoS class (see
+# docs/user/workload-requirements.md). Two variants below:
+#   - Guaranteed QoS: requests == limits for cpu and memory on every container; the minimum
+#     cpu value satisfies that rule, and memory reflects the container's actual need.
+#   - Burstable QoS: any non-zero standard request (memory here) is enough.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: claim-cpu-capacity-10
+spec:
+  devices:
+    requests:
+    - name: req-cpu-slice
+      exactly:
+        deviceClassName: dra.cpu
+        capacity:
+          requests:
+            dra.cpu/cpu: "10"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-cpu-dra-claim-guaranteed-qos
+spec:
+  containers:
+    - name: workload-container
+      image: "registry.k8s.io/pause:3.9"
+      resources:
+        requests:
+          cpu: "1m" # QoS only; the 10 CPUs come from the claim and are not repeated here
+          memory: "2Gi"
+        limits:
+          cpu: "1m"
+          memory: "2Gi"
+        claims:
+          - name: "pod-cpu-claim-ref"
+  resourceClaims:
+    - name: "pod-cpu-claim-ref"
+      resourceClaimName: claim-cpu-capacity-10
+---
+# A claim cannot be shared across pods, so the Burstable example uses its own claim.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: claim-cpu-capacity-4
+spec:
+  devices:
+    requests:
+    - name: req-cpu-slice
+      exactly:
+        deviceClassName: dra.cpu
+        capacity:
+          requests:
+            dra.cpu/cpu: "4"
+---
+# Burstable QoS: any non-zero standard request is enough. The claim's CPUs are still
+# allocated exclusively; the memory request only sets the QoS class.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-cpu-dra-claim-burstable-qos
+spec:
+  containers:
+    - name: workload-container
+      image: "registry.k8s.io/pause:3.9"
+      resources:
+        requests:
+          memory: "2Gi"
+        claims:
+          - name: "pod-cpu-claim-ref"
+  resourceClaims:
+    - name: "pod-cpu-claim-ref"
+      resourceClaimName: claim-cpu-capacity-4
