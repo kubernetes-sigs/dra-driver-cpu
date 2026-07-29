@@ -218,6 +218,7 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 		PublishNodeAllocatableResourceMapping: cfg.PublishNodeAllocatableResourceMapping,
 		Metrics:                               cpumetrics.New(prometheus.DefaultRegisterer),
 		KubeletRootDir:                        cfg.KubeletRootDir,
+		Allocator:                             cfg.Allocator,
 	}
 	driverProviders := driver.Providers{
 		K8SClient: clientset,
