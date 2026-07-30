@@ -19,7 +19,6 @@ package driverconfig
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 
 	"github.com/go-logr/logr"
@@ -64,49 +63,6 @@ func Resolve(logger logr.Logger, sources []Source) (Config, error) {
 	return cfg, nil
 }
 
-// Load merges the config file at filePath into base, giving CLI flags that were
-// explicitly set (reported by fs.Visit) priority over file values.
-// If filePath is empty, base is returned unchanged. fs must already be parsed.
-func Load(base Config, filePath string, fs *flag.FlagSet, logger logr.Logger) (Config, error) {
-	logger.V(6).Info("config: after flags", base.LogValues()...)
-
-	if filePath == "" {
-		return base, nil
-	}
-
-	explicitJSONKeys := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) {
-		jsonKey, ok := flagToJSONKey[f.Name]
-		if !ok {
-			logger.Error(nil, "config: flag not found in flagToJSONKey map; its explicit CLI value may be silently overridden by the config file", "flag", f.Name)
-			return
-		}
-		explicitJSONKeys[jsonKey] = true
-	})
-
-	confMap, err := buildConfMap(filePath)
-	if err != nil {
-		return Config{}, fmt.Errorf("config file %q: %w", filePath, err)
-	}
-
-	// CLI-explicit flags win; drop their keys so the file doesn't override them.
-	for jsonKey := range explicitJSONKeys {
-		delete(confMap, jsonKey)
-	}
-
-	result := base
-	if err := applyMap(&result, confMap); err != nil {
-		return Config{}, fmt.Errorf("applying config file %q: %w", filePath, err)
-	}
-
-	logger.V(6).Info("config: after file", result.LogValues()...)
-
-	if err := result.Validate(); err != nil {
-		return Config{}, fmt.Errorf("config file %q: %w", filePath, err)
-	}
-
-	return result, nil
-}
 
 // applyMap applies only the keys present in m to cfg; absent keys are
 // untouched (encoding/json.Unmarshal semantics). Unknown keys are rejected
