@@ -22,10 +22,8 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/go-logr/logr/funcr"
 	"github.com/go-logr/logr/testr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
@@ -50,19 +48,16 @@ func writeFile(t *testing.T, dir, name, content string) string {
 	return path
 }
 
-// TestLoad_NoFile: empty filePath returns base unchanged.
-func TestLoad_NoFile(t *testing.T) {
-	cfg := driverconfig.Default()
-	fs := newFlagSet(t, &cfg, nil)
-
-	result, err := driverconfig.Load(cfg, "", fs, testr.New(t))
+// TestResolve_NoSources: no sources returns Default() unchanged.
+func TestResolve_NoSources(t *testing.T) {
+	result, err := driverconfig.Resolve(testr.New(t), nil)
 
 	require.NoError(t, err)
-	assert.Equal(t, cfg, result)
+	assert.Equal(t, driverconfig.Default(), result)
 }
 
-// TestLoad_FileOverridesDefaults: file values are applied when no CLI flags are set.
-func TestLoad_FileOverridesDefaults(t *testing.T) {
+// TestResolve_FileOverridesDefaults: file values are applied when no CLI flags are set.
+func TestResolve_FileOverridesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	cfgFile := writeFile(t, dir, "config.yaml", `
 apiVersion: v1alpha1
@@ -72,10 +67,9 @@ reservedCPUs: "0-3"
 sysfsOverlay: /custom/sysfs
 `)
 
-	cfg := driverconfig.Default()
-	fs := newFlagSet(t, &cfg, nil) // no CLI flags
-
-	result, err := driverconfig.Load(cfg, cfgFile, fs, testr.New(t))
+	result, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
+		driverconfig.FromFile(cfgFile),
+	})
 
 	require.NoError(t, err)
 	assert.Equal(t, device.CPU_DEVICE_MODE_INDIVIDUAL, result.CPUDeviceMode)
@@ -84,8 +78,8 @@ sysfsOverlay: /custom/sysfs
 	assert.Equal(t, "/custom/sysfs", result.SysFSOverlay)
 }
 
-// TestLoad_CLIFlagWinsOverFile: an explicitly-passed CLI flag beats the file value.
-func TestLoad_CLIFlagWinsOverFile(t *testing.T) {
+// TestResolve_CLIFlagWinsOverFile: an explicitly-passed CLI flag beats the file value.
+func TestResolve_CLIFlagWinsOverFile(t *testing.T) {
 	dir := t.TempDir()
 	cfgFile := writeFile(t, dir, "config.yaml", `
 apiVersion: v1alpha1
@@ -93,31 +87,33 @@ reservedCPUs: "0-3"
 cpuDeviceMode: individual
 `)
 
-	cfg := driverconfig.Default()
+	var cfg driverconfig.Config
 	fs := newFlagSet(t, &cfg, []string{
 		"--reserved-cpus=4-7",
 		"--cpu-device-mode=grouped",
 	})
 
-	result, err := driverconfig.Load(cfg, cfgFile, fs, testr.New(t))
+	result, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
+		driverconfig.FromFile(cfgFile),
+		driverconfig.FromFlags(fs),
+	})
 
 	require.NoError(t, err)
 	assert.Equal(t, "4-7", result.ReservedCPUs)
 	assert.Equal(t, device.CPU_DEVICE_MODE_GROUPED, result.CPUDeviceMode)
 }
 
-// TestLoad_PartialFile: fields absent from the file retain their default values.
-func TestLoad_PartialFile(t *testing.T) {
+// TestResolve_PartialFile: fields absent from the file retain their default values.
+func TestResolve_PartialFile(t *testing.T) {
 	dir := t.TempDir()
 	cfgFile := writeFile(t, dir, "config.yaml", `
 apiVersion: v1alpha1
 reservedCPUs: "4-7"
 `)
 
-	cfg := driverconfig.Default()
-	fs := newFlagSet(t, &cfg, nil)
-
-	result, err := driverconfig.Load(cfg, cfgFile, fs, testr.New(t))
+	result, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
+		driverconfig.FromFile(cfgFile),
+	})
 
 	require.NoError(t, err)
 	assert.Equal(t, "4-7", result.ReservedCPUs)
@@ -126,74 +122,55 @@ reservedCPUs: "4-7"
 	assert.Equal(t, device.GROUP_BY_NUMA_NODE, result.GroupBy)
 }
 
-// TestLoad_FileWithoutAPIVersion: omitting apiVersion is accepted.
-func TestLoad_FileWithoutAPIVersion(t *testing.T) {
+// TestResolve_FileWithoutAPIVersion: omitting apiVersion is accepted.
+func TestResolve_FileWithoutAPIVersion(t *testing.T) {
 	dir := t.TempDir()
 	cfgFile := writeFile(t, dir, "config.yaml", `
 reservedCPUs: "5-6"
 `)
 
-	cfg := driverconfig.Default()
-	fs := newFlagSet(t, &cfg, nil)
-
-	result, err := driverconfig.Load(cfg, cfgFile, fs, testr.New(t))
+	result, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
+		driverconfig.FromFile(cfgFile),
+	})
 
 	require.NoError(t, err)
 	assert.Equal(t, "5-6", result.ReservedCPUs)
 }
 
-// TestLoad_UnknownAPIVersionIsError: an unrecognised apiVersion is rejected.
-func TestLoad_UnknownAPIVersionIsError(t *testing.T) {
+// TestResolve_UnknownAPIVersionIsError: an unrecognised apiVersion is rejected.
+func TestResolve_UnknownAPIVersionIsError(t *testing.T) {
 	dir := t.TempDir()
 	cfgFile := writeFile(t, dir, "config.yaml", `
 apiVersion: v99
 reservedCPUs: "0-3"
 `)
 
-	cfg := driverconfig.Default()
-	fs := newFlagSet(t, &cfg, nil)
-
-	_, err := driverconfig.Load(cfg, cfgFile, fs, testr.New(t))
+	_, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
+		driverconfig.FromFile(cfgFile),
+	})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported apiVersion")
 	assert.Contains(t, err.Error(), "v99")
 }
 
-// TestLoad_MissingFileIsError: a non-existent file path returns an error.
-func TestLoad_MissingFileIsError(t *testing.T) {
-	cfg := driverconfig.Default()
-	fs := newFlagSet(t, &cfg, nil)
-
-	_, err := driverconfig.Load(cfg, "/does/not/exist/config.yaml", fs, testr.New(t))
+// TestResolve_MissingFileIsError: a non-existent file path returns an error.
+func TestResolve_MissingFileIsError(t *testing.T) {
+	_, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
+		driverconfig.FromFile("/does/not/exist/config.yaml"),
+	})
 
 	require.Error(t, err)
 }
 
-// TestLoad_UnmappedFlagLogsError: a flag missing from flagToJSONKey logs an error.
-func TestLoad_UnmappedFlagLogsError(t *testing.T) {
-	dir := t.TempDir()
-	cfgFile := writeFile(t, dir, "config.yaml", `
-apiVersion: v1alpha1
-reservedCPUs: "0-3"
-`)
-
-	cfg := driverconfig.Default()
-	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	cfg.AddFlags(fs)
-	// Simulate a flag that AddFlags registers but flagToJSONKey forgot to map.
-	fs.String("unmapped-flag", "", "a flag missing from flagToJSONKey")
-	require.NoError(t, fs.Parse([]string{"--unmapped-flag=value"}))
-
-	var logs strings.Builder
-	logger := funcr.New(func(prefix, args string) {
-		logs.WriteString(prefix + " " + args + "\n")
-	}, funcr.Options{})
-
-	_, err := driverconfig.Load(cfg, cfgFile, fs, logger)
+// TestResolve_EmptyFilePath: an empty file path is a no-op.
+func TestResolve_EmptyFilePath(t *testing.T) {
+	result, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
+		driverconfig.FromFile(""),
+	})
 
 	require.NoError(t, err)
-	assert.Contains(t, logs.String(), "unmapped-flag")
+	assert.Equal(t, driverconfig.Default(), result)
 }
 
 // TestDefault pins the built-in default values.
@@ -210,45 +187,43 @@ func TestDefault(t *testing.T) {
 	assert.False(t, d.ExposePCIeRoots)
 }
 
-// TestLoad_InvalidCPUDeviceModeIsError: an invalid cpuDeviceMode in the file is rejected.
-func TestLoad_InvalidCPUDeviceModeIsError(t *testing.T) {
+// TestResolve_InvalidCPUDeviceModeIsError: an invalid cpuDeviceMode in the file is rejected.
+func TestResolve_InvalidCPUDeviceModeIsError(t *testing.T) {
 	dir := t.TempDir()
 	cfgFile := writeFile(t, dir, "config.yaml", `
 apiVersion: v1alpha1
 cpuDeviceMode: garbage
 `)
 
-	cfg := driverconfig.Default()
-	fs := newFlagSet(t, &cfg, nil)
-
-	_, err := driverconfig.Load(cfg, cfgFile, fs, testr.New(t))
+	_, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
+		driverconfig.FromFile(cfgFile),
+	})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid cpuDeviceMode")
 	assert.Contains(t, err.Error(), "garbage")
 }
 
-// TestLoad_InvalidGroupByIsError: an invalid groupBy in the file is rejected.
-func TestLoad_InvalidGroupByIsError(t *testing.T) {
+// TestResolve_InvalidGroupByIsError: an invalid groupBy in the file is rejected.
+func TestResolve_InvalidGroupByIsError(t *testing.T) {
 	dir := t.TempDir()
 	cfgFile := writeFile(t, dir, "config.yaml", `
 apiVersion: v1alpha1
 groupBy: garbage
 `)
 
-	cfg := driverconfig.Default()
-	fs := newFlagSet(t, &cfg, nil)
-
-	_, err := driverconfig.Load(cfg, cfgFile, fs, testr.New(t))
+	_, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
+		driverconfig.FromFile(cfgFile),
+	})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid groupBy")
 	assert.Contains(t, err.Error(), "garbage")
 }
 
-// TestLoad_ExcludedFieldInFileIsError: excluded and removed fields aren't
+// TestResolve_ExcludedFieldInFileIsError: excluded and removed fields aren't
 // configurable via the config file.
-func TestLoad_ExcludedFieldInFileIsError(t *testing.T) {
+func TestResolve_ExcludedFieldInFileIsError(t *testing.T) {
 	for _, tc := range []struct {
 		field         string
 		content       string
@@ -262,14 +237,36 @@ func TestLoad_ExcludedFieldInFileIsError(t *testing.T) {
 			dir := t.TempDir()
 			cfgFile := writeFile(t, dir, "config.yaml", "apiVersion: v1alpha1\n"+tc.content+"\n")
 
-			cfg := driverconfig.Default()
-			fs := newFlagSet(t, &cfg, nil)
-
-			_, err := driverconfig.Load(cfg, cfgFile, fs, testr.New(t))
+			_, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
+				driverconfig.FromFile(cfgFile),
+			})
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.field)
 			assert.Contains(t, err.Error(), tc.expectedError)
 		})
 	}
+}
+
+// TestResolve_BoolFlagWinsOverFile: a bool CLI flag correctly overrides via the JSON round-trip.
+func TestResolve_BoolFlagWinsOverFile(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := writeFile(t, dir, "config.yaml", `
+apiVersion: v1alpha1
+reservedCPUs: "0-3"
+`)
+
+	var cfg driverconfig.Config
+	fs := newFlagSet(t, &cfg, []string{
+		"--expose-pcie-roots=true",
+	})
+
+	result, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
+		driverconfig.FromFile(cfgFile),
+		driverconfig.FromFlags(fs),
+	})
+
+	require.NoError(t, err)
+	assert.True(t, result.ExposePCIeRoots)
+	assert.Equal(t, "0-3", result.ReservedCPUs)
 }

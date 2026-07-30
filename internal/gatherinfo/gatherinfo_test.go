@@ -25,7 +25,6 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
-	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/gatherinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"sigs.k8s.io/yaml"
@@ -36,7 +35,6 @@ func TestRunWritesReportFile(t *testing.T) {
 
 	outputDir := filepath.Join(t.TempDir(), "reports")
 	err := gatherinfo.Run([]string{"--output-dir=" + outputDir}, gatherinfo.Options{
-		DriverConfig: driverconfig.Default(),
 	}, logr.Discard())
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
@@ -80,8 +78,7 @@ func TestRunWritesReportToStdout(t *testing.T) {
 
 	stdout, err := captureStdout(t, func() error {
 		return gatherinfo.Run([]string{"--stdout"}, gatherinfo.Options{
-			DriverConfig: driverconfig.Default(),
-		}, logr.Discard())
+			}, logr.Discard())
 	})
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
@@ -108,8 +105,7 @@ func TestRunAppliesDriverSysFSOverlay(t *testing.T) {
 
 	stdout, err := captureStdout(t, func() error {
 		return gatherinfo.Run([]string{"--stdout"}, gatherinfo.Options{
-			DriverConfig: driverconfig.Default(),
-		}, logr.Discard())
+			}, logr.Discard())
 	})
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
@@ -145,8 +141,7 @@ func TestRunAppliesDriverSysFSOverlayFromParentRelativePath(t *testing.T) {
 
 	stdout, err := captureStdout(t, func() error {
 		return gatherinfo.Run([]string{"--stdout"}, gatherinfo.Options{
-			DriverConfig: driverconfig.Default(),
-		}, logr.Discard())
+			}, logr.Discard())
 	})
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
@@ -166,8 +161,7 @@ func TestRunFailsWhenDriverProcessIsMissing(t *testing.T) {
 
 	_, err := captureStdout(t, func() error {
 		return gatherinfo.Run([]string{"--stdout"}, gatherinfo.Options{
-			DriverConfig: driverconfig.Default(),
-		}, logr.Discard())
+			}, logr.Discard())
 	})
 	if err == nil {
 		t.Fatal("Run succeeded, want error")
@@ -190,8 +184,7 @@ func TestRunReadsConfigFile(t *testing.T) {
 
 	stdout, err := captureStdout(t, func() error {
 		return gatherinfo.Run([]string{"--stdout"}, gatherinfo.Options{
-			DriverConfig: driverconfig.Default(),
-		}, logr.Discard())
+			}, logr.Discard())
 	})
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)

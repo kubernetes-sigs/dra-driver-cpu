@@ -17,13 +17,38 @@ limitations under the License.
 package driverconfig
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 
+	"github.com/go-logr/logr"
 	"sigs.k8s.io/yaml"
 )
+
+type FileSource struct {
+	confPath string
+}
+
+func FromFile(confPath string) FileSource {
+	return FileSource{
+		confPath: confPath,
+	}
+}
+
+func (fs FileSource) Name() string {
+	return fs.confPath
+}
+
+func (fs FileSource) Apply(logger logr.Logger, cfg *Config) error {
+	if fs.confPath == "" {
+		return nil // nothing to do
+	}
+	overrides, err := buildConfMap(fs.confPath)
+	logger.V(6).Info("overrides", "stage", fs.Name(), "values", overrides)
+	if err != nil {
+		return err
+	}
+	return applyMap(cfg, overrides)
+}
 
 // buildConfMap loads the config file at filePath, validates and strips
 // "apiVersion", and returns the resulting map.
@@ -82,22 +107,6 @@ func validateAPIVersion(confMap map[string]any) error {
 	apiVer, _ := raw.(string)
 	if apiVer != ConfigAPIVersion {
 		return fmt.Errorf("unsupported apiVersion %q, want %q", apiVer, ConfigAPIVersion)
-	}
-	return nil
-}
-
-// applyMap applies only the keys present in m to cfg; absent keys are
-// untouched (encoding/json.Unmarshal semantics). Unknown keys are rejected
-// to catch typos early rather than silently ignoring them.
-func applyMap(cfg *Config, m map[string]any) error {
-	data, err := json.Marshal(m)
-	if err != nil {
-		return fmt.Errorf("marshaling config map: %w", err)
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(cfg); err != nil {
-		return fmt.Errorf("applying config map: %w", err)
 	}
 	return nil
 }

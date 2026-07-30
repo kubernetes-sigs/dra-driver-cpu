@@ -79,7 +79,6 @@ type ToolVersion struct {
 
 type Options struct {
 	OutputParentDir   string
-	DriverConfig      driverconfig.Config
 	DriverCmdlinePath string
 }
 
@@ -103,7 +102,7 @@ func Run(args []string, opts Options, logger logr.Logger) error {
 		return err
 	}
 
-	report, err := collectReport(logger, opts.DriverConfig, driverCmdlinePath)
+	report, err := collectReport(logger, driverCmdlinePath)
 	if err != nil {
 		return err
 	}
@@ -192,8 +191,13 @@ func createOutputFile(parentDir string, now time.Time, pid int) (*os.File, strin
 	return f, outputPath, nil
 }
 
-func collectReport(logger logr.Logger, defaults driverconfig.Config, driverCmdlinePath string) (Report, error) {
-	driverConfig := detectDriverConfig(defaults, driverCmdlinePath)
+func collectReport(logger logr.Logger, driverCmdlinePath string) (Report, error) {
+	driverConfig, err := driverconfig.Resolve(logger, []driverconfig.Source{
+		ConfigSource{DriverCmdlinePath: driverCmdlinePath},
+	})
+	if err != nil {
+		return Report{}, fmt.Errorf("failed to resolve driver config: %w", err)
+	}
 	overlayPath := driverConfig.SysFSOverlay
 	if overlayPath != "" {
 		overlayPath = driverFilesystemPath(driverCmdlinePath, overlayPath)
@@ -274,41 +278,47 @@ func makeCPUList(cpus []cpuinfo.CPUInfo) []CPU {
 	return out
 }
 
-func detectDriverConfig(defaults driverconfig.Config, driverCmdlinePath string) driverconfig.Config {
-	cmdline, err := readCmdlineFile(driverCmdlinePath)
+// we need a complex config source because gatherinfo wants to progressively
+// reconstruct a driver config from the perspective of an outside process,
+// so we need to tolerate errors the normal flow should not.
+type ConfigSource struct {
+	DriverCmdlinePath string
+}
+
+func (ConfigSource) Name() string {
+	return "gatherinfo"
+}
+
+func (cs ConfigSource) Apply(logger logr.Logger, cfg *driverconfig.Config) error {
+	cmdline, err := readCmdlineFile(cs.DriverCmdlinePath)
 	if err != nil || len(cmdline) == 0 {
-		return defaults
+		return nil
 	}
 
 	if filepath.Base(cmdline[0]) != "dracpu" {
-		return defaults
+		return nil
 	}
 
-	cfg := defaults
+	var conf driverconfig.Config // storage space for flag values
 	fs := flag.NewFlagSet("detect-driver-config", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	cfg.AddFlags(fs)
+	conf.AddFlags(fs)
 	var configFile string
 	fs.StringVar(&configFile, "config", "", "")
-	// Filter to flags known to this FlagSet; unrecognised flags (e.g. logging
-	// flags) would cause Parse to fail and fall back to defaults.
 	if err := fs.Parse(knownConfigArgs(fs, cmdline[1:])); err != nil {
-		return defaults
+		return nil
 	}
 
-	if configFile == "" {
-		return cfg
+	// intentionally ignore errors: gatherinfo tolerates partial config
+	if configFile != "" {
+		// resolve the path in the container namespace
+		configFile = driverFilesystemPath(cs.DriverCmdlinePath, configFile)
+		_ = driverconfig.FromFile(configFile).Apply(logger, cfg)
 	}
-	// Resolve configFile in the driver's mount namespace: when gatherinfo runs as a
-	// standalone tool (not sharing the driver's filesystem), the raw path from the
-	// driver's cmdline is only reachable via /proc/<pid>/root, same as overlayPath above.
-	configFile = driverFilesystemPath(driverCmdlinePath, configFile)
-	// If the file can't be read (e.g. run outside the driver container), fall back to CLI-parsed config.
-	loaded, err := driverconfig.Load(cfg, configFile, fs, logr.Discard())
-	if err != nil {
-		return cfg
-	}
-	return loaded
+
+	// flags applied last so they win over file values
+	_ = driverconfig.FromFlags(fs).Apply(logger, cfg)
+	return nil
 }
 
 func readCmdlineFile(path string) ([]string, error) {

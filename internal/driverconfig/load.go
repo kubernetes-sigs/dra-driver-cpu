@@ -17,7 +17,8 @@ limitations under the License.
 package driverconfig
 
 import (
-	"flag"
+	"bytes"
+	"encoding/json"
 	"fmt"
 
 	"github.com/go-logr/logr"
@@ -36,46 +37,45 @@ var flagToJSONKey = map[string]string{
 	"sysfs-overlay":     "sysfsOverlay",
 }
 
-// Load merges the config file at filePath into base, giving CLI flags that were
-// explicitly set (reported by fs.Visit) priority over file values.
-// If filePath is empty, base is returned unchanged. fs must already be parsed.
-func Load(base Config, filePath string, fs *flag.FlagSet, logger logr.Logger) (Config, error) {
-	logger.V(6).Info("config: after flags", base.LogValues()...)
+var boolJSONKeys = map[string]bool{
+	"exposePCIeRoots": true,
+}
 
-	if filePath == "" {
-		return base, nil
-	}
+type Source interface {
+	Name() string
+	Apply(logger logr.Logger, cfg *Config) error
+}
 
-	explicitJSONKeys := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) {
-		jsonKey, ok := flagToJSONKey[f.Name]
-		if !ok {
-			logger.Error(nil, "config: flag not found in flagToJSONKey map; its explicit CLI value may be silently overridden by the config file", "flag", f.Name)
-			return
+func Resolve(logger logr.Logger, sources []Source) (Config, error) {
+	cfg := Default()
+	logger.WithValues("stage", "default").V(6).Info("config", cfg.LogValues()...)
+
+	for _, src := range sources {
+		if err := src.Apply(logger, &cfg); err != nil {
+			return Config{}, err
 		}
-		explicitJSONKeys[jsonKey] = true
-	})
+		logger.WithValues("applied", src.Name()).V(6).Info("config", cfg.LogValues()...)
+	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
+	logger.WithValues("stage", "validated").V(6).Info("config", cfg.LogValues()...)
+	return cfg, nil
+}
 
-	confMap, err := buildConfMap(filePath)
+
+// applyMap applies only the keys present in m to cfg; absent keys are
+// untouched (encoding/json.Unmarshal semantics). Unknown keys are rejected
+// to catch typos early rather than silently ignoring them.
+func applyMap(cfg *Config, m map[string]any) error {
+	data, err := json.Marshal(m)
 	if err != nil {
-		return Config{}, fmt.Errorf("config file %q: %w", filePath, err)
+		return fmt.Errorf("marshaling config map: %w", err)
 	}
-
-	// CLI-explicit flags win; drop their keys so the file doesn't override them.
-	for jsonKey := range explicitJSONKeys {
-		delete(confMap, jsonKey)
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(cfg); err != nil {
+		return fmt.Errorf("applying config map: %w", err)
 	}
-
-	result := base
-	if err := applyMap(&result, confMap); err != nil {
-		return Config{}, fmt.Errorf("applying config file %q: %w", filePath, err)
-	}
-
-	logger.V(6).Info("config: after file", result.LogValues()...)
-
-	if err := result.Validate(); err != nil {
-		return Config{}, fmt.Errorf("config file %q: %w", filePath, err)
-	}
-
-	return result, nil
+	return nil
 }
