@@ -52,7 +52,7 @@ cpuDeviceMode: individual
 `)
 		gomega.Expect(os.WriteFile(cfgPath, cfgContent, 0600)).To(gomega.Succeed())
 
-		out := runCommand(binPath, "introspect", "config", cfgPath)
+		out := runCommand(binPath, "--config", cfgPath, "introspect", "config")
 
 		var got driverconfig.Config
 		gomega.Expect(yaml.Unmarshal(out, &got)).To(gomega.Succeed())
@@ -87,6 +87,6 @@ cpuDeviceMode: individual
 		// #nosec G204 -- the command and arguments are fixed above.
 		out, err := exec.Command(cmdline[0], cmdline[1:]...).CombinedOutput()
 		gomega.Expect(err).To(gomega.HaveOccurred())
-		gomega.Expect(string(out)).To(gomega.ContainSubstring("config accepts up to 1 positional arguments"))
+		gomega.Expect(string(out)).To(gomega.ContainSubstring("config does not accept positional arguments"))
 	})
 })

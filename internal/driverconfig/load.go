@@ -17,6 +17,8 @@ limitations under the License.
 package driverconfig
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 
@@ -34,6 +36,32 @@ var flagToJSONKey = map[string]string{
 	"group-by":          "groupBy",
 	"expose-pcie-roots": "exposePCIeRoots",
 	"sysfs-overlay":     "sysfsOverlay",
+}
+
+var boolJSONKeys = map[string]bool{
+	"exposePCIeRoots": true,
+}
+
+type Source interface {
+	Name() string
+	Apply(logger logr.Logger, cfg *Config) error
+}
+
+func Resolve(logger logr.Logger, sources []Source) (Config, error) {
+	cfg := Default()
+	logger.WithValues("stage", "default").V(6).Info("config", cfg.LogValues()...)
+
+	for _, src := range sources {
+		if err := src.Apply(logger, &cfg); err != nil {
+			return Config{}, err
+		}
+		logger.WithValues("applied", src.Name()).V(6).Info("config", cfg.LogValues()...)
+	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
+	logger.WithValues("stage", "validated").V(6).Info("config", cfg.LogValues()...)
+	return cfg, nil
 }
 
 // Load merges the config file at filePath into base, giving CLI flags that were
@@ -78,4 +106,20 @@ func Load(base Config, filePath string, fs *flag.FlagSet, logger logr.Logger) (C
 	}
 
 	return result, nil
+}
+
+// applyMap applies only the keys present in m to cfg; absent keys are
+// untouched (encoding/json.Unmarshal semantics). Unknown keys are rejected
+// to catch typos early rather than silently ignoring them.
+func applyMap(cfg *Config, m map[string]any) error {
+	data, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("marshaling config map: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(cfg); err != nil {
+		return fmt.Errorf("applying config map: %w", err)
+	}
+	return nil
 }

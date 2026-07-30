@@ -74,9 +74,6 @@ var _ = ginkgo.DescribeTable("[Local] dracpu command flag isolation",
 		gomega.Expect(err).To(gomega.HaveOccurred())
 		gomega.Expect(string(out)).To(gomega.ContainSubstring(expectedError))
 	},
-	ginkgo.Entry("rejects root flags before a subcommand",
-		[]string{"--config=/does/not/exist", "gatherinfo"},
-		"root flags cannot be combined with subcommands"),
 	ginkgo.Entry("rejects root flags after a subcommand",
 		[]string{"gatherinfo", "--config=/does/not/exist"},
 		"flag provided but not defined: -config"),

@@ -120,24 +120,14 @@ func runConfig(args []string, opts Options) error {
 		}
 		return err
 	}
-	if fs.NArg() > 1 {
-		return fmt.Errorf("config accepts up to 1 positional arguments: %s", strings.Join(fs.Args(), " "))
-	}
-	configFile := ""
-	if fs.NArg() > 0 {
-		configFile = fs.Args()[0]
+	if fs.NArg() != 0 {
+		return fmt.Errorf("config does not accept positional arguments: %s", strings.Join(fs.Args(), " "))
 	}
 
-	cfg, err := driverconfig.Load(opts.DriverConfig, configFile, fs, opts.Logger)
+	bindata, err := yaml.Marshal(opts.DriverConfig)
 	if err != nil {
 		return err
 	}
-
-	bindata, err := yaml.Marshal(cfg)
-	if err != nil {
-		return err
-	}
-
 	fmt.Fprint(opts.Stdout, string(bindata))
 	return nil
 }
