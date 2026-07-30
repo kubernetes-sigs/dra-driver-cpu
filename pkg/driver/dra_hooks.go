@@ -283,7 +283,7 @@ func (cp *CPUDriver) prepareDevices(logger logr.Logger, claim *resourceapi.Resou
 		if allocResult.Request != "" {
 			preparedDevice.Requests = []string{allocResult.Request}
 		}
-		if attrs, ok := cp.getDeviceAttributes(allocResult.Device); ok && len(attrs) > 0 {
+		if attrs, ok := getDeviceAttributes(cp.topology.deviceSlices, allocResult.Device); ok && len(attrs) > 0 {
 			metadataAttrs := make(map[string]resourceapi.DeviceAttribute, len(attrs))
 			for k, v := range attrs {
 				metadataAttrs[string(k)] = v

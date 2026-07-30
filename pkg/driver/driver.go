@@ -339,8 +339,8 @@ func (cp *CPUDriver) Stop() {
 	cp.draPlugin.Stop()
 }
 
-func (cp *CPUDriver) getDeviceAttributes(deviceName string) (map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, bool) {
-	for _, slice := range cp.topology.deviceSlices {
+func getDeviceAttributes(deviceSlices [][]resourceapi.Device, deviceName string) (map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, bool) {
+	for _, slice := range deviceSlices {
 		for _, dev := range slice {
 			if dev.Name == deviceName {
 				return dev.Attributes, true
