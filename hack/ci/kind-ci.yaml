@@ -14,10 +14,14 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 featureGates:
+  # TODO: uncomment together with bumping KIND_K8S_VERSION to v1.37.0-beta.1 or
+  # later; earlier releases do not recognize this gate and the cluster fails to start.
+  # DRANodeAllocatableResources: true
   DRAListTypeAttributes: true
 nodes:
+# Node images are not pinned here: kind takes the image from the --image flag,
+# which the Makefile sets to kindest/node:$(KIND_K8S_VERSION).
 - role: control-plane
-  image: kindest/node:v1.36.0
   kubeadmConfigPatches:
   - |
     kind: ClusterConfiguration
@@ -34,7 +38,6 @@ nodes:
       kubeletExtraArgs:
         v: "5"
 - role: worker
-  image: kindest/node:v1.36.0
   kubeadmConfigPatches:
   - |
     kind: JoinConfiguration
@@ -42,7 +45,6 @@ nodes:
       kubeletExtraArgs:
         v: "5"
 - role: worker
-  image: kindest/node:v1.36.0
   kubeadmConfigPatches:
   - |
     kind: JoinConfiguration

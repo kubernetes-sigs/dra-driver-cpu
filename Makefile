@@ -26,7 +26,12 @@ YQ_VERSION ?= 4.47.1
 GOLANGCI_LINT_VERSION ?= 2.12.2
 HELM_DOCS_VERSION ?= 1.14.2
 HELM_SCHEMA_VERSION ?= 2.3.1
-KIND_K8S_VERSION ?= v1.36.0
+# The newest 1.37 release (including pre-releases) is published in the
+# official version marker: https://dl.k8s.io/release/latest-1.37.txt
+# TODO: v1.37.0-beta.0 does not contain the DRANodeAllocatableResources feature gate
+# or API. Once v1.37.0-beta.1 or later is tagged, update this and uncomment the
+# feature gate in hack/kind.yaml and hack/ci/kind-ci.yaml.
+KIND_K8S_VERSION ?= v1.37.0-beta.0
 GOPLS_VERSION ?= v0.22.0
 # paths
 YQ = $(OUT_DIR)/yq
@@ -107,6 +112,14 @@ LOCAL_PLATFORM?=linux/$(ARCH)
 DRACPU_E2E_CPU_DEVICE_MODE ?= grouped
 DRACPU_E2E_CPU_GROUP_BY ?= numanode
 DRACPU_E2E_RESERVED_CPUS ?= 0
+# Set to "true" to have ci-kind-setup deploy the driver with the
+# publishNodeAllocatableResourceMapping driverConfig option; any other value
+# leaves it disabled. Requires a cluster (KIND_K8S_VERSION node image) with the
+# DRANodeAllocatableResources feature gate enabled.
+# TODO: switch the default to true together with bumping KIND_K8S_VERSION to
+# v1.37.0-beta.1 or later and uncommenting the feature gate in the kind configs.
+DRACPU_E2E_NODE_ALLOCATABLE ?= false
+HELM_NODE_ALLOCATABLE_ARGS := $(if $(filter true,$(DRACPU_E2E_NODE_ALLOCATABLE)),--set driverConfig.publishNodeAllocatableResourceMapping=true,)
 # Extra arguments passed to golangci-lint in the lint target.
 # For example, set GOLANGCI_LINT_EXTRA_ARGS=--fix to auto-fix issues.
 GOLANGCI_LINT_EXTRA_ARGS ?=
@@ -141,6 +154,9 @@ push-image: ## build and push image directly to registry (supports multi-arch)
 		--tag="${IMAGE_LATEST}" \
 		--push
 	-docker buildx rm dracpu-builder
+
+print-kind-k8s-version: ## print the resolved Kubernetes version used for kind clusters
+	@echo $(KIND_K8S_VERSION)
 
 # Builds the Kind node image on-the-fly if it is not pre-cached locally.
 ensure-kind-node-image:
@@ -199,7 +215,8 @@ endif
 		--set args.cpuDeviceMode=${DRACPU_E2E_CPU_DEVICE_MODE} \
 		--set args.groupBy=${DRACPU_E2E_CPU_GROUP_BY} \
 		--set-string args.reservedCPUs=${DRACPU_E2E_RESERVED_CPUS} \
-		--set args.exposePCIeRoots=true
+		--set args.exposePCIeRoots=true \
+		$(HELM_NODE_ALLOCATABLE_ARGS)
 	hack/ci/wait-resourcelices.sh
 
 build-test-image: ## build tests image
