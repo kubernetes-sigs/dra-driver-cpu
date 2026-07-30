@@ -46,14 +46,15 @@ func Load(base Config, filePath string, fs *flag.FlagSet, logger logr.Logger) (C
 		return base, nil
 	}
 
+	// Collect the Config-backed flags that were set explicitly on the command
+	// line so the file does not override them. Flags that are not in
+	// flagToJSONKey (for example --config or the klog --v flag) are not Config
+	// fields, so they are ignored here.
 	explicitJSONKeys := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) {
-		jsonKey, ok := flagToJSONKey[f.Name]
-		if !ok {
-			logger.Error(nil, "config: flag not found in flagToJSONKey map; its explicit CLI value may be silently overridden by the config file", "flag", f.Name)
-			return
+		if jsonKey, ok := flagToJSONKey[f.Name]; ok {
+			explicitJSONKeys[jsonKey] = true
 		}
-		explicitJSONKeys[jsonKey] = true
 	})
 
 	confMap, err := buildConfMap(filePath)

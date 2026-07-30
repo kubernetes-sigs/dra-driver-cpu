@@ -170,30 +170,48 @@ func TestLoad_MissingFileIsError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestLoad_UnmappedFlagLogsError: a flag missing from flagToJSONKey logs an error.
-func TestLoad_UnmappedFlagLogsError(t *testing.T) {
+// TestLoad_IgnoresUnrelatedFlags: flags that are not Config fields (such as
+// --config and the klog --v flag that share the process FlagSet) must not
+// produce any error log, while a mapped flag set on the command line still
+// overrides the file. Regression guard for the spurious "flag not found in
+// flagToJSONKey" errors that used to fire on every startup with a config file.
+func TestLoad_IgnoresUnrelatedFlags(t *testing.T) {
 	dir := t.TempDir()
 	cfgFile := writeFile(t, dir, "config.yaml", `
 apiVersion: v1alpha1
 reservedCPUs: "0-3"
+hostnameOverride: from-file
 `)
 
 	cfg := driverconfig.Default()
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	// Mirror the real command line: --config and klog's --v live on the same
+	// FlagSet but are not Config fields.
+	var configFile string
+	fs.StringVar(&configFile, "config", "", "path to the config file")
+	fs.Int("v", 0, "log verbosity")
 	cfg.AddFlags(fs)
-	// Simulate a flag that AddFlags registers but flagToJSONKey forgot to map.
-	fs.String("unmapped-flag", "", "a flag missing from flagToJSONKey")
-	require.NoError(t, fs.Parse([]string{"--unmapped-flag=value"}))
+	require.NoError(t, fs.Parse([]string{
+		"--config=" + cfgFile,
+		"--v=4",
+		"--reserved-cpus=1-2",
+	}))
 
 	var logs strings.Builder
 	logger := funcr.New(func(prefix, args string) {
 		logs.WriteString(prefix + " " + args + "\n")
-	}, funcr.Options{})
+	}, funcr.Options{Verbosity: 10})
 
-	_, err := driverconfig.Load(cfg, cfgFile, fs, logger)
+	got, err := driverconfig.Load(cfg, configFile, fs, logger)
 
 	require.NoError(t, err)
-	assert.Contains(t, logs.String(), "unmapped-flag")
+	assert.NotContains(t, logs.String(), "flag not found",
+		"unrelated flags must not produce an error log")
+	// The mapped flag set on the command line still wins over the file value.
+	assert.Equal(t, "1-2", got.ReservedCPUs)
+	// A file-only field is still applied, so the assertions above cannot pass
+	// without the file actually being read.
+	assert.Equal(t, "from-file", got.HostnameOverride)
 }
 
 // TestDefault pins the built-in default values.
