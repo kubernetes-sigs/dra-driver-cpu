@@ -298,7 +298,7 @@ func TestStopContainer(t *testing.T) {
 					podConfigStore:     store.NewPodConfig(),
 					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
-					cpuTopology:        topo,
+					topology:           deviceTopology{cpuTopology: topo},
 				}
 				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id), types.UID("claim-uid-1")))
 				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
@@ -313,7 +313,7 @@ func TestStopContainer(t *testing.T) {
 					podConfigStore:     store.NewPodConfig(),
 					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
-					cpuTopology:        topo,
+					topology:           deviceTopology{cpuTopology: topo},
 				}
 				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id)))
 				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
@@ -361,7 +361,7 @@ func TestNRISynchronize(t *testing.T) {
 					podConfigStore:     store.NewPodConfig(),
 					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
-					cpuTopology:        topo,
+					topology:           deviceTopology{cpuTopology: topo},
 				}
 				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState("stale-ctr", "stale-id", types.UID("stale-claim")))
 				return driver
@@ -376,7 +376,7 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				cpuTopology:        topo,
+				topology:           deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
 			runtimeCtrs: []*api.Container{
@@ -405,7 +405,7 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				cpuTopology:        topo,
+				topology:           deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
 			runtimeCtrs: []*api.Container{
@@ -429,7 +429,7 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				cpuTopology:        topo,
+				topology:           deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
 			runtimeCtrs: []*api.Container{
@@ -453,7 +453,7 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				cpuTopology:        topo,
+				topology:           deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1},
 			runtimeCtrs: []*api.Container{
@@ -472,7 +472,7 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				cpuTopology:        topo,
+				topology:           deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1},
 			runtimeCtrs: []*api.Container{
@@ -538,7 +538,7 @@ func TestStopContainerReleasesClaimToSharedPool(t *testing.T) {
 		podConfigStore:     store.NewPodConfig(),
 		cpuAllocationStore: cpuAllocationStore,
 		claimTracker:       store.NewClaimTracker(),
-		cpuTopology:        topo,
+		topology:           deviceTopology{cpuTopology: topo},
 	}
 	driver.podConfigStore.SetContainerState(types.UID(guaranteedPod.Uid),
 		store.NewContainerState(guaranteedCtr.Name, types.UID(guaranteedCtr.Id), claimUID))

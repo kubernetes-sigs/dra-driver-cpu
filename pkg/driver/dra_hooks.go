@@ -45,13 +45,13 @@ func (cp *CPUDriver) PublishResources(ctx context.Context) {
 	logger.V(4).Info("begin: publishing resources")
 	defer logger.V(4).Info("end: publishing resources")
 
-	if cp.deviceSlices == nil {
+	if cp.topology.deviceSlices == nil {
 		logger.Info("no devices to publish or error occurred")
 		return
 	}
 
-	slices := make([]resourceslice.Slice, 0, len(cp.deviceSlices))
-	for _, chunk := range cp.deviceSlices {
+	slices := make([]resourceslice.Slice, 0, len(cp.topology.deviceSlices))
+	for _, chunk := range cp.topology.deviceSlices {
 		slices = append(slices, resourceslice.Slice{Devices: chunk})
 	}
 
@@ -140,14 +140,14 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			logger.V(4).Info("found CPU request", "numCPUs", count, "device", alloc.Device)
 		}
 
-		topo := cp.cpuTopology
+		topo := cp.topology.cpuTopology
 
 		var cur cpuset.CPUSet
 		var err error
 
 		switch cp.cpuDeviceGroupBy {
 		case device.GROUP_BY_SOCKET:
-			socketID, ok := cp.deviceNameToSocketID[alloc.Device]
+			socketID, ok := cp.topology.deviceNameToSocketID[alloc.Device]
 			if !ok {
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid socket ID found for device %s", alloc.Device)}
 			}
@@ -156,7 +156,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			logger.V(4).Info("socket CPU availability", "socketID", socketID, "socketCPUs", socketCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
 			cur, err = cpumanager.TakeByTopologyNUMAPacked(logger, topo, availableCPUsForDevice, int(claimCPUCount), cpumanager.CPUSortingStrategyPacked, true)
 		case device.GROUP_BY_NUMA_NODE:
-			numaNodeID, ok := cp.deviceNameToNUMANodeID[alloc.Device]
+			numaNodeID, ok := cp.topology.deviceNameToNUMANodeID[alloc.Device]
 			if !ok {
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid NUMA node ID found for device %s", alloc.Device)}
 			}
@@ -173,7 +173,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no opaque cpuset configuration found for allocation request %q", alloc.Request)}
 			}
 
-			if err := cp.validateOpaqueCPUSet(opaqueCPUSet, cp.onlineCPUs, cpuAssignment, claimCPUCount); err != nil {
+			if err := cp.validateOpaqueCPUSet(opaqueCPUSet, cp.topology.onlineCPUs, cpuAssignment, claimCPUCount); err != nil {
 				return kubeletplugin.PrepareResult{Err: err}
 			}
 			cur = opaqueCPUSet
@@ -216,7 +216,7 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 		if alloc.Driver != cp.driverName {
 			continue
 		}
-		cpuID, ok := cp.deviceNameToCPUID[alloc.Device]
+		cpuID, ok := cp.topology.deviceNameToCPUID[alloc.Device]
 		if !ok {
 			return kubeletplugin.PrepareResult{
 				Err: fmt.Errorf("device %q not found in device to CPU ID map", alloc.Device),

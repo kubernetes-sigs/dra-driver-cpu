@@ -380,7 +380,7 @@ func TestPublishResources(t *testing.T) {
 				totalDevices += len(s.Devices)
 			}
 			require.Equal(t, tc.expectedDevices, totalDevices)
-			require.Len(t, cp.deviceNameToCPUID, tc.expectedDevices)
+			require.Len(t, cp.topology.deviceNameToCPUID, tc.expectedDevices)
 
 			// Verify device attributes
 			cpuInfosMap := make(map[int]cpuinfo.CPUInfo)
@@ -488,9 +488,9 @@ func TestPublishResourcesGroupedModeInitializesLookupMaps(t *testing.T) {
 			require.NotNil(t, mockPlugin.publishedResources)
 			switch tc.cpuDeviceGroupBy {
 			case devattr.GROUP_BY_SOCKET:
-				require.NotEmpty(t, cp.deviceNameToSocketID)
+				require.NotEmpty(t, cp.topology.deviceNameToSocketID)
 			case devattr.GROUP_BY_NUMA_NODE:
-				require.NotEmpty(t, cp.deviceNameToNUMANodeID)
+				require.NotEmpty(t, cp.topology.deviceNameToNUMANodeID)
 			}
 		})
 	}
@@ -796,11 +796,13 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 		require.NoError(t, err)
 		driver := &CPUDriver{
 			driverName: testDriverName,
-			deviceNameToCPUID: map[string]int{
-				"cpudev0": 0,
-				"cpudev1": 1,
-				"cpudev2": 2,
-				"cpudev3": 3,
+			topology: deviceTopology{
+				deviceNameToCPUID: map[string]int{
+					"cpudev0": 0,
+					"cpudev1": 1,
+					"cpudev2": 2,
+					"cpudev3": 3,
+				},
 			},
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 		}
@@ -815,13 +817,15 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 		topo, err := mockProvider.GetCPUTopology(logger)
 		require.NoError(t, err)
 		driver := &CPUDriver{
-			driverName:             testDriverName,
-			cpuDeviceMode:          devattr.CPU_DEVICE_MODE_GROUPED,
-			cpuDeviceGroupBy:       devattr.GROUP_BY_SOCKET,
-			cpuTopology:            topo,
-			deviceNameToSocketID:   map[string]int{"cpudevsocket0": 0},
-			deviceNameToNUMANodeID: map[string]int{},
-			cpuAllocationStore:     store.NewCPUAllocation(topo, cpuset.New()),
+			driverName:       testDriverName,
+			cpuDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
+			cpuDeviceGroupBy: devattr.GROUP_BY_SOCKET,
+			topology: deviceTopology{
+				cpuTopology:            topo,
+				deviceNameToSocketID:   map[string]int{"cpudevsocket0": 0},
+				deviceNameToNUMANodeID: map[string]int{},
+			},
+			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 		}
 		if withExistingAllocation {
 			driver.cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, existingCPUs)
@@ -1398,14 +1402,16 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 		topo, _ := mockProvider.GetCPUTopology(logger)
 		cpuStore := store.NewCPUAllocation(topo, cpuset.New())
 		return &CPUDriver{
-			driverName:             testDriverName,
-			cpuDeviceMode:          devattr.CPU_DEVICE_MODE_GROUPED,
-			cpuDeviceGroupBy:       devattr.GROUP_BY_SOCKET,
-			cpuTopology:            topo,
-			deviceNameToSocketID:   map[string]int{"cpudevsocket0": 0, "cpudevsocket1": 1},
-			deviceNameToNUMANodeID: map[string]int{},
-			cpuAllocationStore:     cpuStore,
-			cdiMgr:                 cdiMgr,
+			driverName:       testDriverName,
+			cpuDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
+			cpuDeviceGroupBy: devattr.GROUP_BY_SOCKET,
+			topology: deviceTopology{
+				cpuTopology:            topo,
+				deviceNameToSocketID:   map[string]int{"cpudevsocket0": 0, "cpudevsocket1": 1},
+				deviceNameToNUMANodeID: map[string]int{},
+			},
+			cpuAllocationStore: cpuStore,
+			cdiMgr:             cdiMgr,
 		}, cpuStore, cdiMgr
 	}
 	makeNUMADriver := func(logger logr.Logger) (*CPUDriver, *store.CPUAllocation, *mockCdiMgr) {
@@ -1414,14 +1420,16 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 		topo, _ := mockProvider.GetCPUTopology(logger)
 		cpuStore := store.NewCPUAllocation(topo, cpuset.New())
 		return &CPUDriver{
-			driverName:             testDriverName,
-			cpuDeviceMode:          devattr.CPU_DEVICE_MODE_GROUPED,
-			cpuDeviceGroupBy:       devattr.GROUP_BY_NUMA_NODE,
-			cpuTopology:            topo,
-			deviceNameToSocketID:   map[string]int{},
-			deviceNameToNUMANodeID: map[string]int{"cpudevnuma0": 0, "cpudevnuma1": 1},
-			cpuAllocationStore:     cpuStore,
-			cdiMgr:                 cdiMgr,
+			driverName:       testDriverName,
+			cpuDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
+			cpuDeviceGroupBy: devattr.GROUP_BY_NUMA_NODE,
+			topology: deviceTopology{
+				cpuTopology:            topo,
+				deviceNameToSocketID:   map[string]int{},
+				deviceNameToNUMANodeID: map[string]int{"cpudevnuma0": 0, "cpudevnuma1": 1},
+			},
+			cpuAllocationStore: cpuStore,
+			cdiMgr:             cdiMgr,
 		}, cpuStore, cdiMgr
 	}
 
@@ -1979,12 +1987,12 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 	driver.driverName = testDriverName
 	driver.cpuDeviceMode = devattr.CPU_DEVICE_MODE_GROUPED
 	driver.cpuDeviceGroupBy = groupBy
-	driver.deviceNameToSocketID = make(map[string]int)
-	driver.deviceNameToNUMANodeID = make(map[string]int)
+	driver.topology.deviceNameToSocketID = make(map[string]int)
+	driver.topology.deviceNameToNUMANodeID = make(map[string]int)
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
-	driver.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
-	driver.onlineCPUs = driver.cpuTopology.CPUDetails.CPUs()
-	driver.cpuAllocationStore = store.NewCPUAllocation(driver.cpuTopology, reservedCPUs)
+	driver.topology.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
+	driver.topology.onlineCPUs = driver.topology.cpuTopology.CPUDetails.CPUs()
+	driver.cpuAllocationStore = store.NewCPUAllocation(driver.topology.cpuTopology, reservedCPUs)
 	for claimUID, cpus := range initialAllocations {
 		driver.cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, cpus)
 	}
@@ -1995,11 +2003,11 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 	switch driver.cpuDeviceGroupBy {
 	case devattr.GROUP_BY_SOCKET:
 		for i := 0; i < topo.NumSockets; i++ {
-			driver.deviceNameToSocketID[fmt.Sprintf("%s%d", devattr.CPUDeviceSocketGroupedPrefix, i)] = i
+			driver.topology.deviceNameToSocketID[fmt.Sprintf("%s%d", devattr.CPUDeviceSocketGroupedPrefix, i)] = i
 		}
 	case devattr.GROUP_BY_NUMA_NODE:
 		for i := 0; i < topo.NumNUMANodes; i++ {
-			driver.deviceNameToNUMANodeID[fmt.Sprintf("%s%d", devattr.CPUDeviceNUMAGroupedPrefix, i)] = i
+			driver.topology.deviceNameToNUMANodeID[fmt.Sprintf("%s%d", devattr.CPUDeviceNUMAGroupedPrefix, i)] = i
 		}
 	}
 	return driver

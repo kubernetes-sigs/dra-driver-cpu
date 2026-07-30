@@ -47,13 +47,15 @@ func newMetricsTestDriver(t *testing.T) (*CPUDriver, *prometheus.Registry) {
 	recorder := cpumetrics.New(reg)
 	cpuStore := store.NewCPUAllocation(topo, cpuset.New())
 	driver := &CPUDriver{
-		driverName:  testDriverName,
-		cpuTopology: topo,
-		deviceNameToCPUID: map[string]int{
-			"cpudev0": 0,
-			"cpudev1": 1,
-			"cpudev2": 2,
-			"cpudev3": 3,
+		driverName: testDriverName,
+		topology: deviceTopology{
+			cpuTopology: topo,
+			deviceNameToCPUID: map[string]int{
+				"cpudev0": 0,
+				"cpudev1": 1,
+				"cpudev2": 2,
+				"cpudev3": 3,
+			},
 		},
 		podConfigStore:     store.NewPodConfig(),
 		cpuAllocationStore: cpuStore,
