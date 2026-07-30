@@ -61,9 +61,7 @@ type cdiManager interface {
 }
 
 // CPUInfoProvider is an interface for getting CPU information.
-// TODO(pravk03): This interface can be simplified. We can export only GetCPUTopology() and remove GetCPUInfos().
 type CPUInfoProvider interface {
-	GetCPUInfos(logger logr.Logger) ([]cpuinfo.CPUInfo, error)
 	GetCPUTopology(logger logr.Logger) (*cpuinfo.CPUTopology, error)
 }
 
@@ -77,19 +75,25 @@ type CPUDriver struct {
 	podConfigStore          *store.PodConfig
 	cpuAllocationStore      *store.CPUAllocation
 	cdiMgr                  cdiManager
-	cpuTopology             *cpuinfo.CPUTopology
-	deviceNameToCPUID       map[string]int
-	deviceNameToSocketID    map[string]int
-	deviceNameToNUMANodeID  map[string]int
-	deviceSlices            [][]resourceapi.Device
-	reservedCPUs            cpuset.CPUSet
-	onlineCPUs              cpuset.CPUSet
+	topology                deviceTopology
 	cpuDeviceMode           string
 	cpuDeviceGroupBy        string
 	claimTracker            *store.ClaimTracker
 	pcieRootMapper          *store.PCIeRootMapper
 	devicesPerResourceSlice int
 	metrics                 cpumetrics.Recorder
+}
+
+// deviceTopology holds the CPU topology and device-to-CPU/socket/NUMA
+// mappings. Set once in New(), read-only after that.
+type deviceTopology struct {
+	cpuTopology            *cpuinfo.CPUTopology
+	deviceNameToCPUID      map[string]int
+	deviceNameToSocketID   map[string]int
+	deviceNameToNUMANodeID map[string]int
+	deviceSlices           [][]resourceapi.Device
+	reservedCPUs           cpuset.CPUSet
+	onlineCPUs             cpuset.CPUSet
 }
 
 // Providers group the interfaces the CPUDriver depends on
@@ -143,13 +147,15 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		metricsRecorder = cpumetrics.Noop()
 	}
 	plugin := &CPUDriver{
-		driverName:              config.DriverName,
-		nodeName:                config.NodeName,
-		kubeClient:              providers.K8SClient,
-		deviceNameToCPUID:       make(map[string]int),
-		deviceNameToSocketID:    make(map[string]int),
-		deviceNameToNUMANodeID:  make(map[string]int),
-		reservedCPUs:            config.ReservedCPUs,
+		driverName: config.DriverName,
+		nodeName:   config.NodeName,
+		kubeClient: providers.K8SClient,
+		topology: deviceTopology{
+			deviceNameToCPUID:      make(map[string]int),
+			deviceNameToSocketID:   make(map[string]int),
+			deviceNameToNUMANodeID: make(map[string]int),
+			reservedCPUs:           config.ReservedCPUs,
+		},
 		cpuDeviceMode:           config.CPUDeviceMode,
 		cpuDeviceGroupBy:        config.CPUDeviceGroupBy,
 		claimTracker:            store.NewClaimTracker(),
@@ -164,7 +170,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		return nil, fmt.Errorf("failed to get online CPUs: %w", err)
 	}
 	logger.V(2).Info("detected online CPUs", "cpus", onlineCPUs.String())
-	plugin.onlineCPUs = onlineCPUs
+	plugin.topology.onlineCPUs = onlineCPUs
 
 	topo, err := providers.EnsureCPUInfo().GetCPUTopology(logger)
 	if err != nil {
@@ -173,7 +179,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	if topo == nil {
 		return nil, fmt.Errorf("failed to get CPU topology: topology is nil")
 	}
-	plugin.cpuTopology = topo
+	plugin.topology.cpuTopology = topo
 
 	if config.ExposePCIeRoots {
 		if err := plugin.pcieRootMapper.Probe(logger, sfs, onlineCPUs); err != nil {
@@ -181,7 +187,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		}
 	}
 
-	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.cpuTopology, config.ReservedCPUs)
+	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.topology.cpuTopology, config.ReservedCPUs)
 	plugin.refreshAllocationMetrics()
 	plugin.podConfigStore = store.NewPodConfig()
 
@@ -189,20 +195,20 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 
 	if plugin.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
 		var nameToID map[string]int
-		devices, nameToID = device.BuildGrouped(logger, plugin.cpuDeviceGroupBy, plugin.cpuTopology, plugin.onlineCPUs, plugin.reservedCPUs, plugin.pcieRootMapper)
+		devices, nameToID = device.BuildGrouped(logger, plugin.cpuDeviceGroupBy, plugin.topology.cpuTopology, plugin.topology.onlineCPUs, plugin.topology.reservedCPUs, plugin.pcieRootMapper)
 		switch plugin.cpuDeviceGroupBy {
 		case device.GROUP_BY_SOCKET:
-			plugin.deviceNameToSocketID = nameToID
+			plugin.topology.deviceNameToSocketID = nameToID
 		case device.GROUP_BY_NUMA_NODE:
-			plugin.deviceNameToNUMANodeID = nameToID
+			plugin.topology.deviceNameToNUMANodeID = nameToID
 		}
 	} else {
-		devices, plugin.deviceNameToCPUID = device.Build(plugin.cpuTopology, plugin.reservedCPUs, plugin.pcieRootMapper)
+		devices, plugin.topology.deviceNameToCPUID = device.Build(plugin.topology.cpuTopology, plugin.topology.reservedCPUs, plugin.pcieRootMapper)
 	}
 
 	if len(devices) > 0 {
 		// Chunk devices into slices of at most devicesPerResourceSlice
-		plugin.deviceSlices = slices.Collect(slices.Chunk(devices, plugin.devicesPerResourceSlice))
+		plugin.topology.deviceSlices = slices.Collect(slices.Chunk(devices, plugin.devicesPerResourceSlice))
 	}
 	return plugin, nil
 }
