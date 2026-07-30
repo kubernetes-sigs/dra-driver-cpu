@@ -31,33 +31,37 @@ honor these settings, where applicable.
   *the Makefile* will emit extra debug messages while executing targets.
   Please use the go logging configuration for the e2e tests proper.
   There's no support for verbosity levels.
+
 - `DRACPU_E2E_TEST_IMAGE`: (mandatory) the full pullSpec of the test image the suite should
   use as container image to run test containers. The default CI configuration sets this
   value automatically.
+
 - `DRACPU_E2E_TARGET_NODE`: (optional) the CPU-related tests don't need any specific node.
   If this variable is set, it should be the `hostname` of a valid worker node in
   the cluster against which the tests run.
   If it is not set, the suit will pick a random node among the workers.
+
 - `DRACPU_E2E_RESERVED_CPUS`: (optional) if set, it is meant to mirror the driver `--reserved-cpus`
   setting. The value must be a linux cpuset string. The tests will ensure no containers
   consume these CPUs.
   NOTE: the Makefile defaults to "0" if not set, because a nonempty value is needed internally.
   NOTE: at the moment is not easy to autodetect this setting from the driver configuration.
   Future version may autodetect it.
+
 - `DRACPU_E2E_CPU_DEVICE_MODE`: (optional): If set, change the behavior of the tests to assume
   the driver is configured with the corresponding device mode. Is meant to mirror the driver
   `--cpu-device-mode` setting.
   NOTE: the Makefile defaults to "grouped" if not set, because a nonempty value is needed internally.
   NOTE: Likewise the e2e tests, the Makefile also behaves differently depending on this setting.
   It is recommended to set it before to run targets like `make ci-manifests`.
-- `DRACPU_E2E_NODE_ALLOCATABLE`: (optional): if set (any nonempty value), *the Makefile*
+
+- `DRACPU_E2E_NODE_ALLOCATABLE`: (optional, default `true`): when `true`, *the Makefile*
   `ci-kind-setup` target deploys the driver with the
-  `driverConfig.publishNodeAllocatableResourceMapping: true` option. This requires a cluster
-  whose node image supports the `DRANodeAllocatableResources` feature gate (Kubernetes 1.37+)
-  with the gate enabled; the stock CI kind config does not enable it. The e2e tests do not
-  read this variable: they detect the active driver configuration from the deployed
-  DaemonSet's ConfigMap and adapt their expectations (workload spec shape, ResourceSlice
-  content, pod status, claim-sharing failure mode) accordingly.
+  `driverConfig.publishNodeAllocatableResourceMapping: true` option; any other value
+  deploys without it. The cluster must have the `DRANodeAllocatableResources` feature
+  gate; the stock kind configs enable it (they require a 1.37+ node image, which is the
+  Makefile default).
+
 - `DRACPU_E2E_DUMP_RAW_LOGS`: (optional): if set to any value which is true-ish (e.g. `1`, `true`...)
   makes the tests which verify the contextual logging integrity dump the full raw captured logs
   before to run any actual test. Useful for troubleshooting and test fixing/tuning.
