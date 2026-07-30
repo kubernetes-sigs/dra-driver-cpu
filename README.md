@@ -62,6 +62,7 @@ when filing an issue — it collects the CPU topology and driver configuration n
 - [Testing](docs/dev/testing.md) - running unit/E2E tests and testing local changes in a Kind cluster.
 - [Linting](docs/dev/linting.md) - running and auto-fixing lint issues.
 - [Logging Guidelines](docs/dev/logging.md)
+- [Configuration Guidelines](docs/dev/configuration.md) - about adding more tunables to the driver
 - [Deep dive: PCI/PCIe root buses on Linux](docs/dev/pci-bus-linux-sysfs.md)
 - [Deep dive: Linux topology reporting](docs/dev/topology-linux-sysfs.md)
 
