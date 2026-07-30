@@ -54,7 +54,7 @@
       "additionalProperties": false
     },
     "driverConfig": {
-      "description": "Driver config file contents. When non-empty, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. Fields in `args.*` that are non-empty always take priority over values set here. Example: driverConfig: cpuDeviceMode: individual groupBy: socket reservedCPUs: \"0-3\"",
+      "description": "Driver config file contents. When non-empty, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. Fields in `args.*` that are non-empty always take priority over values set here. Example: driverConfig: cpuDeviceMode: individual groupBy: socket reservedCPUs: \"0-3\" publishNodeAllocatableResourceMapping: true  # KEP-5517; requires the DRANodeAllocatableResources feature gate",
       "$ref": "driverconfig.schema.json",
       "type": "object"
     },
@@ -244,6 +244,9 @@
         },
         "kubeconfig": {
           "type": "string"
+        },
+        "publishNodeAllocatableResourceMapping": {
+          "type": "boolean"
         },
         "reservedCPUs": {
           "type": "string"

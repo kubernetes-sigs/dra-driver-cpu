@@ -128,3 +128,37 @@ spec:
         value: "64"
     name: cpudevnuma001
 ```
+
+## With Node allocatable mapping
+
+When the driver runs with `publishNodeAllocatableResourceMapping: true` (requires the
+`DRANodeAllocatableResources` feature gate, alpha in 1.37+), every device additionally
+carries a `nodeAllocatableResources` entry translating its DRA allocation into node
+allocatable `cpu`.
+
+Grouped mode maps the consumed `dra.cpu/cpu` capacity 1:1:
+
+```yaml
+  devices:
+  - allowMultipleAllocations: true
+    capacity:
+      dra.cpu/cpu:
+        value: "64"
+    name: cpudevnuma000
+    nodeAllocatableResources:
+      cpu:
+        mapping:
+          capacityKey: dra.cpu/cpu
+          capacityMultiplier: "1"
+```
+
+Individual mode maps each device to one CPU:
+
+```yaml
+  devices:
+  - name: cpudev000
+    nodeAllocatableResources:
+      cpu:
+        mapping:
+          deviceMultiplier: "1"
+```

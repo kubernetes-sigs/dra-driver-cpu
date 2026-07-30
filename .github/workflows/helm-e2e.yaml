@@ -31,8 +31,7 @@ jobs:
       # Try to parse KIND_K8S_VERSION from the Makefile and use it to build the node image and create the cluster.
       - name: Create kind cluster
         run: |
-          KIND_K8S_VERSION=$(grep -E '^KIND_K8S_VERSION \?=' Makefile | awk '{print $3}')
-          KIND_K8S_VERSION=${KIND_K8S_VERSION:-v1.36.0}
+          KIND_K8S_VERSION=$(make -s print-kind-k8s-version)
           kind delete cluster --name dra-driver-cpu || true
           kind build node-image --image=kindest/node:${KIND_K8S_VERSION} ${KIND_K8S_VERSION}
           kind create cluster --name dra-driver-cpu --image=kindest/node:${KIND_K8S_VERSION} --config hack/ci/kind-ci.yaml

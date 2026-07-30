@@ -126,6 +126,9 @@ type Config struct {
 	CPUDeviceGroupBy string
 	ExposePCIeRoots  bool
 	Metrics          cpumetrics.Recorder
+	// PublishNodeAllocatableResourceMapping publishes KEP-5517 nodeAllocatableResources mappings in
+	// ResourceSlice devices. Requires the DRANodeAllocatableResources feature gate to be enabled in the cluster.
+	PublishNodeAllocatableResourceMapping bool
 }
 
 func (cfg Config) DevicesPerResourceSlice() int {
@@ -195,7 +198,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 
 	if plugin.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
 		var nameToID map[string]int
-		devices, nameToID = device.BuildGrouped(logger, plugin.cpuDeviceGroupBy, plugin.topology.cpuTopology, plugin.topology.onlineCPUs, plugin.topology.reservedCPUs, plugin.pcieRootMapper)
+		devices, nameToID = device.BuildGrouped(logger, plugin.cpuDeviceGroupBy, plugin.topology.cpuTopology, plugin.topology.onlineCPUs, plugin.topology.reservedCPUs, plugin.pcieRootMapper, config.PublishNodeAllocatableResourceMapping)
 		switch plugin.cpuDeviceGroupBy {
 		case device.GROUP_BY_SOCKET:
 			plugin.topology.deviceNameToSocketID = nameToID
@@ -203,7 +206,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 			plugin.topology.deviceNameToNUMANodeID = nameToID
 		}
 	} else {
-		devices, plugin.topology.deviceNameToCPUID = device.Build(plugin.topology.cpuTopology, plugin.topology.reservedCPUs, plugin.pcieRootMapper)
+		devices, plugin.topology.deviceNameToCPUID = device.Build(plugin.topology.cpuTopology, plugin.topology.reservedCPUs, plugin.pcieRootMapper, config.PublishNodeAllocatableResourceMapping)
 	}
 
 	if len(devices) > 0 {

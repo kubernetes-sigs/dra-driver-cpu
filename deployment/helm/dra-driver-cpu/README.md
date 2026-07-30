@@ -41,7 +41,7 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
 | args.hostnameOverride | string | `""` | Override the node name the driver registers under; omitted when empty |
 | args.logLevel | int | `4` | Log verbosity level passed as `--v` |
 | args.reservedCPUs | string | `""` | CPUs reserved for the OS and kubelet, excluded from DRA management (e.g. `"0-1"`); omitted when empty |
-| driverConfig | object | `{}` | Driver config file contents. When non-empty, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. Fields in `args.*` that are non-empty always take priority over values set here. Example:   driverConfig:     cpuDeviceMode: individual     groupBy: socket     reservedCPUs: "0-3" |
+| driverConfig | object | `{}` | Driver config file contents. When non-empty, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. Fields in `args.*` that are non-empty always take priority over values set here. Example:   driverConfig:     cpuDeviceMode: individual     groupBy: socket     reservedCPUs: "0-3"     publishNodeAllocatableResourceMapping: true  # KEP-5517; requires the DRANodeAllocatableResources feature gate |
 | extraArgs | list | `[]` | Extra command-line arguments appended to the driver arguments |
 | extraVolumeMounts | list | `[]` | Extra volume mounts for the driver container |
 | extraVolumes | list | `[]` | Extra volumes for the DaemonSet pod |

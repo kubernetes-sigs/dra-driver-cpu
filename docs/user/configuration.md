@@ -32,15 +32,16 @@ driver container, and passes `--config` automatically.
 The config file is a **flat** YAML map - there are no nested groups. All fields are optional
 except where noted. Unknown fields are rejected at startup to catch typos early.
 
-| Field              | Type   | Default     | Description                                                                              |
-| ------------------ | ------ | ----------- | ---------------------------------------------------------------------------------------- |
-| `apiVersion`       | string | *(omitted)* | When present, must be `v1alpha1`. Rejected otherwise.                                    |
-| `cpuDeviceMode`    | string | `grouped`   | CPU exposure mode: `individual` or `grouped`.                                            |
-| `groupBy`          | string | `numanode`  | Grouping strategy when `cpuDeviceMode` is `grouped`: `numanode`, `socket`, or `machine`. |
-| `reservedCPUs`     | string | *(none)*    | CPUs excluded from allocation, e.g. `"0-1"`.                                             |
-| `hostnameOverride` | string | *(none)*    | Override the node hostname the driver registers under.                                   |
-| `exposePCIeRoots`  | bool   | `false`     | Add PCIe root attributes to CPU devices (requires `DRAListTypeAttributes` feature gate). |
-| `kubeconfig`       | string | *(none)*    | Path to a kubeconfig file (for out-of-cluster use).                                      |
+| Field                                   | Type   | Default     | Description                                                                                                                                                                                                                                                                                     |
+| --------------------------------------- | ------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apiVersion`                            | string | *(omitted)* | When present, must be `v1alpha1`. Rejected otherwise.                                                                                                                                                                                                                                           |
+| `cpuDeviceMode`                         | string | `grouped`   | CPU exposure mode: `individual` or `grouped`.                                                                                                                                                                                                                                                   |
+| `groupBy`                               | string | `numanode`  | Grouping strategy when `cpuDeviceMode` is `grouped`: `numanode`, `socket`, or `machine`.                                                                                                                                                                                                        |
+| `reservedCPUs`                          | string | *(none)*    | CPUs excluded from allocation, e.g. `"0-1"`.                                                                                                                                                                                                                                                    |
+| `hostnameOverride`                      | string | *(none)*    | Override the node hostname the driver registers under.                                                                                                                                                                                                                                          |
+| `exposePCIeRoots`                       | bool   | `false`     | Add PCIe root attributes to CPU devices (requires `DRAListTypeAttributes` feature gate).                                                                                                                                                                                                        |
+| `kubeconfig`                            | string | *(none)*    | Path to a kubeconfig file (for out-of-cluster use).                                                                                                                                                                                                                                             |
+| `publishNodeAllocatableResourceMapping` | bool   | `false`     | Publish `nodeAllocatableResources` mappings in ResourceSlice devices, so the scheduler and kubelet account claimed CPUs as node allocatable `cpu`. Requires the `DRANodeAllocatableResources` feature gate (alpha, 1.37+). See [Workload Configuration Requirements](workload-requirements.md). |
 
 #### Versioning and backward compatibility
 

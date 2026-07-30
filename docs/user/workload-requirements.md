@@ -4,9 +4,22 @@ Currently, Kubernetes has two separate systems for requesting CPU resources: sta
 
 - The Kube-scheduler uses different plugins to account for these requests, and these plugins are mutually independent. This can lead to node CPU overcommitment because the scheduler might not have a complete picture of all allocated CPUs.
 
-- Kubelet only considers the standard CPU requests in the PodSpec for critical node-level enforcements like [QoS class](https://kubernetes.io/docs/tasks/configure-pod-container/quality-service-pod/) assignment and cgroup hierarchy setup, ignoring CPUs allocated via DRA claims.
+- Kubelet only considers the standard CPU requests in the PodSpec for critical node-level enforcements like [QoS class](https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/) assignment and cgroup hierarchy setup, ignoring CPUs allocated via DRA claims.
 
-This discrepancy is a known issue being addressed by [KEP-5517: Native Resource Management for DRA](https://github.com/kubernetes/enhancements/issues/5517). Until KEP-5517 is implemented, you MUST configure your pods using one of the following methods to ensure correct behavior and resource accounting:
+[KEP-5517: DRA Node Allocatable Resources](https://github.com/kubernetes/enhancements/issues/5517) addresses the **scheduler accounting** and **cgroup enforcement** parts of this discrepancy: the scheduler counts DRA-allocated CPUs against node allocatable, and the kubelet includes them in pod- and container-level cgroup limits. Changing the **QoS class** logic is an explicit non-goal of the KEP — QoS remains based strictly on standard spec requests and limits, so pods whose only resources come from claims still classify as BestEffort (see [Configuring the right QoS class with claims](#configuring-the-right-qos-class-with-claims) below).
+
+How to configure your workloads depends on whether KEP-5517 accounting is active:
+
+- [Before KEP-5517](#before-kep-5517-before-137-or-alpha-fg-dranodeallocatableresources-disabled) — Kubernetes before 1.37, or 1.37+ with the `DRANodeAllocatableResources` feature gate disabled (its alpha default), or the driver running without `publishNodeAllocatableResourceMapping`.
+- [With KEP-5517](#with-kep-5517-137-with-alpha-fg-dranodeallocatableresources-enabled) — Kubernetes 1.37+ with the `DRANodeAllocatableResources` feature gate enabled *and* the driver deployed with `driverConfig.publishNodeAllocatableResourceMapping: true`.
+
+To check which mode is active, inspect the driver's ResourceSlices (`kubectl get resourceslice -o yaml`): the devices include a `nodeAllocatableResources` entry only when the mapping is enabled.
+
+**1-to-1 Claim to Container:** in both modes, this driver enforces that a specific CPU `ResourceClaim` can only be used by *one* container within or across pods. See [Sharing resource claims](feature-support.md#sharing-resource-claims).
+
+## Before KEP-5517 (before 1.37 or alpha FG `DRANodeAllocatableResources` disabled)
+
+The scheduler and kubelet are unaware of claim CPUs, so you MUST configure your pods using one of the following methods to ensure correct behavior and resource accounting:
 
 - **Option A (Preferred): Pod Level Resources (`pod.spec.resources`)**
 
@@ -70,7 +83,41 @@ This discrepancy is a known issue being addressed by [KEP-5517: Native Resource 
         resourceClaimName: cpu-claim-10 # Requests 10 CPUs
   ```
 
-**1-to-1 Claim to Container:** This driver enforces that a specific CPU `ResourceClaim` can only be used by *one* container within or across pods. See [Sharing resource claims](feature-support.md#sharing-resource-claims).
+## With KEP-5517 (1.37+ with alpha FG `DRANodeAllocatableResources` enabled)
+
+Requires the feature gate on the API server, scheduler, and kubelets, and the driver deployed
+with `driverConfig.publishNodeAllocatableResourceMapping: true`.
+
+The driver then publishes a `nodeAllocatableResources` mapping on every device, and:
+
+- the **scheduler** counts the claim's CPUs against node allocatable `cpu`. Do not also add
+  them to container requests; that counts them twice.
+- the **kubelet** adds the claim's CPUs to the cgroup limits, so that a spec cpu limit does
+  not throttle the claim's CPUs:
+  - **pod-level cgroup**: added to requests (`cpu.weight`) and limits (`cpu.max`);
+  - **container-level cgroup**: added to limits (`cpu.max`) only, and only for containers
+    that declare a cpu limit. Container `cpu.weight` stays derived from the spec requests
+    only; this does not disadvantage the container on its claim CPUs, because the driver
+    removes those CPUs from the [shared pool](how-it-works.md) and no other workload
+    competes there.
+
+### Configuring the right QoS class with claims
+
+The kubelet determines the [QoS class](https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/)
+from the standard `spec` requests and limits only — DRA claims do not affect it (changing the
+QoS classification logic is an explicit non-goal of the KEP). The assigned class is reported
+in `pod.status.qosClass`.
+
+The classification rules below are the standard Pod QoS rules; the table only adds the
+claim-specific configuration on top of them. QoS can be set at either level: when
+**pod-level resources** (`pod.spec.resources`, beta since 1.34) are set, the kubelet
+computes QoS from the pod-level values only; otherwise it is computed from the containers.
+
+| Desired QoS | What to set                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Caveats                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Guaranteed  | **Option 1 — container-level:** `requests` == `limits` for both `cpu` and `memory` on every container, including init containers. On claim containers a minimum cpu value in requests and limits (e.g. `cpu: 1m`) is enough — it only qualifies the pod for Guaranteed QoS; set memory to the container's actual need.<br><br>**Option 2 — pod-level:** `pod.spec.resources` with `requests` == `limits` for both `cpu` and `memory`, covering the claim CPUs (see caveat). Claim containers can omit container-level cpu. | **Option 1:** the Guaranteed rule requires a cpu entry on every container, but on claim containers the value serves only that classification — it does not change which CPUs the container runs on (the driver pins it to the claim's CPUs), while the scheduler still subtracts it from node allocatable. `1m` satisfies the rule with the smallest deduction. Memory, unlike cpu, is enforced normally by the kubelet (this driver manages only CPUs), so it must reflect the container's actual need.<br><br>**Option 2:** the kubelet applies pod-level values to the pod cgroup as-is — the claim's CPUs are not added on top and must fit within them. The scheduler therefore rejects pod-level values below Σ(container standard requests) + Σ(claim CPUs). Example: a 10-CPU claim plus 1 CPU for sidecars → pod-level `cpu: 11`. Non-claim containers run within the remainder (pod-level values minus claim CPUs). |
+| Burstable   | **Option 1 — container-level:** a `memory` and/or `cpu` request (> 0) on at least one container.<br><br>**Option 2 — pod-level:** any pod-level request or limit that does not meet the Guaranteed condition.                                                                                                                                                                                                                                                                                                              | **Option 1:** the request's purpose is classification (any non-zero request avoids BestEffort). On a claim container a cpu request has no runtime effect and is still subtracted from node allocatable, so prefer a memory request or `cpu: 1m`. Requests on non-claim containers work normally: those containers run on the driver's [shared pool](how-it-works.md).<br><br>**Option 2:** the same coverage rule as Guaranteed Option 2 applies to pod-level requests: ≥ Σ(container standard requests) + Σ(claim CPUs).                                                                                                                                                                                                                                                                                                                                                                                                     |
+| BestEffort  | No requests or limits anywhere. Container-level only: a pod with `pod.spec.resources` set is never BestEffort.                                                                                                                                                                                                                                                                                                                                                                                                             | CPU pinning works; the standard BestEffort eviction and OOM behavior applies and the claim does not change it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 ## Extended Resource Claim Status integrations
 
