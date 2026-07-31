@@ -58,3 +58,60 @@ func TestGenerateDriverConfigSchema_CoversAllFields(t *testing.T) {
 		}
 	}
 }
+
+// TestConfigDeclaresExplicitJSONNames pins the shape canonicalConfigKeys reads.
+//
+// That helper takes direct fields and explicit tag names, which is all Config
+// has. encoding/json resolves more than that -- it promotes an embedded
+// struct's fields, matches an untagged field by its Go name, and reads
+// `json:"-,"` as a field literally named "-" rather than an ignored one -- so a
+// field of any of those shapes would be settable through a config file while
+// the helper had never heard of it, which is the gap it exists to close.
+//
+// Enforced here rather than reimplemented there: a partial copy of that
+// resolution would have to be kept in step with the standard library by hand,
+// and this fails at build time the moment Config grows a shape it does not
+// cover.
+func TestConfigDeclaresExplicitJSONNames(t *testing.T) {
+	// Seeded rather than empty: apiVersion is not a Config field, so nothing in
+	// the loop would collide with it, but buildConfMap reads and strips it before
+	// the decoder runs. A field claiming that name would pass every check here
+	// and then never be settable from a file at all.
+	byName := map[string]string{"apiVersion": "the schema property buildConfMap strips"}
+	for field := range reflect.TypeFor[Config]().Fields() {
+		if field.Anonymous {
+			t.Errorf("field %q is embedded; canonicalConfigKeys reads direct fields only, "+
+				"so the fields promoted out of it would not be in the canonical set", field.Name)
+			continue
+		}
+		if field.PkgPath != "" {
+			continue // unexported, so the decoder cannot reach it either
+		}
+		tag, tagged := field.Tag.Lookup("json")
+		if !tagged {
+			t.Errorf("field %q has no json tag; the decoder would match it by its Go name, "+
+				"which is not what canonicalConfigKeys collects", field.Name)
+			continue
+		}
+		name, _, hasOptions := strings.Cut(tag, ",")
+		if name == "-" {
+			if hasOptions {
+				t.Errorf(`field %q is tagged json:"-,", which names it "-" rather than `+
+					`ignoring it; canonicalConfigKeys reads it as ignored`, field.Name)
+			}
+			continue
+		}
+		if name == "" {
+			t.Errorf("field %q has an empty json name; the decoder would match it by its "+
+				"Go name, which is not what canonicalConfigKeys collects", field.Name)
+			continue
+		}
+		for other, otherField := range byName {
+			if strings.EqualFold(name, other) {
+				t.Errorf("json names %q (%s) and %q (%s) fold onto each other, so one of them "+
+					"could never be spelled canonically", name, field.Name, other, otherField)
+			}
+		}
+		byName[name] = field.Name
+	}
+}
