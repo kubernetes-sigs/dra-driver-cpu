@@ -115,3 +115,26 @@ func TestConfigDeclaresExplicitJSONNames(t *testing.T) {
 		byName[name] = field.Name
 	}
 }
+
+// The chart owns the kubelet root, since its hostPath mounts render from the
+// same value, so it stays out of the schema like bindAddress and exposePCIeRoots.
+func TestGenerateDriverConfigSchema_ExcludesKubeletRootDir(t *testing.T) {
+	out, err := GenerateDriverConfigSchema()
+	if err != nil {
+		t.Fatalf("GenerateDriverConfigSchema: %v", err)
+	}
+
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(out, &schema); err != nil {
+		t.Fatalf("unmarshal generated schema: %v\n%s", err, out)
+	}
+
+	if _, ok := schema.Properties["kubeletRootDir"]; ok {
+		t.Errorf("kubeletRootDir must not appear in the generated schema; got:\n%s", out)
+	}
+	if want := "use the --kubelet-root-dir flag instead"; schemaExcludedFields["kubeletRootDir"] != want {
+		t.Errorf("kubeletRootDir exclusion hint = %q, want %q", schemaExcludedFields["kubeletRootDir"], want)
+	}
+}

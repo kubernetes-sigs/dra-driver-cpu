@@ -19,6 +19,7 @@ package driver
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -140,4 +141,90 @@ func isHex(s string) bool {
 		return false
 	}
 	return true
+}
+
+func TestKubeletDirDerivation(t *testing.T) {
+	const driverName = "cpu.dra.example.com"
+
+	// The registrar, plugins, and per-driver socket directories are always
+	// derived from the kubelet root, both at the default location and when the
+	// root is relocated. filepath.Join also cleans a trailing slash.
+	for _, tc := range []struct {
+		name          string
+		root          string
+		wantRegistrar string
+		wantPlugins   string
+		wantData      string
+	}{
+		{
+			name:          "default kubelet root",
+			root:          "/var/lib/kubelet",
+			wantRegistrar: "/var/lib/kubelet/plugins_registry",
+			wantPlugins:   "/var/lib/kubelet/plugins",
+			wantData:      "/var/lib/kubelet/plugins/cpu.dra.example.com",
+		},
+		{
+			name:          "relocated kubelet root with trailing slash",
+			root:          "/mnt/fast/k8s/kubelet/",
+			wantRegistrar: "/mnt/fast/k8s/kubelet/plugins_registry",
+			wantPlugins:   "/mnt/fast/k8s/kubelet/plugins",
+			wantData:      "/mnt/fast/k8s/kubelet/plugins/cpu.dra.example.com",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cp := &CPUDriver{driverName: driverName, kubeletRootDir: tc.root}
+			require.Equal(t, tc.wantRegistrar, registrarDir(cp.kubeletRootDir))
+			require.Equal(t, tc.wantPlugins, filepath.Join(cp.kubeletRootDir, "plugins"))
+			require.Equal(t, tc.wantData, pluginDataDir(cp.kubeletRootDir, cp.driverName))
+			// The socket dir must not be the shared plugins parent, per the
+			// kubeletplugin "not shared" contract.
+			require.NotEqual(t, filepath.Join(cp.kubeletRootDir, "plugins"), pluginDataDir(cp.kubeletRootDir, cp.driverName))
+		})
+	}
+}
+
+// The suffix the helper appends is fixed, so the arithmetic is what decides
+// whether a root is usable.
+func TestSocketPathFits(t *testing.T) {
+	const driver = "dra.cpu"
+	// The registrar path is the root plus "/plugins_registry/dra.cpu-reg.sock".
+	suffix := len(filepath.Join("/", "plugins_registry", driver+"-reg.sock"))
+
+	for _, tc := range []struct {
+		name    string
+		root    string
+		wantErr bool
+	}{
+		{"default root", "/var/lib/kubelet", false},
+		{"relocated root", "/mnt/fast/k8s/kubelet", false},
+		{"exactly at the limit", "/" + strings.Repeat("x", unixPathMax-suffix-1), false},
+		{"one byte over", "/" + strings.Repeat("x", unixPathMax-suffix), true},
+		// Bytes, not characters: this is well under any character count that
+		// would fit, and still too long for sun_path.
+		{"multibyte, short in characters", "/" + strings.Repeat("界", 30), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkSocketPathFits(tc.root, driver)
+			if !tc.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "Unix socket path")
+		})
+	}
+}
+
+// Pins the check to Start, not only to itself. It runs before Start touches the
+// filesystem or the kubelet, so it needs no more than the fields the check reads.
+func TestStartRefusesARootWithNoRoomForTheSocket(t *testing.T) {
+	cp := &CPUDriver{
+		kubeletRootDir: "/" + strings.Repeat("x", unixPathMax),
+		driverName:     "dra.cpu",
+	}
+
+	_, err := cp.Start(context.Background())
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Unix socket path")
 }

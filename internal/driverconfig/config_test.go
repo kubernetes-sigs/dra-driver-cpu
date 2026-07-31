@@ -416,6 +416,9 @@ func TestDefault(t *testing.T) {
 	assert.Equal(t, ":8080", d.BindAddress)
 	assert.Equal(t, device.CPU_DEVICE_MODE_GROUPED, d.CPUDeviceMode)
 	assert.Equal(t, device.GROUP_BY_NUMA_NODE, d.GroupBy)
+	// The kubelet root defaults to the standard location, so behavior is
+	// unchanged unless the kubelet --root-dir is relocated.
+	assert.Equal(t, driverconfig.DefaultKubeletRootDir, d.KubeletRootDir)
 	// Fields with no built-in default must be zero/empty.
 	assert.Empty(t, d.Kubeconfig)
 	assert.Empty(t, d.HostnameOverride)
@@ -463,13 +466,21 @@ groupBy: garbage
 // configurable via the config file.
 func TestLoad_ExcludedFieldInFileIsError(t *testing.T) {
 	for _, tc := range []struct {
-		field         string
-		content       string
-		expectedError string
+		field    string
+		content  string
+		wantErrs []string
 	}{
-		{field: "bindAddress", content: "bindAddress: \":9090\"", expectedError: "not configurable via the config file"},
-		{field: "exposePCIeRoots", content: "exposePCIeRoots: true", expectedError: "not configurable via the config file"},
-		{field: "showMetrics", content: "showMetrics: true", expectedError: "unknown field"},
+		{field: "bindAddress", content: "bindAddress: \":9090\"", wantErrs: []string{"not configurable via the config file"}},
+		{field: "exposePCIeRoots", content: "exposePCIeRoots: true", wantErrs: []string{"not configurable via the config file"}},
+		{field: "showMetrics", content: "showMetrics: true", wantErrs: []string{"unknown field"}},
+		{
+			field:   "kubeletRootDir",
+			content: "kubeletRootDir: /mnt/fast/k8s/kubelet",
+			wantErrs: []string{
+				"not configurable via the config file",
+				"use the --kubelet-root-dir flag instead",
+			},
+		},
 	} {
 		t.Run(tc.field, func(t *testing.T) {
 			dir := t.TempDir()
@@ -482,7 +493,133 @@ func TestLoad_ExcludedFieldInFileIsError(t *testing.T) {
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.field)
-			assert.Contains(t, err.Error(), tc.expectedError)
+			for _, want := range tc.wantErrs {
+				assert.Contains(t, err.Error(), want)
+			}
+		})
+	}
+}
+
+// The chart passes the kubelet root as a flag and renders its hostPath mounts
+// from the same value, so a root that cannot be used has to fail here.
+func TestLoad_KubeletRootDirFromFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		wantRoot string
+		wantErr  string
+	}{
+		{
+			name:     "absolute",
+			args:     []string{"--kubelet-root-dir=/mnt/fast/k8s/kubelet"},
+			wantRoot: "/mnt/fast/k8s/kubelet",
+		},
+		{
+			// Cleaned in the config layer so the logged value matches the paths
+			// the driver and the chart derive from it.
+			name:     "non-canonical is cleaned",
+			args:     []string{"--kubelet-root-dir=/mnt/a/../kubelet//"},
+			wantRoot: "/mnt/kubelet",
+		},
+		{
+			name:    "relative",
+			args:    []string{"--kubelet-root-dir=relative/kubelet"},
+			wantErr: "must be an absolute path",
+		},
+		{
+			name:    "empty",
+			args:    []string{"--kubelet-root-dir="},
+			wantErr: "must not be empty",
+		},
+		{
+			// flag takes the last value, so a chart appending an empty override
+			// would otherwise undo an earlier root.
+			name:    "emptied after being set",
+			args:    []string{"--kubelet-root-dir=/mnt/fast/k8s/kubelet", "--kubelet-root-dir="},
+			wantErr: "must not be empty",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := driverconfig.Default()
+			fs := newFlagSet(t, &cfg, tc.args)
+
+			result, err := driverconfig.Load(cfg, "", fs, testr.New(t))
+
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				// With no file there is nothing to name as the input.
+				assert.Contains(t, err.Error(), "validating configuration:")
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantRoot, result.KubeletRootDir)
+		})
+	}
+}
+
+func TestLoad_KubeletRootDirWithAConfigFile(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		content          string
+		args             []string
+		wantErrs         []string
+		wantFileNamed    bool
+		wantRoot         string
+		wantReservedCPUs string
+	}{
+		{
+			// encoding/json matches a field without regard to case, so before the
+			// canonical-key pass a differently spelled key walked past the
+			// exclusion and replaced a root given on the command line, which is
+			// issue #231 reached through a config file.
+			name:     "a differently spelled key cannot override the flag",
+			content:  "kubeletrootdir: /wrong/root",
+			args:     []string{"--kubelet-root-dir=/correct/root"},
+			wantErrs: []string{"kubeletrootdir", "not configurable via the config file"},
+		},
+		{
+			// The control. Refusing every file that mentions anything would close
+			// the case above without the pass that closes it.
+			name:             "an unrelated file leaves the flag alone",
+			content:          `reservedCPUs: "0-3"`,
+			args:             []string{"--kubelet-root-dir=/correct/root"},
+			wantRoot:         "/correct/root",
+			wantReservedCPUs: "0-3",
+		},
+		{
+			// The file is an input, not the source: it is valid and is not allowed
+			// to carry this field, so blaming its contents would send the reader
+			// looking for a key that cannot be there.
+			name:          "a bad flag names the file as an input",
+			content:       `reservedCPUs: "0-1"`,
+			args:          []string{"--kubelet-root-dir=relative/kubelet"},
+			wantErrs:      []string{"validating the configuration after loading", "must be an absolute path"},
+			wantFileNamed: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgFile := writeFile(t, dir, "config.yaml", "apiVersion: v1alpha1\n"+tc.content+"\n")
+
+			cfg := driverconfig.Default()
+			fs := newFlagSet(t, &cfg, tc.args)
+
+			result, err := driverconfig.Load(cfg, cfgFile, fs, testr.New(t))
+
+			if len(tc.wantErrs) > 0 {
+				require.Error(t, err)
+				for _, want := range tc.wantErrs {
+					assert.Contains(t, err.Error(), want)
+				}
+				if tc.wantFileNamed {
+					assert.Contains(t, err.Error(), cfgFile)
+				}
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantRoot, result.KubeletRootDir)
+			assert.Equal(t, tc.wantReservedCPUs, result.ReservedCPUs)
 		})
 	}
 }

@@ -211,6 +211,7 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 		CPUDeviceGroupBy: cfg.GroupBy,
 		ExposePCIeRoots:  cfg.ExposePCIeRoots,
 		Metrics:          cpumetrics.New(prometheus.DefaultRegisterer),
+		KubeletRootDir:   cfg.KubeletRootDir,
 	}
 	driverProviders := driver.Providers{
 		K8SClient: clientset,

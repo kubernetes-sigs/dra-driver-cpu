@@ -19,17 +19,19 @@ package driverconfig
 import (
 	"flag"
 	"fmt"
+	"path/filepath"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 )
 
-// AddFlags registers every Config field as a CLI flag on fs.
+// AddFlags registers the Config fields that are exposed as CLI flags on fs.
 func (c *Config) AddFlags(fs *flag.FlagSet) {
 	c.applyDefaults()
 
 	fs.StringVar(&c.Kubeconfig, "kubeconfig", c.Kubeconfig, "absolute path to the kubeconfig file")
 	fs.StringVar(&c.BindAddress, "bind-address", c.BindAddress, "The address to bind the HTTP server for /healthz and /metrics endpoints")
 	fs.BoolVar(&c.ExposePCIeRoots, "expose-pcie-roots", c.ExposePCIeRoots, "Discover and expose PCIe roots as device attributes. Requires the DRAListTypeAttributes=true Feature Gate in the cluster.")
+	fs.StringVar(&c.KubeletRootDir, "kubelet-root-dir", c.KubeletRootDir, "The kubelet root directory. The plugin registration and plugin data directories are derived from it as <root>/plugins_registry and <root>/plugins/<driver-name>. The Helm chart supplies this together with the matching hostPath mounts; set it only if the kubelet --root-dir is not the default /var/lib/kubelet.")
 	fs.Var(newCPUDeviceModeValue(&c.CPUDeviceMode, c.CPUDeviceMode), "cpu-device-mode", deprecatedUsage("cpuDeviceMode",
 		"Sets the mode for exposing CPU devices. 'grouped' exposes a single device per socket or numa node (based on --group-by). 'individual' exposes each CPU as a separate device."))
 	fs.Var(newGroupByValue(&c.GroupBy, c.GroupBy), "group-by", deprecatedUsage("groupBy",
@@ -57,9 +59,14 @@ func (c *Config) applyDefaults() {
 	if c.GroupBy == "" {
 		c.GroupBy = defaults.GroupBy
 	}
+	if c.KubeletRootDir == "" {
+		c.KubeletRootDir = defaults.KubeletRootDir
+	}
 }
 
-// Validate checks that enum fields hold recognised values.
+// Validate checks that enum fields hold recognised values and that
+// kubeletRootDir is non-empty and absolute. The root is required rather than
+// optional because the hostPath mounts render from the same value.
 // Config files bypass the flag.Value validators, so Load calls this after merging.
 func (c Config) Validate() error {
 	if c.CPUDeviceMode != device.CPU_DEVICE_MODE_GROUPED && c.CPUDeviceMode != device.CPU_DEVICE_MODE_INDIVIDUAL {
@@ -71,6 +78,22 @@ func (c Config) Validate() error {
 			return fmt.Errorf("invalid groupBy %q: must be %q, %q, or %q",
 				c.GroupBy, device.GROUP_BY_SOCKET, device.GROUP_BY_NUMA_NODE, device.GROUP_BY_MACHINE)
 		}
+	}
+	// The kubelet root becomes socket and mount locations, so a relative path
+	// would resolve against the working directory and silently break
+	// registration.
+	//
+	// Empty is refused rather than defaulted. A tunable that takes a value
+	// should be given one, and the way this one arrives empty in practice is a
+	// chart that rendered nothing into it -- in which case the hostPath mounts
+	// rendered from the same value are wrong too, and quietly falling back to
+	// the standard root is how the driver would end up registering somewhere
+	// the kubelet is not watching. That is the failure this flag exists for.
+	if c.KubeletRootDir == "" {
+		return fmt.Errorf("invalid kubeletRootDir: must not be empty")
+	}
+	if !filepath.IsAbs(c.KubeletRootDir) {
+		return fmt.Errorf("invalid kubeletRootDir %q: must be an absolute path", c.KubeletRootDir)
 	}
 	return nil
 }
