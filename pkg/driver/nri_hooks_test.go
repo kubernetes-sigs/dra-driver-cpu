@@ -377,11 +377,9 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				cdiMgr: func() *mockCdiMgr {
-					mgr := newMockCdiMgr()
-					mgr.devices[getCDIDeviceName("claim-A")] = fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")
-					return mgr
-				}(),
+				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+					"claim-A": cpuset.New(0, 1),
+				}),
 				topology: deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
@@ -436,12 +434,10 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				cdiMgr: func() *mockCdiMgr {
-					mgr := newMockCdiMgr()
-					mgr.devices[getCDIDeviceName("claim-A")] = fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")
-					mgr.devices[getCDIDeviceName("claim-B")] = fmt.Sprintf("%s_claim-B=%s", cdiEnvVarPrefix, "2,3")
-					return mgr
-				}(),
+				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+					"claim-A": cpuset.New(0, 1),
+					"claim-B": cpuset.New(2, 3),
+				}),
 				topology: deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
@@ -466,12 +462,10 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				cdiMgr: func() *mockCdiMgr {
-					mgr := newMockCdiMgr()
-					mgr.devices[getCDIDeviceName("claim-A")] = fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")
-					mgr.devices[getCDIDeviceName("claim-B")] = fmt.Sprintf("%s_claim-B=%s", cdiEnvVarPrefix, "2,3")
-					return mgr
-				}(),
+				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+					"claim-A": cpuset.New(0, 1),
+					"claim-B": cpuset.New(2, 3),
+				}),
 				topology: deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1},
@@ -491,11 +485,9 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				cdiMgr: func() *mockCdiMgr {
-					mgr := newMockCdiMgr()
-					mgr.devices[getCDIDeviceName("claim-A")] = fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")
-					return mgr
-				}(),
+				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+					"claim-A": cpuset.New(0, 1),
+				}),
 				topology: deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1},
@@ -526,11 +518,9 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				cdiMgr: func() *mockCdiMgr {
-					mgr := newMockCdiMgr()
-					mgr.devices[getCDIDeviceName("claim-A")] = fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "2,3")
-					return mgr
-				}(),
+				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+					"claim-A": cpuset.New(2, 3),
+				}),
 				topology: deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1},

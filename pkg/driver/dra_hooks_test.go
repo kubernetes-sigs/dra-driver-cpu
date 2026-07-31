@@ -91,6 +91,14 @@ func newMockCdiMgr() *mockCdiMgr {
 	}
 }
 
+func newMockCdiMgrWithAllocations(allocations map[types.UID]cpuset.CPUSet) *mockCdiMgr {
+	mgr := newMockCdiMgr()
+	for uid, cpus := range allocations {
+		mgr.devices[getCDIDeviceName(uid)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, uid, cpus.String())
+	}
+	return mgr
+}
+
 func (m *mockCdiMgr) AddDevice(_ logr.Logger, deviceName, envVar string) error {
 	if m.addError != nil {
 		return m.addError

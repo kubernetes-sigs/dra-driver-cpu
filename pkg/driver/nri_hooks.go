@@ -65,10 +65,16 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				allGuaranteedCPUs := cpuset.New()
 				for uid, cpus := range claimAllocations {
 					caLogger := cLogger.WithValues("claimUID", uid)
-					if err := cp.validateSynchronizedClaimAllocation(caLogger, uid, cpus); err != nil {
+					deviceName := getCDIDeviceName(uid)
+					envs, err := cp.cdiMgr.GetDeviceEnv(deviceName)
+					if err != nil {
+						return nil, fmt.Errorf("claim %q is not prepared by this driver: %w", uid, err)
+					}
+					err = validateSynchronizedClaimAllocation(caLogger, uid, cpus, envs)
+					if err != nil {
 						return nil, err
 					}
-					err := claimTracker.SetOwner(caLogger, uid, types.UID(pod.Uid), container.Name)
+					err = claimTracker.SetOwner(caLogger, uid, types.UID(pod.Uid), container.Name)
 					if err != nil {
 						return nil, err
 					}
@@ -145,17 +151,7 @@ func (cp *CPUDriver) validatePreparedClaimAllocation(uid types.UID, cpus cpuset.
 	return nil
 }
 
-func (cp *CPUDriver) validateSynchronizedClaimAllocation(logger logr.Logger, uid types.UID, cpus cpuset.CPUSet) error {
-	if cp.cdiMgr == nil {
-		return fmt.Errorf("cannot validate claim %q during synchronize: CDI manager is not initialized", uid)
-	}
-
-	deviceName := getCDIDeviceName(uid)
-	envs, err := cp.cdiMgr.GetDeviceEnv(deviceName)
-	if err != nil {
-		return fmt.Errorf("claim %q is not prepared by this driver: %w", uid, err)
-	}
-
+func validateSynchronizedClaimAllocation(logger logr.Logger, uid types.UID, cpus cpuset.CPUSet, envs []string) error {
 	allocations, err := parseDRAEnvToClaimAllocations(logger, envs)
 	if err != nil {
 		return fmt.Errorf("failed to parse CDI env for claim %q: %w", uid, err)
@@ -163,7 +159,7 @@ func (cp *CPUDriver) validateSynchronizedClaimAllocation(logger logr.Logger, uid
 
 	preparedCPUs, ok := allocations[uid]
 	if !ok {
-		return fmt.Errorf("validation failed for claim %q: driver-owned CDI spec %q does not contain a matching DRA allocation", uid, deviceName)
+		return fmt.Errorf("validation failed for claim %q: driver-owned CDI spec %q does not contain a matching DRA allocation", uid, getCDIDeviceName(uid))
 	}
 	if !preparedCPUs.Equals(cpus) {
 		return fmt.Errorf("validation failed for claim %q during synchronize: cpuset mismatch (expected %q from CDI, got %q from runtime)", uid, preparedCPUs.String(), cpus.String())
