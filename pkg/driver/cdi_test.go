@@ -212,3 +212,32 @@ func TestAddDeviceOverwrite(t *testing.T) {
 	// Verify that we do not create a new file
 	assertFileCount(1)
 }
+
+func TestGetDeviceEnv(t *testing.T) {
+	logger := testr.New(t)
+	tempCDIDir := t.TempDir()
+
+	mgr, err := NewCdiManager(logger, testDriverName, tempCDIDir)
+	require.NoError(t, err)
+
+	deviceName := "claim-cpu-get-env"
+	expectedEnv := "DRA_CPUSET_claim-cpu-get-env=0,1"
+	err = mgr.AddDevice(logger, deviceName, expectedEnv)
+	require.NoError(t, err)
+
+	envs, err := mgr.GetDeviceEnv(deviceName)
+	require.NoError(t, err)
+	require.Equal(t, []string{expectedEnv}, envs)
+}
+
+func TestGetDeviceEnvMissingDevice(t *testing.T) {
+	logger := testr.New(t)
+	tempCDIDir := t.TempDir()
+
+	mgr, err := NewCdiManager(logger, testDriverName, tempCDIDir)
+	require.NoError(t, err)
+
+	_, err = mgr.GetDeviceEnv("missing-device")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `failed to find CDI device "missing-device"`)
+}

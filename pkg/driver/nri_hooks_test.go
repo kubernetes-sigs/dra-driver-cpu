@@ -361,6 +361,7 @@ func TestNRISynchronize(t *testing.T) {
 					podConfigStore:     store.NewPodConfig(),
 					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
+					cdiMgr:             newMockCdiMgr(),
 					topology:           deviceTopology{cpuTopology: topo},
 				}
 				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState("stale-ctr", "stale-id", types.UID("stale-claim")))
@@ -376,7 +377,12 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				topology:           deviceTopology{cpuTopology: topo},
+				cdiMgr: func() *mockCdiMgr {
+					mgr := newMockCdiMgr()
+					mgr.devices[getCDIDeviceName("claim-A")] = fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")
+					return mgr
+				}(),
+				topology: deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
 			runtimeCtrs: []*api.Container{
@@ -405,6 +411,7 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
+				cdiMgr:             newMockCdiMgr(),
 				topology:           deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
@@ -429,7 +436,13 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				topology:           deviceTopology{cpuTopology: topo},
+				cdiMgr: func() *mockCdiMgr {
+					mgr := newMockCdiMgr()
+					mgr.devices[getCDIDeviceName("claim-A")] = fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")
+					mgr.devices[getCDIDeviceName("claim-B")] = fmt.Sprintf("%s_claim-B=%s", cdiEnvVarPrefix, "2,3")
+					return mgr
+				}(),
+				topology: deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
 			runtimeCtrs: []*api.Container{
@@ -453,7 +466,13 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				topology:           deviceTopology{cpuTopology: topo},
+				cdiMgr: func() *mockCdiMgr {
+					mgr := newMockCdiMgr()
+					mgr.devices[getCDIDeviceName("claim-A")] = fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")
+					mgr.devices[getCDIDeviceName("claim-B")] = fmt.Sprintf("%s_claim-B=%s", cdiEnvVarPrefix, "2,3")
+					return mgr
+				}(),
+				topology: deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1},
 			runtimeCtrs: []*api.Container{
@@ -472,7 +491,12 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				topology:           deviceTopology{cpuTopology: topo},
+				cdiMgr: func() *mockCdiMgr {
+					mgr := newMockCdiMgr()
+					mgr.devices[getCDIDeviceName("claim-A")] = fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")
+					return mgr
+				}(),
+				topology: deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1},
 			runtimeCtrs: []*api.Container{
@@ -480,6 +504,40 @@ func TestNRISynchronize(t *testing.T) {
 				{Id: "p1-malformed", PodSandboxId: pod1.Id, Name: "malformed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "a-b")}},
 			},
 			expectedError: "failed to parse cpuset value",
+		},
+		{
+			name: "runtime DRA env without matching driver-owned CDI spec fails synchronize",
+			driver: &CPUDriver{
+				podConfigStore:     store.NewPodConfig(),
+				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+				claimTracker:       store.NewClaimTracker(),
+				cdiMgr:             newMockCdiMgr(),
+				topology:           deviceTopology{cpuTopology: topo},
+			},
+			runtimePods: []*api.PodSandbox{pod1},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
+			},
+			expectedError: `claim "claim-A" is not prepared by this driver`,
+		},
+		{
+			name: "runtime DRA env that mismatches driver-owned CDI spec fails synchronize",
+			driver: &CPUDriver{
+				podConfigStore:     store.NewPodConfig(),
+				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+				claimTracker:       store.NewClaimTracker(),
+				cdiMgr: func() *mockCdiMgr {
+					mgr := newMockCdiMgr()
+					mgr.devices[getCDIDeviceName("claim-A")] = fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "2,3")
+					return mgr
+				}(),
+				topology: deviceTopology{cpuTopology: topo},
+			},
+			runtimePods: []*api.PodSandbox{pod1},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
+			},
+			expectedError: `validation failed for claim "claim-A" during synchronize: cpuset mismatch`,
 		},
 	}
 

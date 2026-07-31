@@ -81,6 +81,7 @@ func (m *mockKubeletPlugin) Stop() {}
 type mockCdiMgr struct {
 	devices     map[string]string
 	addError    error
+	getError    error
 	removeError error
 }
 
@@ -96,6 +97,17 @@ func (m *mockCdiMgr) AddDevice(_ logr.Logger, deviceName, envVar string) error {
 	}
 	m.devices[deviceName] = envVar
 	return nil
+}
+
+func (m *mockCdiMgr) GetDeviceEnv(deviceName string) ([]string, error) {
+	if m.getError != nil {
+		return nil, m.getError
+	}
+	env, ok := m.devices[deviceName]
+	if !ok {
+		return nil, fmt.Errorf("device %q not found", deviceName)
+	}
+	return []string{env}, nil
 }
 
 func (m *mockCdiMgr) RemoveDevice(_ logr.Logger, deviceName string) error {

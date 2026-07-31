@@ -172,6 +172,7 @@ func TestMetricsNRIAllocationState(t *testing.T) {
 	driver, reg := newMetricsTestDriver(t)
 	claimUID := types.UID("claim-nri")
 	claimCPUs := cpuset.New(0, 1)
+	driver.cdiMgr.(*mockCdiMgr).devices[getCDIDeviceName(claimUID)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, claimCPUs.String())
 	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod-uid"}
 	container := &api.Container{
 		Id: "container", PodSandboxId: pod.Id, Name: "app",

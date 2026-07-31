@@ -65,6 +65,9 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				allGuaranteedCPUs := cpuset.New()
 				for uid, cpus := range claimAllocations {
 					caLogger := cLogger.WithValues("claimUID", uid)
+					if err := cp.validateSynchronizedClaimAllocation(caLogger, uid, cpus); err != nil {
+						return nil, err
+					}
 					err := claimTracker.SetOwner(caLogger, uid, types.UID(pod.Uid), container.Name)
 					if err != nil {
 						return nil, err
@@ -138,6 +141,32 @@ func (cp *CPUDriver) validatePreparedClaimAllocation(uid types.UID, cpus cpuset.
 	}
 	if !preparedCPUs.Equals(cpus) {
 		return fmt.Errorf("validation failed for claim %q: cpuset mismatch (expected %q, got %q)", uid, preparedCPUs.String(), cpus.String())
+	}
+	return nil
+}
+
+func (cp *CPUDriver) validateSynchronizedClaimAllocation(logger logr.Logger, uid types.UID, cpus cpuset.CPUSet) error {
+	if cp.cdiMgr == nil {
+		return fmt.Errorf("cannot validate claim %q during synchronize: CDI manager is not initialized", uid)
+	}
+
+	deviceName := getCDIDeviceName(uid)
+	envs, err := cp.cdiMgr.GetDeviceEnv(deviceName)
+	if err != nil {
+		return fmt.Errorf("claim %q is not prepared by this driver: %w", uid, err)
+	}
+
+	allocations, err := parseDRAEnvToClaimAllocations(logger, envs)
+	if err != nil {
+		return fmt.Errorf("failed to parse CDI env for claim %q: %w", uid, err)
+	}
+
+	preparedCPUs, ok := allocations[uid]
+	if !ok {
+		return fmt.Errorf("validation failed for claim %q: driver-owned CDI spec %q does not contain a matching DRA allocation", uid, deviceName)
+	}
+	if !preparedCPUs.Equals(cpus) {
+		return fmt.Errorf("validation failed for claim %q during synchronize: cpuset mismatch (expected %q from CDI, got %q from runtime)", uid, preparedCPUs.String(), cpus.String())
 	}
 	return nil
 }
