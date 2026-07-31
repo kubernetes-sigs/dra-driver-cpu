@@ -288,6 +288,12 @@ func (cp *CPUDriver) prepareDevices(logger logr.Logger, claim *resourceapi.Resou
 			for k, v := range attrs {
 				metadataAttrs[string(k)] = v
 			}
+			if quantity, ok := allocResult.ConsumedCapacity[device.CPUResourceQualifiedName]; ok {
+				allocatedCount := quantity.Value()
+				metadataAttrs[string(device.AttributeAllocatedNumCPUs)] = resourceapi.DeviceAttribute{
+					IntValue: &allocatedCount,
+				}
+			}
 			preparedDevice.Metadata = &kubeletplugin.DeviceMetadata{
 				Attributes: metadataAttrs,
 			}

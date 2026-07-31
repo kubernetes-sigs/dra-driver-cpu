@@ -1230,12 +1230,16 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 						// the driver's cpuTopology.SMTEnabled is always false
 						smtEnabled := false
 						for _, res := range tc.claims[0].Status.Allocation.Devices.Results {
+							var allocatedCPUs int64
+							if q, ok := res.ConsumedCapacity[devattr.CPUResourceQualifiedName]; ok {
+								allocatedCPUs = q.Value()
+							}
 							expectedPreparedDevices = append(expectedPreparedDevices, kubeletplugin.Device{
 								PoolName:     res.Pool,
 								DeviceName:   res.Device,
 								CDIDeviceIDs: []string{cdiQualifiedName},
 								Requests:     []string{res.Request},
-								Metadata:     expectedGroupMetadata(tc.groupBy, tc.cpuInfos, tc.reservedCPUs, res.Device, smtEnabled),
+								Metadata:     expectedGroupMetadata(tc.groupBy, tc.cpuInfos, tc.reservedCPUs, res.Device, smtEnabled, allocatedCPUs),
 							})
 						}
 					}
@@ -2136,7 +2140,7 @@ func metadataFromCPUInfo(cpu cpuinfo.CPUInfo, smtEnabled bool) *kubeletplugin.De
 
 // expectedGroupMetadata builds the expected DeviceMetadata for a grouped
 // device from static test data, independent of production code paths.
-func expectedGroupMetadata(groupBy string, cpuInfos []cpuinfo.CPUInfo, reservedCPUs cpuset.CPUSet, deviceName string, smtEnabled bool) *kubeletplugin.DeviceMetadata {
+func expectedGroupMetadata(groupBy string, cpuInfos []cpuinfo.CPUInfo, reservedCPUs cpuset.CPUSet, deviceName string, smtEnabled bool, allocatedCPUs int64) *kubeletplugin.DeviceMetadata {
 	attrs := map[string]resourceapi.DeviceAttribute{}
 
 	switch groupBy {
@@ -2179,6 +2183,10 @@ func expectedGroupMetadata(groupBy string, cpuInfos []cpuinfo.CPUInfo, reservedC
 		}
 		attrs[string(devattr.AttributeNumCPUs)] = resourceapi.DeviceAttribute{IntValue: new(numCPUs)}
 		attrs[string(devattr.AttributeSMTEnabled)] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
+	}
+
+	if allocatedCPUs > 0 {
+		attrs[string(devattr.AttributeAllocatedNumCPUs)] = resourceapi.DeviceAttribute{IntValue: new(allocatedCPUs)}
 	}
 
 	return &kubeletplugin.DeviceMetadata{Attributes: attrs}

@@ -45,6 +45,10 @@ const (
 	AttributeCoreID     resourceapi.QualifiedName = "dra.cpu/coreID"
 	AttributeCPUID      resourceapi.QualifiedName = "dra.cpu/cpuID"
 	AttributeNumCPUs    resourceapi.QualifiedName = "dra.cpu/numCPUs"
+	// AttributeAllocatedNumCPUs is a metadata-only attribute (not published in
+	// ResourceSlice) that indicates how many CPUs were allocated to a specific
+	// claim from a grouped device's capacity.
+	AttributeAllocatedNumCPUs resourceapi.QualifiedName = "dra.cpu/allocatedNumCPUs"
 )
 
 // SetCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other
