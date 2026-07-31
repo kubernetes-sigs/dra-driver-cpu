@@ -95,7 +95,7 @@ The tool is node-local by design. To collect data from every node in a cluster, 
 Example:
 
 ```bash
-namespace=dra-driver-cpu
+namespace=kube-system  # the namespace the driver was installed into
 selector='app.kubernetes.io/name=dra-driver-cpu'
 outdir=./dracpu-gatherinfo
 

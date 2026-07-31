@@ -1,6 +1,12 @@
 # Custom Opaque CPUSet Allocation Overrides
 
-When using `grouped` device mode with the `--group-by=machine` configuration, the DRA driver does not perform automatic topology-aware CPU allocation. Instead, an explicit core assignment must be provided via the `cpuset` field in the claim's opaque configuration parameters.
+> [!NOTE]
+> **Audience: scheduler-plugin authors and platform integrators**, not workload authors. This
+> page documents an integration contract for external schedulers; no in-tree scheduler
+> implements it today. Regular workloads should use the default `numanode`/`socket` grouping
+> instead.
+
+When using `grouped` device mode with the `groupBy: machine` configuration, the DRA driver does not perform automatic topology-aware CPU allocation. Instead, an explicit core assignment must be provided via the `cpuset` field in the claim's opaque configuration parameters.
 
 The Kubelet driver parses this configuration at prepare time from the claim's allocation status (`status.allocation.devices.config`). The control plane (typically scheduling plugin) is responsible for injecting this configuration block into the allocation result when binding the claim.
 
