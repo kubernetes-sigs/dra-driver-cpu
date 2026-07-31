@@ -33,7 +33,8 @@ honor these settings, where applicable.
   There's no support for verbosity levels.
 - `DRACPU_E2E_TEST_IMAGE`: (mandatory) the full pullSpec of the test image the suite should
   use as container image to run test containers. The default CI configuration sets this
-  value automatically.
+  value automatically. `make test-e2e` defaults this to `IMAGE_TEST`, but it can be
+  overridden explicitly when running against an existing cluster.
 - `DRACPU_E2E_TARGET_NODE`: (optional) the CPU-related tests don't need any specific node.
   If this variable is set, it should be the `hostname` of a valid worker node in
   the cluster against which the tests run.
@@ -71,15 +72,23 @@ To run against an existing cluster with the driver already deployed:
 make test-e2e
 ```
 
+`make test-e2e` is intentionally strict: it fails fast if `KUBECONFIG` does not point at an
+existing file or if `DRACPU_E2E_TEST_IMAGE` is empty. This keeps CI and the standard make-based
+workflow from silently reporting green after skipping the suite.
+
 Note: `make test-e2e` does not build or load the test image; it only runs the Go e2e suite.
-The `make test-e2e-kind` target builds and loads the image
-automatically into a kind cluster, but for an arbitrary cluster the default `IMAGE_TEST` value
-points at the local CI image name and will not be pullable. Either make sure the
-test image is available to the cluster, or override the image explicitly:
+The `make test-e2e-kind` target builds and loads the image automatically into a kind cluster,
+but for an arbitrary cluster the default `IMAGE_TEST` value points at the local CI image name
+and will not be pullable. Either make sure the test image is available to the cluster, or
+override both prerequisites explicitly:
 
 ```bash
-DRACPU_E2E_TEST_IMAGE=<image> make test-e2e
+KUBECONFIG=/path/to/kubeconfig DRACPU_E2E_TEST_IMAGE=<image> make test-e2e
 ```
+
+The `healthz` suite reaches driver pods through the apiserver pod proxy. The kubeconfig used
+for the tests therefore needs permission to `get` the `pods/proxy` subresource in addition to
+the usual pod listing and exec/log access. Cluster-admin kubeconfigs already satisfy this.
 
 ### troubleshooting
 

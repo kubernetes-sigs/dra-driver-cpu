@@ -18,14 +18,11 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	cpusetmatchers "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/matchers/cpuset"
-	e2enode "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/node"
 	e2epod "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/pod"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -57,48 +54,28 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
 		// early cheap check before to create the Fixture, so we use GinkgoLogr directly
-		dracpuTesterImage = os.Getenv("DRACPU_E2E_TEST_IMAGE")
-		gomega.Expect(dracpuTesterImage).ToNot(gomega.BeEmpty(), "missing environment variable DRACPU_E2E_TEST_IMAGE")
+		dracpuTesterImage = requireEnvOrSkip("DRACPU_E2E_TEST_IMAGE")
 		ginkgo.GinkgoLogr.Info("discovery image", "pullSpec", dracpuTesterImage)
 
-		var err error
-		if reservedCPUVal := os.Getenv("DRACPU_E2E_RESERVED_CPUS"); len(reservedCPUVal) > 0 {
-			reservedCPUs, err = cpuset.Parse(reservedCPUVal)
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		reservedCPUs = parseOptionalCPUSetEnv("DRACPU_E2E_RESERVED_CPUS")
+		if reservedCPUs.Size() > 0 {
 			ginkgo.GinkgoLogr.Info("reserved CPUs", "value", reservedCPUs.String())
 		}
 
-		rootFxt, err = fixture.ForGinkgo()
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create fixture")
+		rootFxt = mustCreateFixture()
 		infraFxt := rootFxt.WithPrefix("infra")
-		gomega.Expect(infraFxt.Setup(ctx)).To(gomega.Succeed())
+		mustSetupFixture(ctx, infraFxt)
 		ginkgo.DeferCleanup(infraFxt.Teardown)
 
 		ginkgo.By("getting the daemonset configuration")
+		var err error
 		orgDaemonSet, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Get(ctx, "dracpu", metav1.GetOptions{})
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get dracpu daemonset")
-		gomega.Expect(orgDaemonSet.Spec.Template.Spec.Containers).ToNot(gomega.BeEmpty(), "no containers in dracpu daemonset")
+		driverConfig := driverConfigFromContainer(&orgDaemonSet.Spec.Template.Spec.Containers[0])
+		cpuDeviceMode = driverConfig.CPUDeviceMode
+		groupBy = driverConfig.GroupBy
 
-		if val, ok := findArgInContainer(&orgDaemonSet.Spec.Template.Spec.Containers[0], argCPUDeviceMode); ok {
-			cpuDeviceMode = val
-		}
-		if val, ok := findArgInContainer(&orgDaemonSet.Spec.Template.Spec.Containers[0], argGroupBy); ok {
-			groupBy = val
-		}
-
-		// Find target node
-		targetNode, err = e2enode.PickWorker(ctx, rootFxt.K8SClientset, 5*time.Second, 1*time.Minute, rootFxt.Log)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		rootFxt.Log.Info("using worker node", "nodeName", targetNode.Name)
-
-		// Discover topology
-		infoPod := discovery.MakePod(infraFxt.Namespace.Name, dracpuTesterImage)
-		infoPod = e2epod.PinToNode(infoPod, targetNode.Name)
-		infoPod, err = e2epod.RunToCompletion(ctx, infraFxt.K8SClientset, infoPod)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		data, err := e2epod.GetLogs(ctx, infraFxt.K8SClientset, infoPod)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		gomega.Expect(json.Unmarshal([]byte(data), &targetNodeCPUInfo)).To(gomega.Succeed())
+		targetNode, targetNodeCPUInfo = mustDiscoverTargetNodeCPUInfo(ctx, rootFxt, infraFxt, dracpuTesterImage)
 		allocatableCPUs = makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
 	})
 
