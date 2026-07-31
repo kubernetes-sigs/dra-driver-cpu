@@ -155,7 +155,6 @@ The remaining flags aren't part of that deprecation:
 - `--config`: path to the config file described above.
 - `--kubeconfig`: path to a kubeconfig file, for out-of-cluster use. Also settable via the `kubeconfig` config field.
 - `--bind-address`: address the metrics server listens on.
-- `--show-metrics`: print the metrics endpoint and exit.
 - `--expose-pcie-roots`: adds the `resource.kubernetes.io/pcieRoot` standard value to CPU
   devices, reporting the PCIe roots close to each device. Since it always reports values
   as a list, this option requires the cluster feature gate `DRAListTypeAttributes` (see
@@ -164,6 +163,16 @@ The remaining flags aren't part of that deprecation:
   deprecated and has no config file equivalent — it is intentionally excluded from the
   config file (see [driverConfig sub-fields](#driverconfig-sub-fields) above) and stays a
   standalone flag (or Helm `args.exposePCIeRoots`).
+- `--kubelet-root-dir`: the kubelet's own root directory, `/var/lib/kubelet` unless the
+  kubelet was started with a different `--root-dir`. Set it through the chart's
+  `kubeletRootDir` rather than directly, so the hostPath mounts move with it. The driver registers under
+  `<root>/plugins_registry` and creates its socket under `<root>/plugins/<driver-name>`,
+  and the kubelet only watches its own root, so a mismatch leaves the driver running with
+  nothing ever noticing it. Like `--expose-pcie-roots` it is not deprecated and has no
+  config file equivalent: the Helm chart renders the hostPath mounts from the same value
+  (`kubeletRootDir`), and a config file the chart does not write could not keep the two in
+  step. An empty value is refused rather than defaulted, since the way it arrives empty is
+  a chart that rendered nothing into it.
 
 ## Kubelet configuration prerequisites
 
@@ -174,3 +183,46 @@ one can be enabled at a time on any given node. You need to disable the CPUManag
 1. Make sure `cpuManagerPolicy: "none"` is set in the kubelet [configuration file](https://kubernetes.io/docs/tasks/administer-cluster/kubelet-config-file/).
 1. If you changed the kubelet configuration, restart the kubelet to take effect. **NOTE:** you may need to [delete the CPUManager state file](https://kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/#changing-the-cpu-manager-policy).
 1. You may now proceed with deploying and configuring this DRA driver.
+
+### A relocated kubelet root directory
+
+If the kubelet runs with `--root-dir` set to something other than `/var/lib/kubelet`, set
+`kubeletRootDir` to that root's resolved absolute path. A relative `--root-dir` is resolved
+against the kubelet's working directory, which a hostPath cannot follow, so anything not
+already absolute is refused:
+
+```yaml
+# values.yaml
+kubeletRootDir: /mnt/data/kubelet
+```
+
+That one value becomes the driver's `--kubelet-root-dir` and both hostPath mounts, so the
+socket the driver creates is inside a directory that maps to the kubelet's own root.
+
+The flag is newer than the chart's `appVersion`, which still selects the v0.2.0 image.
+Installing from a source checkout with a relocated root therefore needs an image built from
+a revision that knows the flag, or every node exits on an unknown one:
+
+```bash
+helm install dra-driver-cpu ./deployment/helm/dra-driver-cpu -n kube-system \
+  --set-string kubeletRootDir=/mnt/data/kubelet \
+  --set-string image.repository=REGISTRY/REPOSITORY \
+  --set-string image.tag=IMAGE_TAG
+```
+
+A released chart carries an `appVersion` that already knows the flag and needs none of this.
+Leaving `kubeletRootDir` at the default emits no flag at all, so a default install from a
+checkout is unaffected either way.
+
+One release carries one root, and its DaemonSet lands on every node the release selects, so
+the nodes it covers have to agree on where the kubelet keeps its root. Splitting them across
+two releases is not a way around that: the chart's `DeviceClass` is cluster-scoped under a
+fixed name, and Helm refuses to hand an object owned by one release to another
+(`invalid ownership metadata`). Until the chart can vary the root per node, a cluster whose
+nodes disagree needs the driver deployed by something other than a single release of this
+chart.
+
+Passing `--kubelet-root-dir` through `extraArgs` is refused at template time. The flag
+would win, because Go's flag package takes the last value and `extraArgs` is appended
+after, while the mounts would keep rendering from `kubeletRootDir` and stay behind. Set
+`kubeletRootDir` instead.

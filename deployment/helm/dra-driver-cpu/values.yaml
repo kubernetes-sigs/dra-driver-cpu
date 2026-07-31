@@ -94,6 +94,13 @@ healthzPath: /healthz
 # -- Port the HTTP server binds to; used for the container port and probes
 healthzPort: 8080 # @schema type:integer;minimum:1;maximum:65535
 
+# -- Kubelet root directory, matching the kubelet's own `--root-dir`. The driver
+# registers under `<root>/plugins_registry` and creates its socket under
+# `<root>/plugins/<driver-name>`, and the hostPath mounts come from this same
+# value, so the two cannot come apart. Only set this if the kubelet does not use
+# the default.
+kubeletRootDir: /var/lib/kubelet # @schema type:string;minLength:1;pattern:^/
+
 # -- Driver config file contents. When non-empty, or when a deprecated
 # `args.*` field below is set, a ConfigMap is created and mounted into the
 # driver container as /etc/dracpu/config.yaml. `args.*` fields that mirror a

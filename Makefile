@@ -245,6 +245,10 @@ install-golangci-lint: $(OUT_DIR) ## make sure the golangci-lint tool is availab
 helm-lint: install-helm ## lint helm chart with strict mode
 	$(HELM) lint --strict ${HELM_CHART}
 
+.PHONY: helm-render-check
+helm-render-check: install-helm install-yq ## verify the kubelet root derives the chart mounts and the driver flag
+	@PATH="$(OUT_DIR):$$PATH" bash hack/ci/helm-render-check.sh
+
 .PHONY: helm-docs
 helm-docs: ## regenerate helm chart README from values.yaml annotations and README.md.gotmpl
 	go run github.com/norwoodj/helm-docs/cmd/helm-docs@v$(HELM_DOCS_VERSION) --chart-search-root=deployment/helm
@@ -266,6 +270,7 @@ helm-schema: driverconfig-schema ## regenerate values.schema.json from values.ya
 		--use-helm-docs \
 		--bundle \
 		--bundle-root ${HELM_CHART} \
+		--schema-root.additional-properties=false \
 		--indent 2
 
 .PHONY: helm-schema-check
