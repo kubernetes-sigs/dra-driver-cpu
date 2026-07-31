@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -388,12 +389,10 @@ func (cp *CPUDriver) getOpaqueCPUSet(logger logr.Logger, allocation *resourceapi
 		if config.Source != resourceapi.AllocationConfigSourceClaim {
 			return cpuset.CPUSet{}, false, fmt.Errorf("opaque config: configuration from DeviceClass is not supported by this driver, custom cpusets must be defined per ResourceClaim request")
 		}
-		// Each parameter block must target exactly 1 request using the 'requests' field
-		if len(config.Requests) != 1 {
-			return cpuset.CPUSet{}, false, fmt.Errorf("opaque config: parameters block must target exactly 1 request using the 'requests' field, found %d", len(config.Requests))
-		}
-
-		if config.Requests[0] == alloc.Request {
+		// An empty requests list means the configuration applies to all requests in
+		// the claim. In 1.37+ kube-scheduler omits the list when the config applies
+		// to all requests.
+		if len(config.Requests) == 0 || slices.Contains(config.Requests, alloc.Request) {
 			matchedConfig = &config
 			matchCount++
 		}

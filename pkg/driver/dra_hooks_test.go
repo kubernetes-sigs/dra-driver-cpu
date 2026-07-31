@@ -1833,7 +1833,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 			},
 		},
 		{
-			name: "CPU config block with empty requests list is rejected",
+			name: "CPU config block with empty requests list applies to all requests",
 			claims: []*resourceapi.ResourceClaim{
 				func() *resourceapi.ResourceClaim {
 					claim := testClaim("claim-1", testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: 2})
@@ -1854,19 +1854,19 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 					return claim
 				}(),
 			},
-			expectedErrors: map[string]string{
-				"claim-1": "opaque config: parameters block must target exactly 1 request using the 'requests' field",
+			expectedAllocations: map[string]cpuset.CPUSet{
+				"claim-1": cpuset.New(2, 6),
 			},
 		},
 		{
-			name: "CPU config block targeting multiple requests is rejected",
+			name: "CPU config block listing multiple requests applies to the targeted request",
 			claims: []*resourceapi.ResourceClaim{
 				func() *resourceapi.ResourceClaim {
 					claim := testClaim("claim-1", testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: 2})
 					claim.Status.Allocation.Devices.Config = []resourceapi.DeviceAllocationConfiguration{
 						{
 							Source:   resourceapi.AllocationConfigSourceClaim,
-							Requests: []string{"req-1", "req-2"},
+							Requests: []string{"claim-1", "req-2"},
 							DeviceConfiguration: resourceapi.DeviceConfiguration{
 								Opaque: &resourceapi.OpaqueDeviceConfiguration{
 									Driver: testDriverName,
@@ -1880,8 +1880,8 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 					return claim
 				}(),
 			},
-			expectedErrors: map[string]string{
-				"claim-1": "opaque config: parameters block must target exactly 1 request using the 'requests' field",
+			expectedAllocations: map[string]cpuset.CPUSet{
+				"claim-1": cpuset.New(2, 6),
 			},
 		},
 		{
