@@ -31,6 +31,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // newFlagSet creates a FlagSet with cfg registered and args parsed.
@@ -212,6 +213,79 @@ hostnameOverride: from-file
 	// A file-only field is still applied, so the assertions above cannot pass
 	// without the file actually being read.
 	assert.Equal(t, "from-file", got.HostnameOverride)
+}
+
+// TestWarnDeprecatedFlags_LogsWarning: a deprecated flag logs a warning naming its driverConfig replacement.
+func TestWarnDeprecatedFlags_LogsWarning(t *testing.T) {
+	for _, tc := range []struct {
+		flag              string
+		driverConfigField string
+	}{
+		{flag: "cpu-device-mode=individual", driverConfigField: "cpuDeviceMode"},
+		{flag: "group-by=socket", driverConfigField: "groupBy"},
+		{flag: "reserved-cpus=0-1", driverConfigField: "reservedCPUs"},
+		{flag: "hostname-override=node1", driverConfigField: "hostnameOverride"},
+		{flag: "sysfs-overlay=/tmp/overlay.yaml", driverConfigField: "sysfsOverlay"},
+	} {
+		t.Run(tc.flag, func(t *testing.T) {
+			cfg := driverconfig.Default()
+			fs := newFlagSet(t, &cfg, []string{"--" + tc.flag})
+
+			var logs strings.Builder
+			logger := funcr.New(func(prefix, args string) {
+				logs.WriteString(prefix + " " + args + "\n")
+			}, funcr.Options{})
+
+			driverconfig.WarnDeprecatedFlags(fs, logger)
+
+			assert.Contains(t, logs.String(), "deprecated")
+			assert.Contains(t, logs.String(), tc.driverConfigField)
+		})
+	}
+}
+
+// TestWarnDeprecatedFlags_NonDeprecatedFlagNoWarning: non-deprecated flags don't trigger the deprecation warning.
+func TestWarnDeprecatedFlags_NonDeprecatedFlagNoWarning(t *testing.T) {
+	cfg := driverconfig.Default()
+	fs := newFlagSet(t, &cfg, []string{"--bind-address=:9090"})
+
+	var logs strings.Builder
+	logger := funcr.New(func(prefix, args string) {
+		logs.WriteString(prefix + " " + args + "\n")
+	}, funcr.Options{})
+
+	driverconfig.WarnDeprecatedFlags(fs, logger)
+
+	assert.NotContains(t, logs.String(), "deprecated")
+}
+
+// deprecatedFlagNames is the hardcoded set of flags expected to be marked
+// as deprecated in --help. Update it whenever a flag's deprecation status changes.
+var deprecatedFlagNames = sets.New(
+	"cpu-device-mode",
+	"group-by",
+	"reserved-cpus",
+	"hostname-override",
+	"sysfs-overlay",
+)
+
+// TestDeprecatedFlags_HelpTextSuffix: exactly the flags in deprecatedFlagNames
+// carry a "(DEPRECATED: ...)" suffix in --help - none missing, none extra.
+func TestDeprecatedFlags_HelpTextSuffix(t *testing.T) {
+	cfg := driverconfig.Config{}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	cfg.AddFlags(fs)
+
+	fs.VisitAll(func(f *flag.Flag) {
+		wantDeprecated := deprecatedFlagNames.Has(f.Name)
+		isMarkedDeprecated := strings.Contains(f.Usage, "(DEPRECATED:")
+		switch {
+		case wantDeprecated && !isMarkedDeprecated:
+			t.Errorf("flag %q is expected to be deprecated but its --help text has no DEPRECATED suffix: %q", f.Name, f.Usage)
+		case !wantDeprecated && isMarkedDeprecated:
+			t.Errorf("flag %q has a DEPRECATED --help suffix but isn't expected to be deprecated: %q", f.Name, f.Usage)
+		}
+	})
 }
 
 // TestDefault pins the built-in default values.

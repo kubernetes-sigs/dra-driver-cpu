@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+{{- $effectiveDriverConfig := include "dra-driver-cpu.effectiveDriverConfig" . | fromYaml }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -35,7 +36,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       annotations:
-        {{- if .Values.driverConfig }}
+        {{- if $effectiveDriverConfig }}
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- end }}
         {{- with .Values.podAnnotations }}
@@ -64,26 +65,14 @@ spec:
         args:
           - /dracpu
           - --v={{ .Values.args.logLevel }}
-          {{- if .Values.args.cpuDeviceMode }}
-          - --cpu-device-mode={{ .Values.args.cpuDeviceMode }}
-          {{- end }}
-          {{- if .Values.args.groupBy }}
-          - --group-by={{ .Values.args.groupBy }}
-          {{- end }}
           {{- if .Values.healthzPort }}
           - --bind-address=:{{ .Values.healthzPort }}
-          {{- end }}
-          {{- if .Values.args.reservedCPUs }}
-          - --reserved-cpus={{ .Values.args.reservedCPUs }}
-          {{- end }}
-          {{- if .Values.args.hostnameOverride }}
-          - --hostname-override={{ .Values.args.hostnameOverride }}
           {{- end }}
           - --expose-pcie-roots={{ .Values.args.exposePCIeRoots }}
           {{- with .Values.extraArgs }}
           {{- toYaml . | nindent 10 }}
           {{- end }}
-          {{- if .Values.driverConfig }}
+          {{- if $effectiveDriverConfig }}
           - --config=/etc/dracpu/config.yaml
           {{- end }}
         image: {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
@@ -123,7 +112,7 @@ spec:
         {{- with .Values.extraVolumeMounts }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-        {{- if .Values.driverConfig }}
+        {{- if $effectiveDriverConfig }}
         - name: driver-config
           mountPath: /etc/dracpu
           readOnly: true
@@ -145,7 +134,7 @@ spec:
       {{- with .Values.extraVolumes }}
       {{- toYaml . | nindent 6 }}
       {{- end }}
-      {{- if .Values.driverConfig }}
+      {{- if $effectiveDriverConfig }}
       - name: driver-config
         configMap:
           name: {{ include "dra-driver-cpu.fullname" . }}-config

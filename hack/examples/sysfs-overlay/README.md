@@ -1,6 +1,6 @@
 # Sysfs overlay example
 
-This example supplies a synthetic four-CPU topology. The ConfigMap owns the overlay data, while the values file uses the chart's generic extra arguments, volume mounts, and volumes.
+This example supplies a synthetic four-CPU topology. The ConfigMap owns the overlay data, while the values file uses `driverConfig.sysfsOverlay` plus the chart's generic extra volume mounts and volumes.
 
 One environment where this is useful is a Kind cluster running in Docker Desktop for macOS, where the container-visible sysfs may not expose complete NUMA topology. The CPU and NUMA portions of this example work on Apple Silicon; PCIe-root discovery is currently limited to AMD64.
 

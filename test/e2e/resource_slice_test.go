@@ -46,13 +46,10 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get dracpu daemonset")
 		gomega.Expect(daemonSet.Spec.Template.Spec.Containers).ToNot(gomega.BeEmpty())
 
-		cnt := &daemonSet.Spec.Template.Spec.Containers[0]
-		if val, ok := findArgInContainer(cnt, argCPUDeviceMode); ok {
-			cpuDeviceMode = val
-		}
-		if val, ok := findArgInContainer(cnt, argGroupBy); ok {
-			groupBy = val
-		}
+		cfgValues, err := getDriverConfigValues(ctx, fxt.K8SClientset, daemonSetNamespace, daemonSet)
+		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot read dracpu driver config values")
+		cpuDeviceMode = cfgValues.CPUDeviceMode
+		groupBy = cfgValues.GroupBy
 		fxt.Log.Info("daemonset configuration", "cpuDeviceMode", cpuDeviceMode, "groupBy", groupBy)
 
 		ginkgo.By("listing ResourceSlices for driver " + driverName)

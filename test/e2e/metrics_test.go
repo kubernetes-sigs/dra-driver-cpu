@@ -93,15 +93,18 @@ var _ = ginkgo.Describe("Metrics", ginkgo.Serial, func() {
 		gomega.Expect(daemonSet.Spec.Template.Spec.Containers).ToNot(gomega.BeEmpty(), "no containers in dracpu daemonset")
 		orgDaemonSet := daemonSet.DeepCopy()
 
-		container := &daemonSet.Spec.Template.Spec.Containers[0]
-		cpuDeviceMode, _ := findArgInContainer(container, argCPUDeviceMode)
-		groupBy, _ := findArgInContainer(container, argGroupBy)
+		cfgValues, err := getDriverConfigValues(ctx, rootFxt.K8SClientset, daemonSetNamespace, daemonSet)
+		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot read dracpu driver config values")
+		cpuDeviceMode := cfgValues.CPUDeviceMode
+		groupBy := cfgValues.GroupBy
 
 		var claimSpec resourcev1.ResourceClaimSpec
 		if cpuDeviceMode == "grouped" && groupBy == "machine" {
-			reservedCPUs, err := reservedCPUsFromContainer(container)
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-
+			var reservedCPUs cpuset.CPUSet
+			if len(cfgValues.ReservedCPUs) > 0 {
+				reservedCPUs, err = cpuset.Parse(cfgValues.ReservedCPUs)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			}
 			availableCPUs, err := discoverAvailableCPUs(ctx, metricsFxt, targetNode.Name, dracpuTesterImage, reservedCPUs)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			if availableCPUs.Size() == 0 {
@@ -182,14 +185,6 @@ var _ = ginkgo.Describe("Metrics", ginkgo.Serial, func() {
 		}).WithTimeout(driverPodPollTimeout).WithPolling(driverPodPollInterval).Should(gomega.Succeed())
 	})
 })
-
-func reservedCPUsFromContainer(container *v1.Container) (cpuset.CPUSet, error) {
-	value, ok := findArgInContainer(container, argReservedCPUs)
-	if !ok {
-		return cpuset.New(), nil
-	}
-	return cpuset.Parse(value)
-}
 
 func discoverAvailableCPUs(ctx context.Context, fxt *fixture.Fixture, nodeName, image string, reservedCPUs cpuset.CPUSet) (cpuset.CPUSet, error) {
 	infoPod := discovery.MakePod(fxt.Namespace.Name, image)

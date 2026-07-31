@@ -79,12 +79,10 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get dracpu daemonset")
 		gomega.Expect(orgDaemonSet.Spec.Template.Spec.Containers).ToNot(gomega.BeEmpty(), "no containers in dracpu daemonset")
 
-		if val, ok := findArgInContainer(&orgDaemonSet.Spec.Template.Spec.Containers[0], argCPUDeviceMode); ok {
-			cpuDeviceMode = val
-		}
-		if val, ok := findArgInContainer(&orgDaemonSet.Spec.Template.Spec.Containers[0], argGroupBy); ok {
-			groupBy = val
-		}
+		cfgValues, err := getDriverConfigValues(ctx, rootFxt.K8SClientset, daemonSetNamespaceRule, orgDaemonSet)
+		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot read dracpu driver config values")
+		cpuDeviceMode = cfgValues.CPUDeviceMode
+		groupBy = cfgValues.GroupBy
 
 		// Find target node
 		targetNode, err = e2enode.PickWorker(ctx, rootFxt.K8SClientset, 5*time.Second, 1*time.Minute, rootFxt.Log)

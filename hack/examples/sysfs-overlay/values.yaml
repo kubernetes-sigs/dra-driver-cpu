@@ -1,8 +1,8 @@
 args:
   exposePCIeRoots: true
 
-extraArgs:
-  - --sysfs-overlay=/etc/dra-driver-cpu/sysfs-overlay.yaml
+driverConfig:
+  sysfsOverlay: /etc/dra-driver-cpu/sysfs-overlay.yaml
 
 extraVolumeMounts:
   - name: sysfs-overlay
