@@ -91,11 +91,16 @@ func (c *CdiManager) AddDevice(logger logr.Logger, deviceName string, envVar str
 	return nil
 }
 
+// Refresh reloads the CDI specs managed by the cache.
+func (c *CdiManager) Refresh() error {
+	if err := c.cache.Refresh(); err != nil {
+		return fmt.Errorf("failed to refresh CDI cache: %w", err)
+	}
+	return nil
+}
+
 // GetDeviceEnv returns the environment edits for a specific CDI device allocation.
 func (c *CdiManager) GetDeviceEnv(deviceName string) ([]string, error) {
-	if err := c.cache.Refresh(); err != nil {
-		return nil, fmt.Errorf("failed to refresh CDI cache: %w", err)
-	}
 	device := c.cache.GetDevice(cdiparser.QualifiedName(cdiVendor, cdiClass, deviceName))
 	if device == nil {
 		return nil, fmt.Errorf("failed to find CDI device %q", deviceName)

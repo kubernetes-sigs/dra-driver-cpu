@@ -41,6 +41,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	podConfigStore := store.NewPodConfig()
 	claimTracker := store.NewClaimTracker()
 	var containerUpdates []*api.ContainerUpdate
+	cdiCacheRefreshed := false
 
 	for _, pod := range pods {
 		pLogger := logger.WithValues("pod", ctxlog.KObj(pod), "podUID", pod.Uid)
@@ -57,32 +58,43 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				return nil, err
 			}
 			containerUID := types.UID(container.GetId())
-			var state *store.ContainerState
 			var claimUIDs []types.UID
-			if len(claimAllocations) == 0 {
+			allGuaranteedCPUs := cpuset.New()
+			for uid, cpus := range claimAllocations {
+				caLogger := cLogger.WithValues("claimUID", uid)
+				if !cdiCacheRefreshed {
+					err = cp.cdiMgr.Refresh()
+					if err != nil {
+						return nil, err
+					}
+					cdiCacheRefreshed = true
+				}
+
+				deviceName := getCDIDeviceName(uid)
+				envs, err := cp.cdiMgr.GetDeviceEnv(deviceName)
+				if err != nil {
+					caLogger.Error(err, "ignoring claim not prepared by this driver during synchronize")
+					continue
+				}
+				err = validateSynchronizedClaimAllocation(caLogger, uid, cpus, envs)
+				if err != nil {
+					caLogger.Error(err, "ignoring invalid claim allocation during synchronize")
+					continue
+				}
+				err = claimTracker.SetOwner(caLogger, uid, types.UID(pod.Uid), container.Name)
+				if err != nil {
+					return nil, err
+				}
+
+				allGuaranteedCPUs = allGuaranteedCPUs.Union(cpus)
+				claimUIDs = append(claimUIDs, uid)
+				cpuAllocationStore.AddResourceClaimAllocation(caLogger, uid, cpus)
+			}
+
+			var state *store.ContainerState
+			if len(claimUIDs) == 0 {
 				state = store.NewContainerState(container.GetName(), containerUID)
 			} else {
-				allGuaranteedCPUs := cpuset.New()
-				for uid, cpus := range claimAllocations {
-					caLogger := cLogger.WithValues("claimUID", uid)
-					deviceName := getCDIDeviceName(uid)
-					envs, err := cp.cdiMgr.GetDeviceEnv(deviceName)
-					if err != nil {
-						return nil, fmt.Errorf("claim %q is not prepared by this driver: %w", uid, err)
-					}
-					err = validateSynchronizedClaimAllocation(caLogger, uid, cpus, envs)
-					if err != nil {
-						return nil, err
-					}
-					err = claimTracker.SetOwner(caLogger, uid, types.UID(pod.Uid), container.Name)
-					if err != nil {
-						return nil, err
-					}
-
-					allGuaranteedCPUs = allGuaranteedCPUs.Union(cpus)
-					claimUIDs = append(claimUIDs, uid)
-					cpuAllocationStore.AddResourceClaimAllocation(caLogger, uid, cpus)
-				}
 				cLogger.V(2).Info("found guaranteed CPUs", "cpus", allGuaranteedCPUs.String())
 				state = store.NewContainerState(container.GetName(), containerUID, claimUIDs...)
 

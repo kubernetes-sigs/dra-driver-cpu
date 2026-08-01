@@ -79,10 +79,12 @@ func (m *mockKubeletPlugin) PublishResources(ctx context.Context, resources reso
 func (m *mockKubeletPlugin) Stop() {}
 
 type mockCdiMgr struct {
-	devices     map[string]string
-	addError    error
-	getError    error
-	removeError error
+	devices      map[string]string
+	addError     error
+	refreshError error
+	getError     error
+	removeError  error
+	refreshCalls int
 }
 
 func newMockCdiMgr() *mockCdiMgr {
@@ -105,6 +107,11 @@ func (m *mockCdiMgr) AddDevice(_ logr.Logger, deviceName, envVar string) error {
 	}
 	m.devices[deviceName] = envVar
 	return nil
+}
+
+func (m *mockCdiMgr) Refresh() error {
+	m.refreshCalls++
+	return m.refreshError
 }
 
 func (m *mockCdiMgr) GetDeviceEnv(deviceName string) ([]string, error) {

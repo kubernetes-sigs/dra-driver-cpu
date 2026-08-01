@@ -57,6 +57,7 @@ type KubeletPlugin interface {
 
 type cdiManager interface {
 	AddDevice(logger logr.Logger, deviceName string, envVar string) error
+	Refresh() error
 	GetDeviceEnv(deviceName string) ([]string, error)
 	RemoveDevice(logger logr.Logger, deviceName string) error
 }

@@ -224,6 +224,8 @@ func TestGetDeviceEnv(t *testing.T) {
 	expectedEnv := "DRA_CPUSET_claim-cpu-get-env=0,1"
 	err = mgr.AddDevice(logger, deviceName, expectedEnv)
 	require.NoError(t, err)
+	err = mgr.Refresh()
+	require.NoError(t, err)
 
 	envs, err := mgr.GetDeviceEnv(deviceName)
 	require.NoError(t, err)
