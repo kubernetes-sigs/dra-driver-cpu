@@ -1293,6 +1293,95 @@ func TestPrepareResourceClaimsGroupedModeRejectsInvalidCPUCapacity(t *testing.T)
 	}
 }
 
+func TestPrepareResourceClaimsGroupedModeRejectsMissingCPUCapacity(t *testing.T) {
+	testCases := []struct {
+		name    string
+		groupBy string
+		device  string
+	}{
+		{name: "socket", groupBy: devattr.GROUP_BY_SOCKET, device: "cpudevsocket000"},
+		{name: "NUMA node", groupBy: devattr.GROUP_BY_NUMA_NODE, device: "cpudevnuma000"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			prov := Providers{
+				CPUInfo: &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT},
+				SysFS:   testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
+			}
+			conf := Config{
+				DriverName:       testDriverName,
+				NodeName:         testNodeName,
+				CPUDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
+				CPUDeviceGroupBy: tc.groupBy,
+			}
+			driver, err := New(testr.New(t), prov, &conf)
+			require.NoError(t, err)
+			mockCdiMgr := newMockCdiMgr()
+			driver.cdiMgr = mockCdiMgr
+
+			claimUID := types.UID("claim-missing-capacity")
+			claim := testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{
+				{
+					Driver:  testDriverName,
+					Pool:    testNodeName,
+					Device:  tc.device,
+					Request: string(claimUID),
+				},
+			})
+
+			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
+			require.NoError(t, err)
+			result := preparedClaims[claimUID]
+			require.ErrorContains(t, result.Err, fmt.Sprintf("CPU capacity for device %q is missing", tc.device))
+			require.Empty(t, result.Devices)
+			require.Empty(t, mockCdiMgr.devices)
+
+			_, allocated := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
+			require.False(t, allocated)
+			require.True(t, cpuset.New(0, 1, 2, 3).Equals(driver.cpuAllocationStore.GetSharedCPUs()))
+		})
+	}
+}
+
+func TestPrepareResourceClaimsGroupedModeIgnoresAllocationsFromOtherDrivers(t *testing.T) {
+	prov := Providers{
+		CPUInfo: &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT},
+		SysFS:   testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
+	}
+	conf := Config{
+		DriverName:       testDriverName,
+		NodeName:         testNodeName,
+		CPUDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
+		CPUDeviceGroupBy: devattr.GROUP_BY_SOCKET,
+	}
+	driver, err := New(testr.New(t), prov, &conf)
+	require.NoError(t, err)
+	mockCdiMgr := newMockCdiMgr()
+	driver.cdiMgr = mockCdiMgr
+
+	claimUID := types.UID("claim-other-driver")
+	claim := testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{
+		{
+			Driver:  "other-driver",
+			Pool:    testNodeName,
+			Device:  "other-device",
+			Request: string(claimUID),
+		},
+	})
+
+	preparedClaims, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
+	require.NoError(t, err)
+	result := preparedClaims[claimUID]
+	require.NoError(t, result.Err)
+	require.Empty(t, result.Devices)
+	require.Empty(t, mockCdiMgr.devices)
+
+	_, allocated := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
+	require.False(t, allocated)
+	require.True(t, cpuset.New(0, 1, 2, 3).Equals(driver.cpuAllocationStore.GetSharedCPUs()))
+}
+
 func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 	claimUID := types.UID("claim-1")
 	cdiDeviceName := getCDIDeviceName(claimUID)
