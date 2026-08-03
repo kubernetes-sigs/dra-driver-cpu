@@ -5,6 +5,17 @@ on:
     branches: [ main ]
     paths:
       - 'deployment/helm/**'
+      - 'Dockerfile'
+      - 'go.mod'
+      - 'go.sum'
+      - 'api/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'hack/ci/kind-ci.yaml'
+      - 'hack/ci/kind-ci-relocated-root.yaml'
+      - 'hack/ci/wait-resourcelices.sh'
+      - 'Makefile'
       - '.github/workflows/helm-e2e.yaml'
 
 env:
@@ -16,6 +27,20 @@ jobs:
   helm-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Default kubelet root; the baseline this workflow has always run.
+          - variant: default-root
+            kindConfig: hack/ci/kind-ci.yaml
+            kubeletRootDir: ""
+          # Kubelet relocated to a non-default --root-dir on every node, the
+          # scenario kubeletRootDir exists for (issue #231).
+          - variant: relocated-root
+            kindConfig: hack/ci/kind-ci-relocated-root.yaml
+            kubeletRootDir: /var/lib/custom-kubelet
+    name: helm-e2e (${{ matrix.variant }})
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -30,12 +55,14 @@ jobs:
 
       # Try to parse KIND_K8S_VERSION from the Makefile and use it to build the node image and create the cluster.
       - name: Create kind cluster
+        env:
+          KIND_CONFIG: ${{ matrix.kindConfig }}
         run: |
           KIND_K8S_VERSION=$(grep -E '^KIND_K8S_VERSION \?=' Makefile | awk '{print $3}')
           KIND_K8S_VERSION=${KIND_K8S_VERSION:-v1.36.0}
           kind delete cluster --name dra-driver-cpu || true
           kind build node-image --image=kindest/node:${KIND_K8S_VERSION} ${KIND_K8S_VERSION}
-          kind create cluster --name dra-driver-cpu --image=kindest/node:${KIND_K8S_VERSION} --config hack/ci/kind-ci.yaml
+          kind create cluster --name dra-driver-cpu --image=kindest/node:${KIND_K8S_VERSION} --config "${KIND_CONFIG}"
           kind get kubeconfig --name dra-driver-cpu > /tmp/kubeconfig-dra-driver-cpu
           kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
             label node dra-driver-cpu-worker node-role.kubernetes.io/worker=''
@@ -46,7 +73,13 @@ jobs:
             "${IMAGE}:${TAG}"
 
       - name: Install driver via Helm
+        env:
+          KUBELET_ROOT_DIR: ${{ matrix.kubeletRootDir }}
         run: |
+          extra=()
+          if [ -n "${KUBELET_ROOT_DIR}" ]; then
+            extra+=(--set-string "kubeletRootDir=${KUBELET_ROOT_DIR}")
+          fi
           helm install dra-driver-cpu deployment/helm/dra-driver-cpu \
             --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
             --namespace kube-system \
@@ -54,7 +87,8 @@ jobs:
             --set podLabels.app=dracpu \
             --set image.repository="${IMAGE}" \
             --set image.tag="${TAG}" \
-            --set image.pullPolicy=Never
+            --set image.pullPolicy=Never \
+            "${extra[@]}"
 
       - name: Wait for resourceSlices
         run: KUBECONFIG=/tmp/kubeconfig-dra-driver-cpu hack/ci/wait-resourcelices.sh
@@ -63,6 +97,82 @@ jobs:
         run: |
           kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
             rollout status daemonset/dracpu -n kube-system --timeout=120s
+
+      # The rollout above already proves the kubelet watched
+      # <root>/plugins_registry, since registration would otherwise time out.
+      # What is left to show is that the root it watched is the relocated one:
+      # both sockets under it on every node, and neither under the default.
+      - name: Verify the driver registered under the relocated kubelet root
+        if: matrix.kubeletRootDir != ''
+        env:
+          KUBELET_ROOT_DIR: ${{ matrix.kubeletRootDir }}
+        run: |
+          # The default shell is `bash -e`, which does not include pipefail, so
+          # a kubectl that failed into `sort` would leave an empty set here and
+          # every comparison below would agree with itself.
+          set -euo pipefail
+
+          # From the cluster rather than from the pods being checked: if the
+          # label stopped rendering, or the DaemonSet stopped covering a node,
+          # deriving the set from the pods would check nothing and still pass.
+          nodes=$(kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
+            get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | sort)
+          if [ -z "${nodes}" ]; then
+            echo "no nodes returned; nothing below would have been checked" >&2
+            exit 1
+          fi
+          driver_nodes=$(kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
+            get pods -n kube-system -l app=dracpu \
+            -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' | sort -u)
+          if [ "${nodes}" != "${driver_nodes}" ]; then
+            echo "driver pods do not cover every node" >&2
+            printf 'cluster:\n%s\ndriver:\n%s\n' "${nodes}" "${driver_nodes}" >&2
+            exit 1
+          fi
+          # wait-resourcelices.sh returns on the first slice anywhere, and a
+          # rolled-out DaemonSet does not mean every driver has published yet,
+          # so wait for the set to cover the cluster rather than reading it once.
+          slice_nodes=""
+          for _ in $(seq 1 60); do
+            slice_nodes=$(kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
+              get resourceslice \
+              -o jsonpath='{range .items[?(@.spec.driver=="dra.cpu")]}{.spec.nodeName}{"\n"}{end}' | sort -u)
+            if [ "${nodes}" = "${slice_nodes}" ]; then
+              break
+            fi
+            sleep 2
+          done
+          if [ "${nodes}" != "${slice_nodes}" ]; then
+            echo "dra.cpu ResourceSlices do not cover every node" >&2
+            printf 'cluster:\n%s\nslices:\n%s\n' "${nodes}" "${slice_nodes}" >&2
+            exit 1
+          fi
+          for node in $nodes; do
+            echo "checking node ${node}"
+            # The registrar socket by name, since the chart budgets its length
+            # against sun_path and spells it out; the plugin's own socket by
+            # directory, since the kubeletplugin helper names that one.
+            docker exec "${node}" sh -c "test -S ${KUBELET_ROOT_DIR}/plugins_registry/dra.cpu-reg.sock"
+            docker exec "${node}" sh -c \
+              "find ${KUBELET_ROOT_DIR}/plugins/dra.cpu -maxdepth 1 -type s -name '*.sock' -print -quit | grep -q ."
+            # Absence is asserted rather than tested as a condition. Written the
+            # other way round, a docker exec that failed for its own reasons
+            # would be indistinguishable from the socket not being there, and
+            # the check would pass on infrastructure trouble.
+            #
+            # Named rather than globbed: any other kubelet plugin may legitimately
+            # keep a registrar socket under the default root.
+            docker exec "${node}" sh -c \
+              "test ! -e /var/lib/kubelet/plugins_registry/dra.cpu-reg.sock" || {
+              echo "registrar socket present under the default root on ${node}, or docker exec failed" >&2
+              exit 1
+            }
+            docker exec "${node}" sh -c \
+              "! find /var/lib/kubelet/plugins/dra.cpu -maxdepth 1 -type s -name '*.sock' 2>/dev/null | grep -q ." || {
+              echo "driver socket present under the default root on ${node}, or docker exec failed" >&2
+              exit 1
+            }
+          done
 
       - name: Final check
         if: failure()
