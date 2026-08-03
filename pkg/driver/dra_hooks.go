@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -34,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
+	"k8s.io/dynamic-resource-allocation/resourceclaim"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/utils/cpuset"
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
@@ -379,23 +379,20 @@ func (cp *CPUDriver) getOpaqueCPUSet(logger logr.Logger, allocation *resourceapi
 		return cpuset.CPUSet{}, false, nil
 	}
 
+	configs := resourceclaim.ConfigForResult(allocation.Devices.Config, alloc)
 	var matchedConfig *resourceapi.DeviceAllocationConfiguration
 	matchCount := 0
 
-	for _, config := range allocation.Devices.Config {
-		if config.Opaque == nil || config.Opaque.Driver != cp.driverName {
+	for i := range configs {
+		config := &configs[i]
+		if config.Opaque.Driver != cp.driverName {
 			continue
 		}
 		if config.Source != resourceapi.AllocationConfigSourceClaim {
 			return cpuset.CPUSet{}, false, fmt.Errorf("opaque config: configuration from DeviceClass is not supported by this driver, custom cpusets must be defined per ResourceClaim request")
 		}
-		// An empty requests list means the configuration applies to all requests in
-		// the claim. In 1.37+ kube-scheduler omits the list when the config applies
-		// to all requests.
-		if len(config.Requests) == 0 || slices.Contains(config.Requests, alloc.Request) {
-			matchedConfig = &config
-			matchCount++
-		}
+		matchedConfig = config
+		matchCount++
 	}
 
 	if matchCount != 1 {
