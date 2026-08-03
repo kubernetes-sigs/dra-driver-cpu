@@ -1,0 +1,147 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package extalloc
+
+import (
+	"fmt"
+
+	"github.com/go-logr/logr"
+	opaqueapi "github.com/kubernetes-sigs/dra-driver-cpu/api"
+	topology "github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/utils/cpuset"
+)
+
+type Allocator struct {
+	driverName   string
+	topo         *topology.CPUTopology
+	onlineCPUs   cpuset.CPUSet
+	reservedCPUs cpuset.CPUSet
+}
+
+func NewAllocator(driverName string, topo *topology.CPUTopology, onlineCPUs, reservedCPUs cpuset.CPUSet) *Allocator {
+	return &Allocator{
+		driverName:   driverName,
+		topo:         topo,
+		onlineCPUs:   onlineCPUs,
+		reservedCPUs: reservedCPUs,
+	}
+}
+
+func (alc *Allocator) Allocate(logger logr.Logger, availableCPUs, preferredCPUs cpuset.CPUSet, count int) (cpuset.CPUSet, error) {
+	// There's no allocation to be done here, just a final sanity check about the preferred CPU hint we're trusting.
+	// This check is redundant in group-by=machine, but necessary in group-by={socket,numa}
+	if !preferredCPUs.IsSubsetOf(availableCPUs) {
+		return cpuset.CPUSet{}, fmt.Errorf("preferred CPUs <%s> must be a subset of available CPUs <%s>", preferredCPUs.String(), availableCPUs.String())
+	}
+	return preferredCPUs, nil
+}
+
+func (alc *Allocator) GetPreferredCPUs(logger logr.Logger, allocation *resourceapi.AllocationResult, alloc resourceapi.DeviceRequestAllocationResult, count int) (cpuset.CPUSet, error) {
+	preferred, ok, err := getOpaqueCPUSet(logger, alc.driverName, allocation, alloc)
+	if err != nil {
+		return cpuset.CPUSet{}, err
+	}
+	if !ok {
+		return cpuset.CPUSet{}, fmt.Errorf("no opaque cpuset configuration found for allocation request %q", alloc.Request)
+	}
+	err = validateOpaqueCPUSet(preferred, alc.onlineCPUs, alc.reservedCPUs, count)
+	if err != nil {
+		return cpuset.CPUSet{}, err
+	}
+	return preferred, nil
+}
+
+func (alc *Allocator) Validate(preferredCPUs, allocatedCPUs, assignedCPUs cpuset.CPUSet) error {
+	// Verify cores do not overlap with other claims prepared in this same batch
+	currentClaimCPUs := preferredCPUs.Intersection(assignedCPUs)
+	if currentClaimCPUs.Size() > 0 {
+		return fmt.Errorf("requested CPUs %s from preferred CPUs are already assigned to another device in this claim", preferredCPUs.String())
+	}
+
+	// Verify cores do not overlap with other active claims on this node
+	existingClaimCPUs := allocatedCPUs
+	if preferredCPUs.Intersection(existingClaimCPUs).Size() > 0 {
+		return fmt.Errorf("requested CPUs %s from preferred CPUs conflict with already allocated claims", preferredCPUs.String())
+	}
+
+	return nil
+}
+
+func getOpaqueCPUSet(logger logr.Logger, driverName string, allocation *resourceapi.AllocationResult, alloc resourceapi.DeviceRequestAllocationResult) (cpuset.CPUSet, bool, error) {
+	if allocation == nil {
+		return cpuset.CPUSet{}, false, nil
+	}
+
+	var matchedConfig *resourceapi.DeviceAllocationConfiguration
+	matchCount := 0
+
+	for _, config := range allocation.Devices.Config {
+		if config.Opaque == nil || config.Opaque.Driver != driverName {
+			continue
+		}
+		if config.Source != resourceapi.AllocationConfigSourceClaim {
+			return cpuset.CPUSet{}, false, fmt.Errorf("opaque config: configuration from DeviceClass is not supported by this driver, custom cpusets must be defined per ResourceClaim request")
+		}
+		// Each parameter block must target exactly 1 request using the 'requests' field
+		if len(config.Requests) != 1 {
+			return cpuset.CPUSet{}, false, fmt.Errorf("opaque config: parameters block must target exactly 1 request using the 'requests' field, found %d", len(config.Requests))
+		}
+
+		if config.Requests[0] == alloc.Request {
+			matchedConfig = &config
+			matchCount++
+		}
+	}
+
+	if matchCount != 1 {
+		return cpuset.CPUSet{}, false, fmt.Errorf("opaque config: request %q is targeted by %d configurations, must be targeted by exactly 1", alloc.Request, matchCount)
+	}
+
+	// Return the matched config if found
+	if matchedConfig != nil && len(matchedConfig.Opaque.Parameters.Raw) > 0 {
+		parsedCPUSet, err := opaqueapi.ParseOpaqueConfig(matchedConfig.Opaque.Parameters.Raw)
+		if err != nil {
+			return cpuset.CPUSet{}, false, err
+		}
+		logger.V(4).Info("found cpuset override in opaque CPU set", "request", alloc.Request, "cpuset", parsedCPUSet.String())
+		return parsedCPUSet, true, nil
+	}
+
+	return cpuset.CPUSet{}, false, nil
+}
+
+func validateOpaqueCPUSet(opaqueCPUs, onlineCPUs, reservedCPUs cpuset.CPUSet, count int) error {
+	// Verify core count matches requested capacity
+	if opaqueCPUs.Size() != count {
+		return fmt.Errorf("preferred CPUs cpuset size %d does not match requested capacity %d", opaqueCPUs.Size(), count)
+	}
+
+	// Verify CPUs are online
+	if !opaqueCPUs.IsSubsetOf(onlineCPUs) {
+		offlineCPUs := opaqueCPUs.Difference(onlineCPUs)
+		return fmt.Errorf("requested CPUs %s from preferred CPUs contain offline cores: %s", opaqueCPUs.String(), offlineCPUs.String())
+	}
+
+	// Verify CPUs are not part of --reserved-cpus config passed to the driver
+	reservedOverlap := opaqueCPUs.Intersection(reservedCPUs)
+	if reservedOverlap.Size() > 0 {
+		return fmt.Errorf("requested CPUs %s from preferred CPUs contain reserved cores: %s", opaqueCPUs.String(), reservedOverlap.String())
+	}
+
+	return nil
+}

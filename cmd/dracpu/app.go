@@ -210,6 +210,7 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 		CPUDeviceMode:    cfg.CPUDeviceMode,
 		CPUDeviceGroupBy: cfg.GroupBy,
 		ExposePCIeRoots:  cfg.ExposePCIeRoots,
+		Allocator:        cfg.Allocator,
 		Metrics:          cpumetrics.New(prometheus.DefaultRegisterer),
 	}
 	driverProviders := driver.Providers{

@@ -19,6 +19,11 @@ package driverconfig
 // ConfigAPIVersion is the version validated in config files.
 const ConfigAPIVersion = "v1alpha1"
 
+const (
+	AllocatorExternal   = "external"
+	AllocatorCPUManager = "cpumanager"
+)
+
 // Config holds the driver runtime configuration.
 type Config struct {
 	Kubeconfig       string `json:"kubeconfig,omitempty"`
@@ -27,6 +32,7 @@ type Config struct {
 	ReservedCPUs     string `json:"reservedCPUs,omitempty"`
 	CPUDeviceMode    string `json:"cpuDeviceMode,omitempty"`
 	GroupBy          string `json:"groupBy,omitempty"`
+	Allocator        string `json:"allocator"`
 	ExposePCIeRoots  bool   `json:"exposePCIeRoots,omitempty"`
 	SysFSOverlay     string `json:"sysfsOverlay,omitempty"`
 }
@@ -42,5 +48,6 @@ func (c Config) LogValues() []any {
 		"hostnameOverride", c.HostnameOverride,
 		"exposePCIeRoots", c.ExposePCIeRoots,
 		"sysfsOverlay", c.SysFSOverlay,
+		"allocator", c.Allocator,
 	}
 }

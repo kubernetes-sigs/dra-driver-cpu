@@ -47,7 +47,7 @@ func Build(topo *cpuinfo.CPUTopology, reservedCPUSet cpuset.CPUSet, pcieRootMapp
 	return createCPUDeviceSlices(deviceInfos, pcieRootMapper, topo.SMTEnabled), nameToID
 }
 
-func BuildGrouped(logger logr.Logger, groupBy string, topo *cpuinfo.CPUTopology, onlineCPUs, reservedCPUSet cpuset.CPUSet, pcieRootMapper *store.PCIeRootMapper) ([]resourceapi.Device, map[string]int) {
+func BuildGrouped(logger logr.Logger, groupBy string, topo *cpuinfo.CPUTopology, onlineCPUs, reservedCPUSet cpuset.CPUSet, pcieRootMapper *store.PCIeRootMapper, exposeCPUSet bool) ([]resourceapi.Device, map[string]int) {
 	deviceInfos := groupedCPUDeviceInfos(groupBy, topo, onlineCPUs, reservedCPUSet)
 	nameToID := make(map[string]int)
 	for _, dev := range deviceInfos {
@@ -58,7 +58,7 @@ func BuildGrouped(logger logr.Logger, groupBy string, topo *cpuinfo.CPUTopology,
 			nameToID[dev.name] = dev.numaNodeID
 		}
 	}
-	return createGroupedCPUDeviceSlices(logger, groupBy, deviceInfos, pcieRootMapper, topo.SMTEnabled), nameToID
+	return createGroupedCPUDeviceSlices(logger, groupBy, deviceInfos, pcieRootMapper, topo.SMTEnabled, exposeCPUSet), nameToID
 }
 
 type groupedCPUDeviceInfo struct {
@@ -179,7 +179,7 @@ func cpuDeviceInfos(topo *cpuinfo.CPUTopology, reservedCPUSet cpuset.CPUSet) []c
 }
 
 // createGroupedCPUDeviceSlices creates Device objects based on the CPU topology, grouped by a specific criteria.
-func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfos []groupedCPUDeviceInfo, pcieRootMapper *store.PCIeRootMapper, smtEnabled bool) []resourceapi.Device {
+func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfos []groupedCPUDeviceInfo, pcieRootMapper *store.PCIeRootMapper, smtEnabled, exposeCPUSet bool) []resourceapi.Device {
 	logger.V(4).Info("creating grouped CPU devices")
 	var devices []resourceapi.Device
 
@@ -197,6 +197,13 @@ func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfo
 				AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
 			}
 			addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...)
+			if exposeCPUSet {
+				deviceAttrs[AttributeCPUIDs] = resourceapi.DeviceAttribute{
+					// CRITICAL NOTE: the attribute limit is still *not* solved,
+					// just less likely
+					StringValue: new(deviceInfo.cpus.String()),
+				}
+			}
 
 			devices = append(devices, resourceapi.Device{
 				Name:                     deviceInfo.name,
@@ -210,6 +217,13 @@ func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfo
 				AttributeSocketID:   {IntValue: new(int64(deviceInfo.socketID))},
 				AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
 				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
+			}
+			if exposeCPUSet {
+				deviceAttrs[AttributeCPUIDs] = resourceapi.DeviceAttribute{
+					// CRITICAL NOTE: the attribute limit is still *not* solved,
+					// just less likely
+					StringValue: new(deviceInfo.cpus.String()),
+				}
 			}
 			SetCompatibilityAttributes(deviceAttrs, int64(deviceInfo.numaNodeID))
 			addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...)

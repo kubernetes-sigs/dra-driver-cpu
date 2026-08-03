@@ -26,8 +26,11 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/testr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpumanager"
 	devattr "github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/extalloc"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -826,6 +829,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 				deviceNameToNUMANodeID: map[string]int{},
 			},
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+			cpuAllocator:       cpumanager.NewAllocator(testDriverName, topo),
 		}
 		if withExistingAllocation {
 			driver.cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, existingCPUs)
@@ -917,12 +921,17 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			},
 			SysFS: testSysFS(cpuInfos),
 		}
+		allocator := driverconfig.AllocatorCPUManager
+		if groupBy == devattr.GROUP_BY_MACHINE {
+			allocator = driverconfig.AllocatorExternal
+		}
 		conf := Config{
 			DriverName:       testDriverName,
 			NodeName:         testNodeName,
 			CPUDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
 			CPUDeviceGroupBy: groupBy,
 			ReservedCPUs:     reservedCPUs,
+			Allocator:        allocator,
 		}
 		driver, err := New(testr.New(t), prov, &conf)
 		require.NoError(t, err)
@@ -1411,6 +1420,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 				deviceNameToNUMANodeID: map[string]int{},
 			},
 			cpuAllocationStore: cpuStore,
+			cpuAllocator:       cpumanager.NewAllocator(testDriverName, topo),
 			cdiMgr:             cdiMgr,
 		}, cpuStore, cdiMgr
 	}
@@ -1429,6 +1439,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 				deviceNameToNUMANodeID: map[string]int{"cpudevnuma0": 0, "cpudevnuma1": 1},
 			},
 			cpuAllocationStore: cpuStore,
+			cpuAllocator:       cpumanager.NewAllocator(testDriverName, topo),
 			cdiMgr:             cdiMgr,
 		}, cpuStore, cdiMgr
 	}
@@ -1993,6 +2004,7 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 	driver.topology.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
 	driver.topology.onlineCPUs = driver.topology.cpuTopology.CPUDetails.CPUs()
 	driver.cpuAllocationStore = store.NewCPUAllocation(driver.topology.cpuTopology, reservedCPUs)
+	driver.cpuAllocator = extalloc.NewAllocator(testDriverName, driver.topology.cpuTopology, driver.topology.onlineCPUs, reservedCPUs)
 	for claimUID, cpus := range initialAllocations {
 		driver.cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, cpus)
 	}
