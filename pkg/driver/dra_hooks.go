@@ -374,6 +374,9 @@ func (cp *CPUDriver) unprepareResourceClaim(logger logr.Logger, claim kubeletplu
 	}
 	cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claim.UID)
 	cp.claimTracker.Cleanup(claim.UID)
+	// Existing shared containers pick up the expanded cpuset on their next CreateContainer
+	// or Synchronize. Updating them here requires NRI UpdateContainers support across all
+	// supported runtime versions.
 	return nil
 }
 

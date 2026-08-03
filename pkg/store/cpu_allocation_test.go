@@ -38,13 +38,12 @@ func newTestCPUAllocation(logger logr.Logger, allCPUs, reserved cpuset.CPUSet) *
 	return NewCPUAllocation(topo, reserved)
 }
 
-func requireEnforcedAllocation(t testing.TB, logger logr.Logger, store *CPUAllocation, claimUID types.UID, cpus cpuset.CPUSet) {
+func requirePreparedAllocation(t testing.TB, logger logr.Logger, store *CPUAllocation, claimUID types.UID, cpus cpuset.CPUSet) {
 	t.Helper()
 	require.NoError(t, store.ReserveResourceClaimAllocation(logger, claimUID, cpus))
-	require.NoError(t, store.EnforceResourceClaims(map[types.UID]cpuset.CPUSet{claimUID: cpus}))
 }
 
-func TestCPUAllocationPreparedEnforcedLifecycle(t *testing.T) {
+func TestCPUAllocationPreparedLifecycle(t *testing.T) {
 	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3)
 	claimUID := types.UID("claim-1")
@@ -52,16 +51,12 @@ func TestCPUAllocationPreparedEnforcedLifecycle(t *testing.T) {
 	store := newTestCPUAllocation(logger, allCPUs, cpuset.New())
 
 	require.NoError(t, store.ReserveResourceClaimAllocation(logger, claimUID, claimCPUs))
-	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
+	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
 	require.True(t, store.GetAllocatableCPUs().Equals(cpuset.New(2, 3)))
 	require.Error(t, store.ReserveResourceClaimAllocation(logger, "claim-2", claimCPUs))
 
-	require.NoError(t, store.EnforceResourceClaims(map[types.UID]cpuset.CPUSet{claimUID: claimCPUs}))
+	require.NoError(t, store.ValidateResourceClaimAllocations(map[types.UID]cpuset.CPUSet{claimUID: claimCPUs}))
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
-	require.True(t, store.GetAllocatableCPUs().Equals(cpuset.New(2, 3)))
-
-	require.NoError(t, store.SetResourceClaimsEnforcementState(false, claimUID))
-	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
 	require.True(t, store.GetAllocatableCPUs().Equals(cpuset.New(2, 3)))
 
 	store.RemoveResourceClaimAllocation(logger, claimUID)
@@ -112,7 +107,7 @@ func TestCPUAllocationResourceClaimAllocation(t *testing.T) {
 	cpus := cpuset.New(0, 1)
 
 	// Add allocation
-	requireEnforcedAllocation(t, logger, store, claimUID, cpus)
+	requirePreparedAllocation(t, logger, store, claimUID, cpus)
 	gotCPUs, ok := store.GetResourceClaimAllocation(claimUID)
 	require.True(t, ok)
 	require.True(t, cpus.Equals(gotCPUs))
@@ -139,13 +134,13 @@ func TestCPUAllocationGetSharedCPUs(t *testing.T) {
 	// With allocations
 	claimUID1 := types.UID("claim-uid-1")
 	cpus1 := cpuset.New(1, 2)
-	requireEnforcedAllocation(t, logger, store, claimUID1, cpus1)
+	requirePreparedAllocation(t, logger, store, claimUID1, cpus1)
 	expectedShared := available.Difference(cpus1)
 	require.True(t, store.GetSharedCPUs().Equals(expectedShared))
 
 	claimUID2 := types.UID("claim-uid-2")
 	cpus2 := cpuset.New(3, 4)
-	requireEnforcedAllocation(t, logger, store, claimUID2, cpus2)
+	requirePreparedAllocation(t, logger, store, claimUID2, cpus2)
 	expectedShared = expectedShared.Difference(cpus2)
 	require.True(t, store.GetSharedCPUs().Equals(expectedShared))
 }
@@ -204,9 +199,9 @@ func TestCPUAllocationStoreCacheConsistency(t *testing.T) {
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
 	store := newTestCPUAllocation(logger, allCPUs, cpuset.New())
 
-	requireEnforcedAllocation(t, logger, store, "claim-1", cpuset.New(0, 1))
-	requireEnforcedAllocation(t, logger, store, "claim-2", cpuset.New(2, 3))
-	requireEnforcedAllocation(t, logger, store, "claim-3", cpuset.New(4, 5))
+	requirePreparedAllocation(t, logger, store, "claim-1", cpuset.New(0, 1))
+	requirePreparedAllocation(t, logger, store, "claim-2", cpuset.New(2, 3))
+	requirePreparedAllocation(t, logger, store, "claim-3", cpuset.New(4, 5))
 
 	expectedShared := cpuset.New(6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
 	require.True(t, store.GetSharedCPUs().Equals(expectedShared))
@@ -240,7 +235,7 @@ func TestCPUAllocationGetPreparedCPUs(t *testing.T) {
 
 	claimUID := types.UID("claim-1")
 	cpus := cpuset.New(2, 3)
-	requireEnforcedAllocation(t, logger, store, claimUID, cpus)
+	requirePreparedAllocation(t, logger, store, claimUID, cpus)
 	require.True(t, store.GetPreparedCPUs().Equals(cpus))
 
 	store.RemoveResourceClaimAllocation(logger, claimUID)
@@ -260,7 +255,7 @@ func TestCPUAllocationSnapshot(t *testing.T) {
 		ActiveResourceClaims: 0,
 	}, store.Snapshot())
 
-	requireEnforcedAllocation(t, logger, store, "claim-1", cpuset.New(2, 3))
+	requirePreparedAllocation(t, logger, store, "claim-1", cpuset.New(2, 3))
 	require.Equal(t, AllocationSnapshot{
 		AllocatedCPUs:        2,
 		AvailableCPUs:        4,
@@ -269,7 +264,7 @@ func TestCPUAllocationSnapshot(t *testing.T) {
 	}, store.Snapshot())
 
 	store.RemoveResourceClaimAllocation(logger, "claim-1")
-	requireEnforcedAllocation(t, logger, store, "claim-1", cpuset.New(4, 5, 6))
+	requirePreparedAllocation(t, logger, store, "claim-1", cpuset.New(4, 5, 6))
 	require.Equal(t, AllocationSnapshot{
 		AllocatedCPUs:        3,
 		AvailableCPUs:        3,
@@ -277,7 +272,7 @@ func TestCPUAllocationSnapshot(t *testing.T) {
 		ActiveResourceClaims: 1,
 	}, store.Snapshot())
 
-	requireEnforcedAllocation(t, logger, store, "claim-2", cpuset.New(2, 3))
+	requirePreparedAllocation(t, logger, store, "claim-2", cpuset.New(2, 3))
 	require.Equal(t, AllocationSnapshot{
 		AllocatedCPUs:        5,
 		AvailableCPUs:        1,
@@ -341,7 +336,7 @@ func BenchmarkGetSharedCPUs(b *testing.B) {
 		b.Run(tc.name+"/optimized", func(b *testing.B) {
 			store := NewCPUAllocation(topo, cpuset.New())
 			for claimUID, cpus := range allocations {
-				requireEnforcedAllocation(b, logr.Discard(), store, claimUID, cpus)
+				requirePreparedAllocation(b, logr.Discard(), store, claimUID, cpus)
 			}
 
 			b.ResetTimer()
