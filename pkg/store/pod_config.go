@@ -94,6 +94,8 @@ func (s *PodConfig) GetContainerState(podUID types.UID, containerName string) *C
 
 // RemoveContainerState removes a container's state if its runtime ID still matches.
 // A replacement container can have the same name while an old Remove event is in flight.
+// It returns the removed state's claim UIDs and whether a matching state was removed. The
+// boolean distinguishes a removed shared container, which has no claims, from a stale event.
 func (s *PodConfig) RemoveContainerState(podUID types.UID, containerName string, containerUID types.UID) ([]types.UID, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
