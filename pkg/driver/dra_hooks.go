@@ -125,21 +125,21 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 	var cpuAssignment cpuset.CPUSet
 	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
 	for _, alloc := range claim.Status.Allocation.Devices.Results {
-		claimCPUCount := int64(0)
 		if alloc.Driver != cp.driverName {
 			continue
 		}
-		if quantity, ok := alloc.ConsumedCapacity[device.CPUResourceQualifiedName]; ok {
-			if quantity.Sign() <= 0 {
-				return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity for device %q must be positive, got %s", alloc.Device, quantity.String())}
-			}
-			count := quantity.Value()
-			if quantity.CmpInt64(count) != 0 {
-				return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity for device %q must be a whole number, got %s", alloc.Device, quantity.String())}
-			}
-			claimCPUCount = count
-			logger.V(4).Info("found CPU request", "numCPUs", count, "device", alloc.Device)
+		quantity, ok := alloc.ConsumedCapacity[device.CPUResourceQualifiedName]
+		if !ok {
+			return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity %q for device %q is missing", device.CPUResourceQualifiedName, alloc.Device)}
 		}
+		if quantity.Sign() <= 0 {
+			return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity for device %q must be positive, got %s", alloc.Device, quantity.String())}
+		}
+		claimCPUCount := quantity.Value()
+		if quantity.CmpInt64(claimCPUCount) != 0 {
+			return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity for device %q must be a whole number, got %s", alloc.Device, quantity.String())}
+		}
+		logger.V(4).Info("found CPU request", "numCPUs", claimCPUCount, "device", alloc.Device)
 
 		topo := cp.topology.cpuTopology
 
