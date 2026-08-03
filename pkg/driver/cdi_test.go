@@ -232,6 +232,27 @@ func TestGetDeviceEnv(t *testing.T) {
 	require.Equal(t, []string{expectedEnv}, envs)
 }
 
+func TestRefreshKeepsValidDevicesWhenAnotherSpecIsInvalid(t *testing.T) {
+	logger := testr.New(t)
+	tempCDIDir := t.TempDir()
+
+	mgr, err := NewCdiManager(logger, testDriverName, tempCDIDir)
+	require.NoError(t, err)
+
+	deviceName := "claim-cpu-valid"
+	expectedEnv := "DRA_CPUSET_claim-cpu-valid=0,1"
+	err = mgr.AddDevice(logger, deviceName, expectedEnv)
+	require.NoError(t, err)
+
+	err = os.WriteFile(filepath.Join(tempCDIDir, "unrelated-invalid.json"), []byte("{"), 0600)
+	require.NoError(t, err)
+	require.Error(t, mgr.Refresh())
+
+	envs, err := mgr.GetDeviceEnv(deviceName)
+	require.NoError(t, err)
+	require.Equal(t, []string{expectedEnv}, envs)
+}
+
 func TestGetDeviceEnvMissingDevice(t *testing.T) {
 	logger := testr.New(t)
 	tempCDIDir := t.TempDir()

@@ -41,7 +41,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	podConfigStore := store.NewPodConfig()
 	claimTracker := store.NewClaimTracker()
 	var containerUpdates []*api.ContainerUpdate
-	cdiCacheRefreshed := false
+	cdiCacheRefreshAttempted := false
 
 	for _, pod := range pods {
 		pLogger := logger.WithValues("pod", ctxlog.KObj(pod), "podUID", pod.Uid)
@@ -54,20 +54,20 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 
 			claimAllocations, err := parseDRAEnvToClaimAllocations(cLogger, container.Env)
 			if err != nil {
-				cLogger.Error(err, "error parsing DRA env for container")
-				return nil, err
+				cLogger.Error(err, "ignoring container with malformed DRA env during synchronize")
+				continue
 			}
 			containerUID := types.UID(container.GetId())
 			var claimUIDs []types.UID
 			allGuaranteedCPUs := cpuset.New()
 			for uid, cpus := range claimAllocations {
 				caLogger := cLogger.WithValues("claimUID", uid)
-				if !cdiCacheRefreshed {
+				if !cdiCacheRefreshAttempted {
 					err = cp.cdiMgr.Refresh()
+					cdiCacheRefreshAttempted = true
 					if err != nil {
-						return nil, err
+						logger.Error(err, "failed to refresh CDI cache, continuing with available CDI devices")
 					}
-					cdiCacheRefreshed = true
 				}
 
 				deviceName := getCDIDeviceName(uid)

@@ -484,7 +484,7 @@ func TestNRISynchronize(t *testing.T) {
 			expectedRefreshCalls: 1,
 		},
 		{
-			name: "malformed DRA env fails synchronize",
+			name: "malformed DRA env does not prevent other containers from synchronizing",
 			driver: &CPUDriver{
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
@@ -496,10 +496,43 @@ func TestNRISynchronize(t *testing.T) {
 			},
 			runtimePods: []*api.PodSandbox{pod1},
 			runtimeCtrs: []*api.Container{
-				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
 				{Id: "p1-malformed", PodSandboxId: pod1.Id, Name: "malformed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "a-b")}},
+				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
 			},
-			expectedError:        "failed to parse cpuset value",
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-guaranteed",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1"}}},
+				},
+			},
+			expectedRefreshCalls: 1,
+		},
+		{
+			name: "CDI cache refresh error does not prevent valid claims from synchronizing",
+			driver: func() *CPUDriver {
+				cdiMgr := newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+					"claim-A": cpuset.New(0, 1),
+					"claim-B": cpuset.New(2, 3),
+				})
+				cdiMgr.refreshError = fmt.Errorf("unrelated invalid CDI spec")
+				return &CPUDriver{
+					podConfigStore:     store.NewPodConfig(),
+					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+					claimTracker:       store.NewClaimTracker(),
+					cdiMgr:             cdiMgr,
+					topology:           deviceTopology{cpuTopology: topo},
+				}
+			}(),
+			runtimePods: []*api.PodSandbox{pod1},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1"), fmt.Sprintf("%s_claim-B=%s", cdiEnvVarPrefix, "2,3")}},
+			},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-guaranteed",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-3"}}},
+				},
+			},
 			expectedRefreshCalls: 1,
 		},
 		{

@@ -99,7 +99,8 @@ func (c *CdiManager) Refresh() error {
 	return nil
 }
 
-// GetDeviceEnv returns the environment edits for a specific CDI device allocation.
+// GetDeviceEnv returns the environment edits for a specific CDI device allocation
+// from the current cache. Call Refresh before lookup to load the latest on-disk specs.
 func (c *CdiManager) GetDeviceEnv(deviceName string) ([]string, error) {
 	device := c.cache.GetDevice(cdiparser.QualifiedName(cdiVendor, cdiClass, deviceName))
 	if device == nil {
