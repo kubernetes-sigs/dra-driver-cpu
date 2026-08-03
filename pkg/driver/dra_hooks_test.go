@@ -79,9 +79,12 @@ func (m *mockKubeletPlugin) PublishResources(ctx context.Context, resources reso
 func (m *mockKubeletPlugin) Stop() {}
 
 type mockCdiMgr struct {
-	devices     map[string]string
-	addError    error
-	removeError error
+	devices      map[string]string
+	addError     error
+	refreshError error
+	getError     error
+	removeError  error
+	refreshCalls int
 }
 
 func newMockCdiMgr() *mockCdiMgr {
@@ -90,12 +93,36 @@ func newMockCdiMgr() *mockCdiMgr {
 	}
 }
 
+func newMockCdiMgrWithAllocations(allocations map[types.UID]cpuset.CPUSet) *mockCdiMgr {
+	mgr := newMockCdiMgr()
+	for uid, cpus := range allocations {
+		mgr.devices[getCDIDeviceName(uid)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, uid, cpus.String())
+	}
+	return mgr
+}
+
 func (m *mockCdiMgr) AddDevice(_ logr.Logger, deviceName, envVar string) error {
 	if m.addError != nil {
 		return m.addError
 	}
 	m.devices[deviceName] = envVar
 	return nil
+}
+
+func (m *mockCdiMgr) Refresh() error {
+	m.refreshCalls++
+	return m.refreshError
+}
+
+func (m *mockCdiMgr) GetDeviceEnv(deviceName string) ([]string, error) {
+	if m.getError != nil {
+		return nil, m.getError
+	}
+	env, ok := m.devices[deviceName]
+	if !ok {
+		return nil, fmt.Errorf("device %q not found", deviceName)
+	}
+	return []string{env}, nil
 }
 
 func (m *mockCdiMgr) RemoveDevice(_ logr.Logger, deviceName string) error {

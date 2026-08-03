@@ -347,12 +347,13 @@ func TestNRISynchronize(t *testing.T) {
 	pod2 := &api.PodSandbox{Id: "pod-id-2", Name: "my-pod-2", Namespace: "my-ns", Uid: "pod-uid-2"}
 
 	testCases := []struct {
-		name            string
-		driver          *CPUDriver
-		runtimePods     []*api.PodSandbox
-		runtimeCtrs     []*api.Container
-		expectedUpdates []*api.ContainerUpdate
-		expectedError   string
+		name                 string
+		driver               *CPUDriver
+		runtimePods          []*api.PodSandbox
+		runtimeCtrs          []*api.Container
+		expectedUpdates      []*api.ContainerUpdate
+		expectedError        string
+		expectedRefreshCalls int
 	}{
 		{
 			name: "empty runtime state clears the store",
@@ -361,6 +362,7 @@ func TestNRISynchronize(t *testing.T) {
 					podConfigStore:     store.NewPodConfig(),
 					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
+					cdiMgr:             newMockCdiMgr(),
 					topology:           deviceTopology{cpuTopology: topo},
 				}
 				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState("stale-ctr", "stale-id", types.UID("stale-claim")))
@@ -376,7 +378,10 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				topology:           deviceTopology{cpuTopology: topo},
+				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+					"claim-A": cpuset.New(0, 1),
+				}),
+				topology: deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
 			runtimeCtrs: []*api.Container{
@@ -398,6 +403,7 @@ func TestNRISynchronize(t *testing.T) {
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-7"}}},
 				},
 			},
+			expectedRefreshCalls: 1,
 		},
 		{
 			name: "only shared containers",
@@ -405,6 +411,7 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
+				cdiMgr:             newMockCdiMgr(),
 				topology:           deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
@@ -429,7 +436,11 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				topology:           deviceTopology{cpuTopology: topo},
+				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+					"claim-A": cpuset.New(0, 1),
+					"claim-B": cpuset.New(2, 3),
+				}),
+				topology: deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
 			runtimeCtrs: []*api.Container{
@@ -446,6 +457,7 @@ func TestNRISynchronize(t *testing.T) {
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-3"}}},
 				},
 			},
+			expectedRefreshCalls: 1,
 		},
 		{
 			name: "container with multiple claims",
@@ -453,7 +465,11 @@ func TestNRISynchronize(t *testing.T) {
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				topology:           deviceTopology{cpuTopology: topo},
+				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+					"claim-A": cpuset.New(0, 1),
+					"claim-B": cpuset.New(2, 3),
+				}),
+				topology: deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1},
 			runtimeCtrs: []*api.Container{
@@ -465,27 +481,117 @@ func TestNRISynchronize(t *testing.T) {
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-3"}}},
 				},
 			},
+			expectedRefreshCalls: 1,
 		},
 		{
-			name: "malformed DRA env fails synchronize",
+			name: "malformed DRA env does not prevent other containers from synchronizing",
 			driver: &CPUDriver{
 				podConfigStore:     store.NewPodConfig(),
 				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 				claimTracker:       store.NewClaimTracker(),
-				topology:           deviceTopology{cpuTopology: topo},
+				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+					"claim-A": cpuset.New(0, 1),
+				}),
+				topology: deviceTopology{cpuTopology: topo},
 			},
 			runtimePods: []*api.PodSandbox{pod1},
 			runtimeCtrs: []*api.Container{
-				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
 				{Id: "p1-malformed", PodSandboxId: pod1.Id, Name: "malformed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "a-b")}},
+				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
 			},
-			expectedError: "failed to parse cpuset value",
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-guaranteed",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1"}}},
+				},
+			},
+			expectedRefreshCalls: 1,
+		},
+		{
+			name: "CDI cache refresh error does not prevent valid claims from synchronizing",
+			driver: func() *CPUDriver {
+				cdiMgr := newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+					"claim-A": cpuset.New(0, 1),
+					"claim-B": cpuset.New(2, 3),
+				})
+				cdiMgr.refreshError = fmt.Errorf("unrelated invalid CDI spec")
+				return &CPUDriver{
+					podConfigStore:     store.NewPodConfig(),
+					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+					claimTracker:       store.NewClaimTracker(),
+					cdiMgr:             cdiMgr,
+					topology:           deviceTopology{cpuTopology: topo},
+				}
+			}(),
+			runtimePods: []*api.PodSandbox{pod1},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1"), fmt.Sprintf("%s_claim-B=%s", cdiEnvVarPrefix, "2,3")}},
+			},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-guaranteed",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-3"}}},
+				},
+			},
+			expectedRefreshCalls: 1,
+		},
+		{
+			name: "invalid claim does not prevent other containers from synchronizing",
+			driver: &CPUDriver{
+				podConfigStore:     store.NewPodConfig(),
+				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+				claimTracker:       store.NewClaimTracker(),
+				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+					"claim-B": cpuset.New(2, 3),
+				}),
+				topology: deviceTopology{cpuTopology: topo},
+			},
+			runtimePods: []*api.PodSandbox{pod1, pod2},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-invalid", PodSandboxId: pod1.Id, Name: "invalid-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
+				{Id: "p2-guaranteed", PodSandboxId: pod2.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-B=%s", cdiEnvVarPrefix, "2,3")}},
+			},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p2-guaranteed",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-3"}}},
+				},
+				{
+					ContainerId: "p1-invalid",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1,4-7"}}},
+				},
+			},
+			expectedRefreshCalls: 1,
+		},
+		{
+			name: "runtime DRA env that mismatches driver-owned CDI spec is ignored",
+			driver: &CPUDriver{
+				podConfigStore:     store.NewPodConfig(),
+				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+				claimTracker:       store.NewClaimTracker(),
+				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+					"claim-A": cpuset.New(2, 3),
+				}),
+				topology: deviceTopology{cpuTopology: topo},
+			},
+			runtimePods: []*api.PodSandbox{pod1},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-invalid", PodSandboxId: pod1.Id, Name: "invalid-ctr", Env: []string{fmt.Sprintf("%s_claim-A=%s", cdiEnvVarPrefix, "0,1")}},
+			},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-invalid",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
+				},
+			},
+			expectedRefreshCalls: 1,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			updates, err := tc.driver.Synchronize(context.Background(), tc.runtimePods, tc.runtimeCtrs)
+			require.Equal(t, tc.expectedRefreshCalls, tc.driver.cdiMgr.(*mockCdiMgr).refreshCalls)
 
 			if tc.expectedError != "" {
 				require.Error(t, err)

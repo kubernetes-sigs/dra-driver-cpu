@@ -20,6 +20,7 @@ import (
 
 	"github.com/go-logr/logr"
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
+	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
 	cdiSpec "tags.cncf.io/container-device-interface/specs-go"
 )
 
@@ -88,6 +89,24 @@ func (c *CdiManager) AddDevice(logger logr.Logger, deviceName string, envVar str
 
 	logger.V(4).Info("Added CDI device", "deviceName", deviceName, "specName", specName, "env", envVar)
 	return nil
+}
+
+// Refresh reloads the CDI specs managed by the cache.
+func (c *CdiManager) Refresh() error {
+	if err := c.cache.Refresh(); err != nil {
+		return fmt.Errorf("failed to refresh CDI cache: %w", err)
+	}
+	return nil
+}
+
+// GetDeviceEnv returns the environment edits for a specific CDI device allocation
+// from the current cache. Call Refresh before lookup to load the latest on-disk specs.
+func (c *CdiManager) GetDeviceEnv(deviceName string) ([]string, error) {
+	device := c.cache.GetDevice(cdiparser.QualifiedName(cdiVendor, cdiClass, deviceName))
+	if device == nil {
+		return nil, fmt.Errorf("failed to find CDI device %q", deviceName)
+	}
+	return append([]string{}, device.ContainerEdits.Env...), nil
 }
 
 // RemoveDevice deletes the dedicated CDI spec file for a single device allocation.

@@ -172,6 +172,9 @@ func TestMetricsNRIAllocationState(t *testing.T) {
 	driver, reg := newMetricsTestDriver(t)
 	claimUID := types.UID("claim-nri")
 	claimCPUs := cpuset.New(0, 1)
+	driver.cdiMgr = newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+		claimUID: claimCPUs,
+	})
 	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod-uid"}
 	container := &api.Container{
 		Id: "container", PodSandboxId: pod.Id, Name: "app",
