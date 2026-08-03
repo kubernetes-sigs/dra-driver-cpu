@@ -82,6 +82,13 @@ type CPUDriver struct {
 	pcieRootMapper          *store.PCIeRootMapper
 	devicesPerResourceSlice int
 	metrics                 cpumetrics.Recorder
+	health                  healthTracker
+}
+
+// deviceHealthEntry is the last known health of a single device.
+type deviceHealthEntry struct {
+	status  kubeletplugin.HealthStatus
+	message string
 }
 
 // deviceTopology holds the CPU topology and device-to-CPU/socket/NUMA
@@ -89,6 +96,7 @@ type CPUDriver struct {
 type deviceTopology struct {
 	cpuTopology            *cpuinfo.CPUTopology
 	deviceNameToCPUID      map[string]int
+	cpuIDToDeviceName      map[int]string
 	deviceNameToSocketID   map[string]int
 	deviceNameToNUMANodeID map[string]int
 	deviceSlices           [][]resourceapi.Device
@@ -152,6 +160,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		kubeClient: providers.K8SClient,
 		topology: deviceTopology{
 			deviceNameToCPUID:      make(map[string]int),
+			cpuIDToDeviceName:      make(map[int]string),
 			deviceNameToSocketID:   make(map[string]int),
 			deviceNameToNUMANodeID: make(map[string]int),
 			reservedCPUs:           config.ReservedCPUs,
@@ -162,6 +171,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		pcieRootMapper:          store.NewPCIeRootMapper(),
 		devicesPerResourceSlice: config.DevicesPerResourceSlice(),
 		metrics:                 metricsRecorder,
+		health:                  newHealthTracker(),
 	}
 	sfs := providers.EnsureSysFS()
 
@@ -204,12 +214,23 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		}
 	} else {
 		devices, plugin.topology.deviceNameToCPUID = device.Build(plugin.topology.cpuTopology, plugin.topology.reservedCPUs, plugin.pcieRootMapper)
+		for name, cpuID := range plugin.topology.deviceNameToCPUID {
+			plugin.topology.cpuIDToDeviceName[cpuID] = name
+		}
 	}
 
 	if len(devices) > 0 {
 		// Chunk devices into slices of at most devicesPerResourceSlice
 		plugin.topology.deviceSlices = slices.Collect(slices.Chunk(devices, plugin.devicesPerResourceSlice))
 	}
+
+	for _, d := range devices {
+		plugin.health.devices[d.Name] = &deviceHealthEntry{
+			status:  kubeletplugin.HealthStatusHealthy,
+			message: "device initialized",
+		}
+	}
+
 	return plugin, nil
 }
 
@@ -235,6 +256,7 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 		kubeletplugin.DriverName(cp.driverName),
 		kubeletplugin.NodeName(cp.nodeName),
 		kubeletplugin.KubeClient(cp.kubeClient),
+		kubeletplugin.HealthService(true),
 	}
 	d, err := kubeletplugin.Start(ctx, cp, kubeletOpts...)
 	if err != nil {
@@ -278,11 +300,19 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 	// publish available resources
 	go cp.PublishResources(ctx)
 
+	// periodically (every healthResendInterval) resend device health so
+	// the kubelet's lease on it does not expire (see WatchHealthStatus in
+	// health.go)
+	cp.health.wg.Add(1)
+	go cp.healthResendLoop(ctx)
+
 	return asyncErr, nil
 }
 
 // Stop stops the CPUDriver.
 func (cp *CPUDriver) Stop() {
+	close(cp.health.stopCh)
+	cp.health.wg.Wait()
 	cp.nriPlugin.Stop()
 	cp.draPlugin.Stop()
 }

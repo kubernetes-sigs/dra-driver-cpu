@@ -26,6 +26,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/utils/cpuset"
 )
 
@@ -196,6 +197,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		for uid, cpus := range claimAllocations {
 			cLogger := logger.WithValues("claimUID", uid)
 			if err := cp.validatePreparedClaimAllocation(uid, cpus); err != nil {
+				cp.markCPUSetDevicesHealth(logger, cpus, kubeletplugin.HealthStatusUnhealthy, fmt.Sprintf("prepared claim allocation validation failed: %s", err))
 				return nil, nil, err
 			}
 
