@@ -123,7 +123,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 	}
 
 	var cpuAssignment cpuset.CPUSet
-	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
+	allocatableCPUs := cp.cpuAllocationStore.GetAllocatableCPUs()
 	for _, alloc := range claim.Status.Allocation.Devices.Results {
 		if alloc.Driver != cp.driverName {
 			continue
@@ -153,7 +153,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid socket ID found for device %s", alloc.Device)}
 			}
 			socketCPUs := topo.CPUDetails.CPUsInSockets(socketID)
-			availableCPUsForDevice := sharedCPUs.Difference(cpuAssignment).Intersection(socketCPUs)
+			availableCPUsForDevice := allocatableCPUs.Difference(cpuAssignment).Intersection(socketCPUs)
 			logger.V(4).Info("socket CPU availability", "socketID", socketID, "socketCPUs", socketCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
 			cur, err = cpumanager.TakeByTopologyNUMAPacked(logger, topo, availableCPUsForDevice, int(claimCPUCount), cpumanager.CPUSortingStrategyPacked, true)
 		case device.GROUP_BY_NUMA_NODE:
@@ -162,7 +162,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid NUMA node ID found for device %s", alloc.Device)}
 			}
 			numaCPUs := topo.CPUDetails.CPUsInNUMANodes(numaNodeID)
-			availableCPUsForDevice := sharedCPUs.Difference(cpuAssignment).Intersection(numaCPUs)
+			availableCPUsForDevice := allocatableCPUs.Difference(cpuAssignment).Intersection(numaCPUs)
 			logger.V(4).Info("NUMA node CPU availability", "numaNodeID", numaNodeID, "numaCPUs", numaCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
 			cur, err = cpumanager.TakeByTopologyNUMAPacked(logger, topo, availableCPUsForDevice, int(claimCPUCount), cpumanager.CPUSortingStrategyPacked, true)
 		case device.GROUP_BY_MACHINE:
@@ -193,11 +193,15 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		return kubeletplugin.PrepareResult{}
 	}
 
+	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.
+	if err := cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claim.UID, cpuAssignment); err != nil {
+		return kubeletplugin.PrepareResult{Err: err}
+	}
 	result := cp.prepareDevices(logger, claim, cpuAssignment)
 	if result.Err != nil {
+		cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claim.UID)
 		return result
 	}
-	cp.cpuAllocationStore.AddResourceClaimAllocation(logger, claim.UID, cpuAssignment)
 	cp.metricsRecorder().RecordClaimAllocatedCPUs(cpuAssignment.Size())
 	cp.refreshAllocationMetrics()
 	return result
@@ -243,19 +247,23 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 		return cp.prepareDevices(logger, claim, existingCPUs)
 	}
 
-	// All the CPUs allocated to a claim should currently be in the shared pool.
-	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
-	if !claimCPUSet.IsSubsetOf(sharedCPUs) {
+	// All the CPUs allocated to a claim must not be prepared for another claim.
+	allocatableCPUs := cp.cpuAllocationStore.GetAllocatableCPUs()
+	if !claimCPUSet.IsSubsetOf(allocatableCPUs) {
 		return kubeletplugin.PrepareResult{
 			Err: fmt.Errorf("claim %s/%s has overlapping device assignment with other claims", claim.Namespace, claim.Name),
 		}
 	}
 
+	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.
+	if err := cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claim.UID, claimCPUSet); err != nil {
+		return kubeletplugin.PrepareResult{Err: err}
+	}
 	result := cp.prepareDevices(logger, claim, claimCPUSet)
 	if result.Err != nil {
+		cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claim.UID)
 		return result
 	}
-	cp.cpuAllocationStore.AddResourceClaimAllocation(logger, claim.UID, claimCPUSet)
 	cp.metricsRecorder().RecordClaimAllocatedCPUs(claimCPUSet.Size())
 	cp.refreshAllocationMetrics()
 	return result
@@ -349,6 +357,10 @@ func (cp *CPUDriver) unprepareResourceClaim(logger logr.Logger, claim kubeletplu
 		return err
 	}
 	cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claim.UID)
+	cp.claimTracker.Cleanup(claim.UID)
+	// TODO(#279): Update existing shared containers here once all supported runtimes can
+	// safely process unsolicited NRI UpdateContainers calls. Until then, each container
+	// picks up the expanded cpuset on its next CreateContainer or Synchronize.
 	return nil
 }
 
@@ -441,7 +453,7 @@ func (cp *CPUDriver) validateOpaqueCPUSet(opaqueCPUSet cpuset.CPUSet, onlineCPUs
 	}
 
 	// Verify cores do not overlap with other active claims on this node
-	existingClaimCPUs := cp.cpuAllocationStore.GetAllocatedCPUs()
+	existingClaimCPUs := cp.cpuAllocationStore.GetPreparedCPUs()
 	if opaqueCPUSet.Intersection(existingClaimCPUs).Size() > 0 {
 		return fmt.Errorf("requested CPUs %s from opaque config conflict with already allocated claims", opaqueCPUSet.String())
 	}

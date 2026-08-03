@@ -30,7 +30,7 @@ type binding struct {
 	expectOK bool
 }
 
-func TestSetOwner(t *testing.T) {
+func TestSetOwnerSequential(t *testing.T) {
 	type testCase struct {
 		name     string
 		bindings []binding
@@ -141,10 +141,74 @@ func TestSetOwner(t *testing.T) {
 			logger := testr.New(t)
 			bnd := NewClaimTracker()
 			for _, binding := range tcase.bindings {
-				err := bnd.SetOwner(logger, binding.claim, binding.owner.PodUID, binding.owner.ContainerName)
+				_, err := bnd.SetOwner(logger, binding.owner.PodUID, binding.owner.ContainerName, binding.claim)
 				ok := (err == nil)
-				require.Equal(t, ok, binding.expectOK, "setOwner failed for %v", binding)
+				require.Equal(t, binding.expectOK, ok, "setOwner failed for %v", binding)
 			}
+		})
+	}
+}
+
+func TestSetOwnerAtomic(t *testing.T) {
+	logger := testr.New(t)
+	owner := OwnerIdent{PodUID: "pod-AAA", ContainerName: "cnt-1"}
+	testCases := []struct {
+		name            string
+		initialBindings []binding
+		claimUIDs       []k8stypes.UID
+		expectedNew     []k8stypes.UID
+		expectedLen     int
+		expectError     bool
+	}{
+		{
+			name:        "binds all claims atomically",
+			claimUIDs:   []k8stypes.UID{"claim-1", "claim-2"},
+			expectedNew: []k8stypes.UID{"claim-1", "claim-2"},
+			expectedLen: 2,
+		},
+		{
+			name: "conflict leaves new claims unbound",
+			initialBindings: []binding{{
+				claim: "claim-2",
+				owner: OwnerIdent{PodUID: "pod-BBB", ContainerName: "cnt-2"},
+			}},
+			claimUIDs:   []k8stypes.UID{"claim-1", "claim-2"},
+			expectedLen: 1,
+			expectError: true,
+		},
+		{
+			name: "returns only newly bound claims",
+			initialBindings: []binding{{
+				claim: "claim-1",
+				owner: owner,
+			}},
+			claimUIDs:   []k8stypes.UID{"claim-1", "claim-2"},
+			expectedNew: []k8stypes.UID{"claim-2"},
+			expectedLen: 2,
+		},
+		{
+			name:        "rejects empty claim list",
+			expectedLen: 0,
+			expectError: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tracker := NewClaimTracker()
+			for _, initial := range tc.initialBindings {
+				_, err := tracker.SetOwner(logger, initial.owner.PodUID, initial.owner.ContainerName, initial.claim)
+				require.NoError(t, err)
+			}
+
+			newlyBound, err := tracker.SetOwner(logger, owner.PodUID, owner.ContainerName, tc.claimUIDs...)
+			if tc.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.ElementsMatch(t, tc.expectedNew, newlyBound)
+			require.Equal(t, tc.expectedLen, tracker.Len())
 		})
 	}
 }
@@ -180,7 +244,7 @@ func TestLen(t *testing.T) {
 
 	bnd := NewClaimTracker()
 	for _, binding := range bindings {
-		err := bnd.SetOwner(logger, binding.claim, binding.owner.PodUID, binding.owner.ContainerName)
+		_, err := bnd.SetOwner(logger, binding.owner.PodUID, binding.owner.ContainerName, binding.claim)
 		require.NoError(t, err)
 	}
 	require.Equal(t, bnd.Len(), len(bindings))

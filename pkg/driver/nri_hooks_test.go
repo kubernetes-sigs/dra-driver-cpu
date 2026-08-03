@@ -19,7 +19,6 @@ package driver
 import (
 	"context"
 	"fmt"
-	"sort"
 	"testing"
 
 	"github.com/containerd/nri/pkg/api"
@@ -28,6 +27,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/utils/cpuset"
 )
 
@@ -140,7 +140,7 @@ func TestCreateContainer(t *testing.T) {
 			podConfigStore: store.NewPodConfig(),
 			cpuAllocationStore: func() *store.CPUAllocation {
 				store := store.NewCPUAllocation(topo, cpuset.New())
-				store.AddResourceClaimAllocation(logger, types.UID(claimUID), cpuset.New(0, 1, 2, 3))
+				requirePreparedResourceClaim(t, logger, store, types.UID(claimUID), cpuset.New(0, 1, 2, 3))
 				return store
 			}(),
 			claimTracker: store.NewClaimTracker(),
@@ -166,7 +166,7 @@ func TestCreateContainer(t *testing.T) {
 			podConfigStore: store.NewPodConfig(),
 			cpuAllocationStore: func() *store.CPUAllocation {
 				store := store.NewCPUAllocation(topo, cpuset.New())
-				store.AddResourceClaimAllocation(logger, types.UID(claimUID), cpuset.New(0, 1, 2, 3))
+				requirePreparedResourceClaim(t, logger, store, types.UID(claimUID), cpuset.New(0, 1, 2, 3))
 				return store
 			}(),
 			claimTracker: store.NewClaimTracker(),
@@ -186,7 +186,7 @@ func TestCreateContainer(t *testing.T) {
 			}(),
 			cpuAllocationStore: func() *store.CPUAllocation {
 				store := store.NewCPUAllocation(topo, cpuset.New())
-				store.AddResourceClaimAllocation(logger, types.UID(claimUID), cpuset.New(2, 3))
+				requirePreparedResourceClaim(t, logger, store, types.UID(claimUID), cpuset.New(2, 3))
 				return store
 			}(),
 			claimTracker: store.NewClaimTracker(),
@@ -234,7 +234,7 @@ func TestCreateContainer(t *testing.T) {
 			podConfigStore: store.NewPodConfig(),
 			cpuAllocationStore: func() *store.CPUAllocation {
 				store := store.NewCPUAllocation(topo, cpuset.New())
-				store.AddResourceClaimAllocation(logger, types.UID(claimUID), cpuset.New(0, 1))
+				requirePreparedResourceClaim(t, logger, store, types.UID(claimUID), cpuset.New(0, 1))
 				return store
 			}(),
 			claimTracker: store.NewClaimTracker(),
@@ -261,6 +261,7 @@ func TestCreateContainer(t *testing.T) {
 				require.Contains(t, err.Error(), tc.expectedErrorContains)
 				require.Nil(t, adjust)
 				require.Nil(t, updates)
+				require.Zero(t, tc.claimTracker.Len(), "failed CreateContainer must not retain claim owners")
 				return
 			}
 
@@ -287,12 +288,11 @@ func TestStopContainer(t *testing.T) {
 	topo, _ := mockProvider.GetCPUTopology(logger)
 
 	testCases := []struct {
-		name               string
-		driver             *CPUDriver
-		expectedUpdatesFor []string
+		name   string
+		driver *CPUDriver
 	}{
 		{
-			name: "Stop guaranteed container sets update required for shared containers",
+			name: "Stop guaranteed container does not update shared containers",
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{
 					podConfigStore:     store.NewPodConfig(),
@@ -300,11 +300,12 @@ func TestStopContainer(t *testing.T) {
 					claimTracker:       store.NewClaimTracker(),
 					topology:           deviceTopology{cpuTopology: topo},
 				}
-				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id), types.UID("claim-uid-1")))
+				claimUID := types.UID("claim-uid-1")
+				requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, cpuset.New(0, 1))
+				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id), claimUID))
 				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
 				return driver
 			}(),
-			expectedUpdatesFor: []string{ctr2.Id},
 		},
 		{
 			name: "Stop non-guaranteed container does not set update required",
@@ -319,18 +320,91 @@ func TestStopContainer(t *testing.T) {
 				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
 				return driver
 			}(),
-			expectedUpdatesFor: []string{},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			sort.Strings(tc.expectedUpdatesFor)
 			upd, err := tc.driver.StopContainer(context.Background(), pod1, ctr1)
 			require.NoError(t, err)
-			require.Equal(t, containerIDsFromUpdates(upd), tc.expectedUpdatesFor)
+			require.Empty(t, upd)
 		})
 	}
+}
+
+func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
+	logger := testr.New(t)
+	allCPUs := cpuset.New(0, 1, 2, 3)
+	var infos []cpuinfo.CPUInfo
+	for _, cpuID := range allCPUs.UnsortedList() {
+		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
+	}
+	topo, err := (&cpuinfo.MockCPUInfoProvider{CPUInfos: infos}).GetCPUTopology(logger)
+	require.NoError(t, err)
+
+	claimUID := types.UID("claim-restart")
+	claimCPUs := cpuset.New(0, 1)
+	cpuStore := store.NewCPUAllocation(topo, cpuset.New())
+	require.NoError(t, cpuStore.ReserveResourceClaimAllocation(logger, claimUID, claimCPUs))
+	driver := &CPUDriver{
+		podConfigStore:     store.NewPodConfig(),
+		cpuAllocationStore: cpuStore,
+		claimTracker:       store.NewClaimTracker(),
+		topology:           deviceTopology{cpuTopology: topo},
+	}
+	driver.podConfigStore.SetContainerState("shared-pod", store.NewContainerState("shared", "shared-container"))
+
+	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod", Name: "pod", Namespace: "ns"}
+	container := func(id string) *api.Container {
+		return &api.Container{
+			Id:           id,
+			PodSandboxId: pod.Id,
+			Name:         "app",
+			Env:          []string{fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, claimCPUs.String())},
+		}
+	}
+
+	first := container("container-1")
+	adjustment, updates, err := driver.CreateContainer(context.Background(), pod, first)
+	require.NoError(t, err)
+	require.Equal(t, claimCPUs.String(), adjustment.Linux.Resources.Cpu.Cpus)
+	require.Len(t, updates, 1)
+	require.True(t, cpuStore.GetSharedCPUs().Equals(cpuset.New(2, 3)))
+
+	updates, err = driver.StopContainer(context.Background(), pod, first)
+	require.NoError(t, err)
+	require.Empty(t, updates)
+	preparedCPUs, ok := cpuStore.GetResourceClaimAllocation(claimUID)
+	require.True(t, ok)
+	require.True(t, preparedCPUs.Equals(claimCPUs))
+	require.True(t, cpuStore.GetSharedCPUs().Equals(cpuset.New(2, 3)))
+	require.True(t, cpuStore.GetAllocatableCPUs().Equals(cpuset.New(2, 3)))
+	require.Equal(t, 1, driver.claimTracker.Len())
+
+	restarted := container("container-2")
+	adjustment, updates, err = driver.CreateContainer(context.Background(), pod, restarted)
+	require.NoError(t, err)
+	require.Equal(t, claimCPUs.String(), adjustment.Linux.Resources.Cpu.Cpus)
+	require.Empty(t, updates)
+	require.True(t, cpuStore.GetSharedCPUs().Equals(cpuset.New(2, 3)))
+	require.Equal(t, 1, driver.claimTracker.Len())
+
+	// Delayed events for the old runtime ID must not remove or release the replacement.
+	require.NoError(t, driver.RemoveContainer(context.Background(), pod, first))
+	require.NotNil(t, driver.podConfigStore.GetContainerState(types.UID(pod.Uid), restarted.Name))
+	require.True(t, cpuStore.GetSharedCPUs().Equals(cpuset.New(2, 3)))
+
+	updates, err = driver.StopContainer(context.Background(), pod, first)
+	require.NoError(t, err)
+	require.Empty(t, updates)
+	require.NotNil(t, driver.podConfigStore.GetContainerState(types.UID(pod.Uid), restarted.Name))
+	require.True(t, cpuStore.GetSharedCPUs().Equals(cpuset.New(2, 3)))
+
+	updates, err = driver.StopContainer(context.Background(), pod, restarted)
+	require.NoError(t, err)
+	require.Empty(t, updates)
+	require.Nil(t, driver.podConfigStore.GetContainerState(types.UID(pod.Uid), restarted.Name))
+	require.True(t, cpuStore.GetSharedCPUs().Equals(cpuset.New(2, 3)))
 }
 
 func TestNRISynchronize(t *testing.T) {
@@ -499,22 +573,7 @@ func TestNRISynchronize(t *testing.T) {
 	}
 }
 
-func containerIDsFromUpdates(updates []*api.ContainerUpdate) []string {
-	ids := make([]string, 0, len(updates))
-	for _, upd := range updates {
-		ids = append(ids, upd.ContainerId)
-	}
-	sort.Strings(ids)
-	return ids
-}
-
-// TestStopContainerReleasesClaimToSharedPool asserts the DRA/NRI lifetime invariant tracked by #188:
-// stopping a guaranteed container releases its claim's CPUs back into the shared pool *during*
-// StopContainer (the documented early-release workaround), and immediately re-broadens the other
-// shared containers to the freed pool, rather than deferring the release to UnprepareResourceClaims.
-// The existing TestStopContainer only asserts which containers are updated; this asserts the actual
-// release (the shared-pool contents) and the re-broadened cpuset values.
-func TestStopContainerReleasesClaimToSharedPool(t *testing.T) {
+func TestStopContainerKeepsClaimOutOfSharedPoolUntilUnprepare(t *testing.T) {
 	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	var infos []cpuinfo.CPUInfo
@@ -532,14 +591,18 @@ func TestStopContainerReleasesClaimToSharedPool(t *testing.T) {
 	claimedCPUs := cpuset.New(0, 1)
 
 	cpuAllocationStore := store.NewCPUAllocation(topo, cpuset.New())
-	cpuAllocationStore.AddResourceClaimAllocation(logger, claimUID, claimedCPUs)
+	requirePreparedResourceClaim(t, logger, cpuAllocationStore, claimUID, claimedCPUs)
 
 	driver := &CPUDriver{
+		cdiMgr:             newMockCdiMgr(),
 		podConfigStore:     store.NewPodConfig(),
 		cpuAllocationStore: cpuAllocationStore,
 		claimTracker:       store.NewClaimTracker(),
 		topology:           deviceTopology{cpuTopology: topo},
 	}
+	driver.cdiMgr.(*mockCdiMgr).devices[getCDIDeviceName(claimUID)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, claimedCPUs.String())
+	_, err := driver.claimTracker.SetOwner(logger, types.UID(guaranteedPod.Uid), guaranteedCtr.Name, claimUID)
+	require.NoError(t, err)
 	driver.podConfigStore.SetContainerState(types.UID(guaranteedPod.Uid),
 		store.NewContainerState(guaranteedCtr.Name, types.UID(guaranteedCtr.Id), claimUID))
 	driver.podConfigStore.SetContainerState(types.UID(sharedPod.Uid),
@@ -552,16 +615,19 @@ func TestStopContainerReleasesClaimToSharedPool(t *testing.T) {
 	updates, err := driver.StopContainer(context.Background(), guaranteedPod, guaranteedCtr)
 	require.NoError(t, err)
 
-	// Invariant 1: the claim's CPUs are released back into the shared pool during StopContainer,
-	// not deferred to UnprepareResourceClaims.
-	require.True(t, driver.cpuAllocationStore.GetSharedCPUs().Equals(allCPUs),
-		"StopContainer should release the claim's CPUs back into the shared pool")
+	// StopContainer does not change DRA-owned allocation state or shared container cpusets.
+	require.True(t, driver.cpuAllocationStore.GetSharedCPUs().Equals(allCPUs.Difference(claimedCPUs)),
+		"StopContainer must keep the claim's CPUs out of the shared pool")
+	preparedCPUs, ok := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
+	require.True(t, ok, "StopContainer must retain the prepared claim")
+	require.True(t, preparedCPUs.Equals(claimedCPUs))
+	require.True(t, driver.cpuAllocationStore.GetAllocatableCPUs().Equals(allCPUs.Difference(claimedCPUs)),
+		"prepared CPUs must remain unavailable to new exclusive claims")
+	require.Empty(t, updates)
 
-	// Invariant 2: the surviving shared container is immediately re-broadened to the full pool.
-	require.Equal(t, []*api.ContainerUpdate{
-		{
-			ContainerId: sharedCtr.Id,
-			Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: allCPUs.String()}}},
-		},
-	}, updates)
+	// UnprepareResourceClaims is the authoritative release point.
+	unprepared, err := driver.UnprepareResourceClaims(context.Background(), []kubeletplugin.NamespacedObject{{UID: claimUID}})
+	require.NoError(t, err)
+	require.NoError(t, unprepared[claimUID])
+	require.True(t, driver.cpuAllocationStore.GetSharedCPUs().Equals(allCPUs))
 }

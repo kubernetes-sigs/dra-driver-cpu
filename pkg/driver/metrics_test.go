@@ -186,9 +186,9 @@ func TestMetricsNRIAllocationState(t *testing.T) {
 
 	_, err = driver.StopContainer(context.Background(), pod, container)
 	require.NoError(t, err)
-	require.Equal(t, float64(0), metricValue(t, reg, "dra_cpu_allocated_cpus", nil))
-	require.Equal(t, float64(4), metricValue(t, reg, "dra_cpu_available_cpus", nil))
-	require.Equal(t, float64(0), metricValue(t, reg, "dra_cpu_resource_claims_active", nil))
+	require.Equal(t, float64(2), metricValue(t, reg, "dra_cpu_allocated_cpus", nil))
+	require.Equal(t, float64(2), metricValue(t, reg, "dra_cpu_available_cpus", nil))
+	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_resource_claims_active", nil))
 }
 
 func TestMetricsUnprepareResults(t *testing.T) {
