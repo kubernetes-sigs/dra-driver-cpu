@@ -17,6 +17,7 @@ limitations under the License.
 package device
 
 import (
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	resourceapi "k8s.io/api/resource/v1"
 )
 
@@ -50,6 +51,21 @@ const (
 	// claim from a grouped device's capacity.
 	AttributeAllocatedNumCPUs resourceapi.QualifiedName = "dra.cpu/allocatedNumCPUs"
 )
+
+// CPUAttributes builds the per-CPU device attributes from a CPUInfo and SMT state.
+func CPUAttributes(cpu cpuinfo.CPUInfo, smtEnabled bool) map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
+	attrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+		AttributeNUMANodeID: {IntValue: new(int64(cpu.NUMANodeID))},
+		AttributeSocketID:   {IntValue: new(int64(cpu.SocketID))},
+		AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
+		AttributeCacheL3ID:  {IntValue: new(int64(cpu.UncoreCacheID))},
+		AttributeCoreType:   {StringValue: new(cpu.CoreType.String())},
+		AttributeCoreID:     {IntValue: new(int64(cpu.CoreID))},
+		AttributeCPUID:      {IntValue: new(int64(cpu.CpuID))},
+	}
+	SetCompatibilityAttributes(attrs, int64(cpu.NUMANodeID))
+	return attrs
+}
 
 // SetCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other
 // DRA resource drivers leveraging attributes which are not kubernetes standard.

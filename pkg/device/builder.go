@@ -246,16 +246,7 @@ func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PC
 	var allDevices []resourceapi.Device
 	for _, deviceInfo := range deviceInfos {
 		cpu := deviceInfo.cpu
-		deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-			AttributeNUMANodeID: {IntValue: new(int64(cpu.NUMANodeID))},
-			AttributeSocketID:   {IntValue: new(int64(cpu.SocketID))},
-			AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
-			AttributeCacheL3ID:  {IntValue: new(int64(cpu.UncoreCacheID))},
-			AttributeCoreType:   {StringValue: new(cpu.CoreType.String())},
-			AttributeCoreID:     {IntValue: new(int64(cpu.CoreID))},
-			AttributeCPUID:      {IntValue: new(int64(cpu.CpuID))},
-		}
-		SetCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID))
+		deviceAttrs := CPUAttributes(cpu, smtEnabled)
 		addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, cpu.CpuID)
 
 		cpuDevice := resourceapi.Device{

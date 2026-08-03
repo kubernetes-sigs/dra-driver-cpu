@@ -302,6 +302,37 @@ func (cp *CPUDriver) prepareDevices(logger logr.Logger, claim *resourceapi.Resou
 		preparedDevices = append(preparedDevices, preparedDevice)
 	}
 
+	if cp.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED && claimCPUSet.Size() > 0 {
+		var requestNames []string
+		for _, allocResult := range claim.Status.Allocation.Devices.Results {
+			if allocResult.Driver == cp.driverName && allocResult.Request != "" {
+				requestNames = append(requestNames, allocResult.Request)
+			}
+		}
+		for _, cpuID := range claimCPUSet.List() {
+			cpuInfo, ok := cp.topology.cpuTopology.CPUDetails[cpuID]
+			if !ok {
+				logger.Error(nil, "CPU not found in topology", "cpuID", cpuID)
+				continue
+			}
+			attrs := device.CPUAttributes(cpuInfo, cp.topology.cpuTopology.SMTEnabled)
+
+			metadataAttrs := make(map[string]resourceapi.DeviceAttribute, len(attrs))
+			for k, v := range attrs {
+				metadataAttrs[string(k)] = v
+			}
+			preparedDevices = append(preparedDevices, kubeletplugin.Device{
+				PoolName:   cp.nodeName,
+				DeviceName: fmt.Sprintf("%s%03d", device.CPUDevicePrefix, cpuID),
+				Requests:   requestNames,
+				Metadata: &kubeletplugin.DeviceMetadata{
+					Attributes: metadataAttrs,
+				},
+			})
+		}
+		logger.V(6).Info("added per-CPU metadata devices", "numCPUs", claimCPUSet.Size(), "totalDevices", len(preparedDevices))
+	}
+
 	logger.V(4).Info("prepared devices for resource claim", "preparedDevices", preparedDevices)
 	return kubeletplugin.PrepareResult{
 		Devices: preparedDevices,
