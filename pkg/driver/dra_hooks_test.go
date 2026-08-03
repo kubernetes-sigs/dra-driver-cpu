@@ -1708,7 +1708,8 @@ func newDriverWithAllocatedClaim(t *testing.T, logger logr.Logger, claimUID type
 	cpuAllocationStore := store.NewCPUAllocation(topo, cpuset.New())
 	requirePreparedResourceClaim(t, logger, cpuAllocationStore, claimUID, allocatedCPUs)
 	claimTracker := store.NewClaimTracker()
-	require.NoError(t, claimTracker.SetOwner(logger, claimUID, "pod", "container"))
+	_, err = claimTracker.SetOwner(logger, "pod", "container", claimUID)
+	require.NoError(t, err)
 
 	return &CPUDriver{
 		cdiMgr:             mockCdiMgr,
