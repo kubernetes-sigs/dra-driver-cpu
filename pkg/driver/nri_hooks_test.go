@@ -350,7 +350,7 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 		podConfigStore:     store.NewPodConfig(),
 		cpuAllocationStore: cpuStore,
 		claimTracker:       store.NewClaimTracker(),
-		cpuTopology:        topo,
+		topology:           deviceTopology{cpuTopology: topo},
 	}
 	driver.podConfigStore.SetContainerState("shared-pod", store.NewContainerState("shared", "shared-container"))
 
