@@ -17,6 +17,7 @@ limitations under the License.
 package store
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 
@@ -56,14 +57,12 @@ func NewClaimTracker() *ClaimTracker {
 	}
 }
 
-func (ctk *ClaimTracker) SetOwner(logger logr.Logger, claimUID, podUID k8stypes.UID, containerName string) error {
-	_, err := ctk.SetOwners(logger, []k8stypes.UID{claimUID}, podUID, containerName)
-	return err
-}
-
-// SetOwners atomically binds claims to a single container. It returns the claims
+// SetOwner atomically binds claims to a single container. It returns the claims
 // which were newly bound so callers can roll them back if a later operation fails.
-func (ctk *ClaimTracker) SetOwners(logger logr.Logger, claimUIDs []k8stypes.UID, podUID k8stypes.UID, containerName string) ([]k8stypes.UID, error) {
+func (ctk *ClaimTracker) SetOwner(logger logr.Logger, podUID k8stypes.UID, containerName string, claimUIDs ...k8stypes.UID) ([]k8stypes.UID, error) {
+	if len(claimUIDs) == 0 {
+		return nil, errors.New("no claims to bind")
+	}
 	curIdent := OwnerIdent{
 		PodUID:        podUID,
 		ContainerName: containerName,

@@ -72,7 +72,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 					allGuaranteedCPUs = allGuaranteedCPUs.Union(cpus)
 					claimUIDs = append(claimUIDs, uid)
 				}
-				if _, err := claimTracker.SetOwners(cLogger, claimUIDs, types.UID(pod.Uid), container.Name); err != nil {
+				if _, err := claimTracker.SetOwner(cLogger, types.UID(pod.Uid), container.Name, claimUIDs...); err != nil {
 					return nil, err
 				}
 				if err := cpuAllocationStore.ValidateResourceClaimAllocations(claimAllocations); err != nil {
@@ -190,7 +190,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 			guaranteedCPUs = guaranteedCPUs.Union(cpus)
 			claimUIDs = append(claimUIDs, uid)
 		}
-		newOwners, err := cp.claimTracker.SetOwners(logger, claimUIDs, podUID, ctr.Name)
+		newOwners, err := cp.claimTracker.SetOwner(logger, podUID, ctr.Name, claimUIDs...)
 		if err != nil {
 			return nil, nil, err
 		}

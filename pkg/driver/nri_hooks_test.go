@@ -601,7 +601,8 @@ func TestStopContainerKeepsClaimOutOfSharedPoolUntilUnprepare(t *testing.T) {
 		topology:           deviceTopology{cpuTopology: topo},
 	}
 	driver.cdiMgr.(*mockCdiMgr).devices[getCDIDeviceName(claimUID)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, claimedCPUs.String())
-	require.NoError(t, driver.claimTracker.SetOwner(logger, claimUID, types.UID(guaranteedPod.Uid), guaranteedCtr.Name))
+	_, err := driver.claimTracker.SetOwner(logger, types.UID(guaranteedPod.Uid), guaranteedCtr.Name, claimUID)
+	require.NoError(t, err)
 	driver.podConfigStore.SetContainerState(types.UID(guaranteedPod.Uid),
 		store.NewContainerState(guaranteedCtr.Name, types.UID(guaranteedCtr.Id), claimUID))
 	driver.podConfigStore.SetContainerState(types.UID(sharedPod.Uid),
