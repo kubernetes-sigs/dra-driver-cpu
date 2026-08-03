@@ -47,10 +47,9 @@ const (
 	testDriverName = "dra-driver-cpu.k8s.io"
 )
 
-func requireEnforcedResourceClaim(t testing.TB, logger logr.Logger, allocationStore *store.CPUAllocation, claimUID types.UID, cpus cpuset.CPUSet) {
+func requirePreparedResourceClaim(t testing.TB, logger logr.Logger, allocationStore *store.CPUAllocation, claimUID types.UID, cpus cpuset.CPUSet) {
 	t.Helper()
 	require.NoError(t, allocationStore.ReserveResourceClaimAllocation(logger, claimUID, cpus))
-	require.NoError(t, allocationStore.EnforceResourceClaims(map[types.UID]cpuset.CPUSet{claimUID: cpus}))
 }
 
 // testSysFS enables full isolation and full mocking from the host filesystem.
@@ -734,7 +733,7 @@ func TestPrepareResourceClaims(t *testing.T) {
 			setupDriver: func(t *testing.T) *CPUDriver {
 				t.Helper()
 				d := baseCPUDriver(t)
-				requireEnforcedResourceClaim(t, testr.New(t), d.cpuAllocationStore, "claim0", cpuset.New(0))
+				requirePreparedResourceClaim(t, testr.New(t), d.cpuAllocationStore, "claim0", cpuset.New(0))
 				return d
 			},
 			claims: []*resourceapi.ResourceClaim{
@@ -813,7 +812,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 		}
 		if withExistingAllocation {
-			requireEnforcedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, existingCPUs)
+			requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, existingCPUs)
 		}
 		return driver
 	}
@@ -834,7 +833,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 		}
 		if withExistingAllocation {
-			requireEnforcedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, existingCPUs)
+			requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, existingCPUs)
 		}
 		return driver
 	}
@@ -933,7 +932,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 		driver, err := New(testr.New(t), prov, &conf)
 		require.NoError(t, err)
 		for claimUID, cpus := range initialAllocations {
-			requireEnforcedResourceClaim(t, testr.New(t), driver.cpuAllocationStore, claimUID, cpus)
+			requirePreparedResourceClaim(t, testr.New(t), driver.cpuAllocationStore, claimUID, cpus)
 		}
 		return driver
 	}
@@ -1360,7 +1359,7 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 			firstDevices:   []string{"cpudev000", "cpudev002"},
 			secondDevices:  []string{"cpudev000", "cpudev002"},
 			expectedCPUSet: cpuset.New(0, 1),
-			expectedShared: cpuset.New(0, 1, 2, 3),
+			expectedShared: cpuset.New(2, 3),
 			expectError:    false,
 		},
 		{
@@ -1368,7 +1367,7 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 			firstDevices:   []string{"cpudev000", "cpudev002"},
 			secondDevices:  []string{"cpudev001", "cpudev003"},
 			expectedCPUSet: cpuset.New(0, 1),
-			expectedShared: cpuset.New(0, 1, 2, 3),
+			expectedShared: cpuset.New(2, 3),
 			expectError:    true,
 		},
 	}
@@ -1497,7 +1496,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			firstClaim:     testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2}),
 			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2}),
 			expectedCPUSet: cpuset.New(0, 4),
-			expectedShared: cpuset.New(0, 1, 2, 3, 4, 5, 6, 7),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
 		},
 		{
 			name:           "different socket repeated",
@@ -1505,7 +1504,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			firstClaim:     testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket0": 2}),
 			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevsocket1": 2}),
 			expectedCPUSet: cpuset.New(0, 4),
-			expectedShared: cpuset.New(0, 1, 2, 3, 4, 5, 6, 7),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
 		},
 		{
 			name:           "same NUMA node repeated",
@@ -1513,7 +1512,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			firstClaim:     testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2}),
 			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2}),
 			expectedCPUSet: cpuset.New(0, 4),
-			expectedShared: cpuset.New(0, 1, 2, 3, 4, 5, 6, 7),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
 		},
 		{
 			name:           "different NUMA node repeated",
@@ -1521,7 +1520,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			firstClaim:     testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma0": 2}),
 			secondClaim:    testClaim(claimUID, testDriverName, testNodeName, map[string]int64{"cpudevnuma1": 2}),
 			expectedCPUSet: cpuset.New(0, 4),
-			expectedShared: cpuset.New(0, 1, 2, 3, 4, 5, 6, 7),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
 		},
 	}
 
@@ -1669,7 +1668,7 @@ func newDriverWithAllocatedClaim(t *testing.T, logger logr.Logger, claimUID type
 	topo, err := mockProvider.GetCPUTopology(logger)
 	require.NoError(t, err)
 	cpuAllocationStore := store.NewCPUAllocation(topo, cpuset.New())
-	requireEnforcedResourceClaim(t, logger, cpuAllocationStore, claimUID, allocatedCPUs)
+	requirePreparedResourceClaim(t, logger, cpuAllocationStore, claimUID, allocatedCPUs)
 	claimTracker := store.NewClaimTracker()
 	require.NoError(t, claimTracker.SetOwner(logger, claimUID, "pod", "container"))
 
@@ -2049,7 +2048,7 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 	driver.topology.onlineCPUs = driver.topology.cpuTopology.CPUDetails.CPUs()
 	driver.cpuAllocationStore = store.NewCPUAllocation(driver.topology.cpuTopology, reservedCPUs)
 	for claimUID, cpus := range initialAllocations {
-		requireEnforcedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, cpus)
+		requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, cpus)
 	}
 
 	topo, err := mockProvider.GetCPUTopology(logger)

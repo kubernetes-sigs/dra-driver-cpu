@@ -75,7 +75,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				if _, err := claimTracker.SetOwners(cLogger, claimUIDs, types.UID(pod.Uid), container.Name); err != nil {
 					return nil, err
 				}
-				if err := cpuAllocationStore.EnforceResourceClaims(claimAllocations); err != nil {
+				if err := cpuAllocationStore.ValidateResourceClaimAllocations(claimAllocations); err != nil {
 					return nil, err
 				}
 				cLogger.V(2).Info("found guaranteed CPUs", "cpus", allGuaranteedCPUs.String())
@@ -194,7 +194,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := cp.cpuAllocationStore.EnforceResourceClaims(claimAllocations); err != nil {
+		if err := cp.cpuAllocationStore.ValidateResourceClaimAllocations(claimAllocations); err != nil {
 			cp.claimTracker.Cleanup(newOwners...)
 			return nil, nil, err
 		}
@@ -202,52 +202,36 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs...)
 		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
 		cp.podConfigStore.SetContainerState(podUID, state)
-		// Remove the guaranteed CPUs from the containers with shared CPUs.
-		updates = cp.getSharedContainerUpdates(logger, containerId)
+		// A new owner means this is the first CreateContainer after Prepare. On restart,
+		// the owner already exists and the shared cpuset has not changed.
+		if len(newOwners) > 0 {
+			updates = cp.getSharedContainerUpdates(logger, containerId)
+		}
 	}
 
 	return adjust, updates, nil
 }
 
-// StopContainer releases a guaranteed container's CPUs back into the shared pool.
+// StopContainer removes runtime container state without changing DRA-owned allocations.
 //
 // CPU-allocation lifetime across the DRA and NRI hooks:
-//   - PrepareResourceClaims (DRA) records a pending reservation and writes the CDI spec carrying
-//     that cpuset. Pending CPUs stay available to shared containers but not to new exclusive claims.
-//   - CreateContainer (NRI) validates and enforces the prepared allocation, then shrinks the shared
-//     pool.
-//   - StopContainer (NRI, here) marks the allocation pending and immediately re-broadens surviving
-//     shared containers. The prepared allocation and owner remain available for a restart.
-//   - UnprepareResourceClaims (DRA) is the authoritative cleanup point for the allocation and owner.
+//   - PrepareResourceClaims (DRA) reserves CPUs and writes the CDI spec carrying that cpuset.
+//   - CreateContainer (NRI) validates the CDI cpuset and applies it to the container.
+//   - StopContainer (NRI, here) removes only the matching runtime container state. The prepared
+//     allocation and owner remain unchanged so a restarted container reuses the same CPUs.
+//   - UnprepareResourceClaims (DRA) is the authoritative release point for the allocation and owner.
 //   - Synchronize (NRI, on restart) rebuilds the stores from the running containers' CDI env.
-//
-// This relies on a ResourceClaim being owned by exactly one container (claim sharing is
-// unsupported), which is what makes pending shared use safe. Revisit before enabling claim sharing,
-// preemption, or mixed shared/isolated allocation.
 func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) ([]*api.ContainerUpdate, error) {
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen), "pod", ctxlog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
 	logger.V(2).Info("begin: StopContainer")
 	defer logger.V(2).Info("end: StopContainer")
 
 	updates := []*api.ContainerUpdate{}
-	claimUIDs, removed := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
+	_, removed := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
 	if !removed {
 		logger.V(2).Info("ignoring stale or unknown StopContainer event")
 		return updates, nil
 	}
-	entries := "none"
-	if len(claimUIDs) > 0 {
-		// Stop enforcing the claim while retaining its prepared allocation for a restart.
-		// TODO: assumes ResourceClaims are not shared across pods/containers; revisit if sharing lands.
-		if err := cp.cpuAllocationStore.SetResourceClaimsEnforcementState(false, claimUIDs...); err != nil {
-			return nil, err
-		}
-		cp.refreshAllocationMetrics()
-		// Remove the guaranteed CPUs from the containers with shared CPUs.
-		updates = cp.getSharedContainerUpdates(logger, types.UID(ctr.GetId()))
-		entries = fmt.Sprintf("%d entries", len(updates))
-	}
-	logger.V(2).Info("StopContainer updates needed", "entries", entries)
 	return updates, nil
 }
 
