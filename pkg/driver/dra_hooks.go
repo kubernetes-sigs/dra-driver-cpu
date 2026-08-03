@@ -130,7 +130,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		}
 		quantity, ok := alloc.ConsumedCapacity[device.CPUResourceQualifiedName]
 		if !ok {
-			return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity for device %q is missing", alloc.Device)}
+			return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity %q for device %q is missing", device.CPUResourceQualifiedName, alloc.Device)}
 		}
 		if quantity.Sign() <= 0 {
 			return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity for device %q must be positive, got %s", alloc.Device, quantity.String())}

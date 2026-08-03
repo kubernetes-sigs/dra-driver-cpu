@@ -1239,68 +1239,19 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 
 func TestPrepareResourceClaimsGroupedModeRejectsInvalidCPUCapacity(t *testing.T) {
 	testCases := []struct {
-		name          string
-		capacity      string
-		expectedError string
+		name            string
+		groupBy         string
+		device          string
+		capacity        string
+		includeCapacity bool
+		expectedError   string
 	}{
-		{name: "fractional below one", capacity: "500m", expectedError: "must be a whole number"},
-		{name: "fractional above one", capacity: "1500m", expectedError: "must be a whole number"},
-		{name: "zero", capacity: "0", expectedError: "must be positive"},
-		{name: "negative", capacity: "-1", expectedError: "must be positive"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			prov := Providers{
-				CPUInfo: &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT},
-				SysFS:   testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
-			}
-			conf := Config{
-				DriverName:       testDriverName,
-				NodeName:         testNodeName,
-				CPUDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
-				CPUDeviceGroupBy: devattr.GROUP_BY_SOCKET,
-			}
-			driver, err := New(testr.New(t), prov, &conf)
-			require.NoError(t, err)
-			mockCdiMgr := newMockCdiMgr()
-			driver.cdiMgr = mockCdiMgr
-
-			claimUID := types.UID("claim-invalid-capacity")
-			claim := testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{
-				{
-					Driver:  testDriverName,
-					Pool:    testNodeName,
-					Device:  "cpudevsocket000",
-					Request: string(claimUID),
-					ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{
-						devattr.CPUResourceQualifiedName: resource.MustParse(tc.capacity),
-					},
-				},
-			})
-
-			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
-			require.NoError(t, err)
-			result := preparedClaims[claimUID]
-			require.ErrorContains(t, result.Err, tc.expectedError)
-			require.Empty(t, result.Devices)
-			require.Empty(t, mockCdiMgr.devices)
-
-			_, allocated := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
-			require.False(t, allocated)
-			require.True(t, cpuset.New(0, 1, 2, 3).Equals(driver.cpuAllocationStore.GetSharedCPUs()))
-		})
-	}
-}
-
-func TestPrepareResourceClaimsGroupedModeRejectsMissingCPUCapacity(t *testing.T) {
-	testCases := []struct {
-		name    string
-		groupBy string
-		device  string
-	}{
-		{name: "socket", groupBy: devattr.GROUP_BY_SOCKET, device: "cpudevsocket000"},
-		{name: "NUMA node", groupBy: devattr.GROUP_BY_NUMA_NODE, device: "cpudevnuma000"},
+		{name: "fractional below one", groupBy: devattr.GROUP_BY_SOCKET, device: "cpudevsocket000", capacity: "500m", includeCapacity: true, expectedError: "must be a whole number"},
+		{name: "fractional above one", groupBy: devattr.GROUP_BY_SOCKET, device: "cpudevsocket000", capacity: "1500m", includeCapacity: true, expectedError: "must be a whole number"},
+		{name: "zero", groupBy: devattr.GROUP_BY_SOCKET, device: "cpudevsocket000", capacity: "0", includeCapacity: true, expectedError: "must be positive"},
+		{name: "negative", groupBy: devattr.GROUP_BY_SOCKET, device: "cpudevsocket000", capacity: "-1", includeCapacity: true, expectedError: "must be positive"},
+		{name: "missing in socket grouping", groupBy: devattr.GROUP_BY_SOCKET, device: "cpudevsocket000", expectedError: fmt.Sprintf("CPU capacity %q for device %q is missing", devattr.CPUResourceQualifiedName, "cpudevsocket000")},
+		{name: "missing in NUMA node grouping", groupBy: devattr.GROUP_BY_NUMA_NODE, device: "cpudevnuma000", expectedError: fmt.Sprintf("CPU capacity %q for device %q is missing", devattr.CPUResourceQualifiedName, "cpudevnuma000")},
 	}
 
 	for _, tc := range testCases {
@@ -1320,20 +1271,24 @@ func TestPrepareResourceClaimsGroupedModeRejectsMissingCPUCapacity(t *testing.T)
 			mockCdiMgr := newMockCdiMgr()
 			driver.cdiMgr = mockCdiMgr
 
-			claimUID := types.UID("claim-missing-capacity")
-			claim := testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{
-				{
-					Driver:  testDriverName,
-					Pool:    testNodeName,
-					Device:  tc.device,
-					Request: string(claimUID),
-				},
-			})
+			claimUID := types.UID("claim-invalid-capacity")
+			allocationResult := resourceapi.DeviceRequestAllocationResult{
+				Driver:  testDriverName,
+				Pool:    testNodeName,
+				Device:  tc.device,
+				Request: string(claimUID),
+			}
+			if tc.includeCapacity {
+				allocationResult.ConsumedCapacity = map[resourceapi.QualifiedName]resource.Quantity{
+					devattr.CPUResourceQualifiedName: resource.MustParse(tc.capacity),
+				}
+			}
+			claim := testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{allocationResult})
 
 			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
 			require.NoError(t, err)
 			result := preparedClaims[claimUID]
-			require.ErrorContains(t, result.Err, fmt.Sprintf("CPU capacity for device %q is missing", tc.device))
+			require.ErrorContains(t, result.Err, tc.expectedError)
 			require.Empty(t, result.Devices)
 			require.Empty(t, mockCdiMgr.devices)
 
