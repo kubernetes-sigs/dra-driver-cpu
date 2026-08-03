@@ -107,6 +107,127 @@ cpuDeviceMode: individual
 	assert.Equal(t, device.CPU_DEVICE_MODE_GROUPED, result.CPUDeviceMode)
 }
 
+// TestLoad_RejectsAmbiguousKeys covers the ways a config file can reach a field
+// without naming it the way the schema does. Each has to fail, and the message
+// has to say what to write instead: for an excluded field that is the
+// alternative setting rather than the canonical spelling, which the next check
+// refuses anyway, and a name matching no field at all stays the decoder's to
+// report.
+func TestLoad_RejectsAmbiguousKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		file            string
+		flags           []string
+		wantContains    []string
+		wantNotContains []string
+	}{{
+		name:         "folded spelling",
+		file:         "apiVersion: v1alpha1\nreservedcpus: \"0-3\"\n",
+		wantContains: []string{"reservedcpus", "reservedCPUs"},
+	}, {
+		name:         "folded spelling, mixed case",
+		file:         "apiVersion: v1alpha1\nReservedCPUs: \"0-3\"\n",
+		wantContains: []string{"ReservedCPUs", "reservedCPUs"},
+	}, {
+		name:         "folded spelling, upper case",
+		file:         "apiVersion: v1alpha1\nRESERVEDCPUS: \"0-3\"\n",
+		wantContains: []string{"RESERVEDCPUS", "reservedCPUs"},
+	}, {
+		name:         "folded spelling, one letter",
+		file:         "apiVersion: v1alpha1\nreservedCpus: \"0-3\"\n",
+		wantContains: []string{"reservedCpus", "reservedCPUs"},
+	}, {
+		// Without this the file reached the precedence pass, where the delete is
+		// by exact name, and overwrote the flag.
+		name:         "folded spelling against an explicit flag",
+		file:         "apiVersion: v1alpha1\nreservedcpus: \"2-3\"\n",
+		flags:        []string{"--reserved-cpus=0-1"},
+		wantContains: []string{"reservedcpus", "reservedCPUs"},
+	}, {
+		name:         "the same key twice",
+		file:         "apiVersion: v1alpha1\nreservedCPUs: \"0-1\"\nreservedCPUs: \"2-3\"\n",
+		wantContains: []string{"reservedCPUs"},
+	}, {
+		name:         "the same key twice, folded",
+		file:         "apiVersion: v1alpha1\nreservedCPUs: \"0-1\"\nreservedcpus: \"2-3\"\n",
+		wantContains: []string{"reservedcpus"},
+	}, {
+		name:            "folded apiVersion",
+		file:            "ApiVersion: v1alpha1\nreservedCPUs: \"0-1\"\n",
+		wantContains:    []string{`use "apiVersion"`},
+		wantNotContains: []string{"unknown field"},
+	}, {
+		name:            "folded excluded field",
+		file:            "apiVersion: v1alpha1\nbindaddress: \":9999\"\n",
+		wantContains:    []string{"not configurable via the config file", "healthzPort"},
+		wantNotContains: []string{"is spelled differently"},
+	}, {
+		name:            "folded excluded field, upper case",
+		file:            "apiVersion: v1alpha1\nBINDADDRESS: \":9999\"\n",
+		wantContains:    []string{"not configurable via the config file", "healthzPort"},
+		wantNotContains: []string{"is spelled differently"},
+	}, {
+		name:            "folded excluded field with a flag alternative",
+		file:            "apiVersion: v1alpha1\nexposepcieroots: true\n",
+		wantContains:    []string{"not configurable via the config file", "args.exposePCIeRoots"},
+		wantNotContains: []string{"is spelled differently"},
+	}, {
+		name:            "a name that matches nothing",
+		file:            "apiVersion: v1alpha1\ntotallyUnknownField: 1\n",
+		wantContains:    []string{"totallyUnknownField"},
+		wantNotContains: []string{"spelled differently"},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgFile := writeFile(t, dir, "config.yaml", tc.file)
+
+			cfg := driverconfig.Default()
+			fs := newFlagSet(t, &cfg, tc.flags)
+
+			_, err := driverconfig.Load(cfg, cfgFile, fs, testr.New(t))
+
+			require.Error(t, err)
+			for _, want := range tc.wantContains {
+				assert.Contains(t, err.Error(), want)
+			}
+			for _, notWant := range tc.wantNotContains {
+				assert.NotContains(t, err.Error(), notWant)
+			}
+		})
+	}
+}
+
+// TestLoad_ReportsEveryMiscasedKey: a hand-edited file usually has more than
+// one, and fixing them one restart at a time is the difference between one
+// CrashLoopBackOff and three. A key misspelled rather than miscased is not this
+// check's to batch, and the decoder reports those one at a time.
+//
+// Asserted as the whole string rather than key by key. Ranging a map named a
+// different key on each node for the same ConfigMap, so the keys are sorted, and
+// an exact message is what pins that ordering along with each canonical
+// spelling, the separator, and the shape of the whole thing.
+func TestLoad_ReportsEveryMiscasedKey(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := writeFile(t, dir, "config.yaml", `
+apiVersion: v1alpha1
+reservedcpus: "0-3"
+groupby: socket
+cpudevicemode: individual
+`)
+
+	cfg := driverconfig.Default()
+	fs := newFlagSet(t, &cfg, nil)
+
+	_, err := driverconfig.Load(cfg, cfgFile, fs, testr.New(t))
+
+	require.Error(t, err)
+	assert.EqualError(t, err,
+		`config file "`+cfgFile+`": `+
+			`field "cpudevicemode" is spelled differently from the schema; use "cpuDeviceMode"; `+
+			`field "groupby" is spelled differently from the schema; use "groupBy"; `+
+			`field "reservedcpus" is spelled differently from the schema; use "reservedCPUs"`)
+}
+
 // TestLoad_PartialFile: fields absent from the file retain their default values.
 func TestLoad_PartialFile(t *testing.T) {
 	dir := t.TempDir()
