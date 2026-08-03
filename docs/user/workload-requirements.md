@@ -14,6 +14,9 @@ This discrepancy is a known issue being addressed by [KEP-5517: Native Resource 
   - Set `pod.spec.resources.requests.cpu` and `pod.spec.resources.limits.cpu` to the *sum* of all CPUs requested across all DRA claims used by containers in this pod, PLUS any additional CPUs for containers NOT using DRA claims.
   - Containers using DRA claims may omit `cpu` from their `resources.requests` and `resources.limits`. The Pod Level Resources will govern the QoS class and set cgroup limits at the pod level.
 
+  A complete, runnable version of this pattern is in
+  [`hack/examples/pod_with_pod_level_resources.yaml`](../../hack/examples/pod_with_pod_level_resources.yaml).
+
   ```yaml
   # Example: Pod Level Resources
   spec:
@@ -52,6 +55,9 @@ This discrepancy is a known issue being addressed by [KEP-5517: Native Resource 
 
   - For each container that uses a DRA CPU claim, set `spec.containers[].resources.requests.cpu` and `spec.containers[].resources.limits.cpu` to be *exactly equal* to the number of CPUs requested in the `ResourceClaim` referenced by that container.
 
+  A complete, runnable version of this pattern is in
+  [`hack/examples/pod_with_resource_claim_grouped_mode.yaml`](../../hack/examples/pod_with_resource_claim_grouped_mode.yaml).
+
   ```yaml
   # Example: Container Level Mirroring
   spec:
@@ -71,6 +77,8 @@ This discrepancy is a known issue being addressed by [KEP-5517: Native Resource 
   ```
 
 **1-to-1 Claim to Container:** This driver enforces that a specific CPU `ResourceClaim` can only be used by *one* container within or across pods. See [Sharing resource claims](feature-support.md#sharing-resource-claims).
+
+**Reserved environment variables:** the `DRA_CPUSET_*` environment variable prefix is reserved for the driver's CDI injection — do not set variables with this prefix; containers with malformed `DRA_CPUSET_*` values are rejected during creation. See [How it Works](how-it-works.md).
 
 ## Extended Resource Claim Status integrations
 

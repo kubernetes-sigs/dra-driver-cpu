@@ -9,9 +9,11 @@
   - NUMA aware best-fit allocation.
   - Packing or spreading CPUs across cores.
   - Preference for aligning allocations to UncoreCache boundaries.
-- **Multiple Device Exposure Modes**:
-  - **Individual Mode**: Each CPU is a device, allowing for selection based on attributes like CPU ID, core type, NUMA node, etc. This mode is ideal for workloads requiring fine-grained control over CPU placement, common in HPC or performance-critical applications.
-  - **Grouped Mode**: CPUs are grouped (e.g., by NUMA node or socket) and treated as a consumable capacity within that group. This helps in reducing the number of devices exposed to the API server, especially on systems with a large number of CPUs, thus improving scalability. This mode is suitable for workloads needing alignment with other DRA resources within the same group (e.g., NUMA node) or where the exact CPU IDs are less critical than the quantity.
+- **Multiple Device Exposure Modes**: `individual` (one device per CPU, fine-grained
+  attribute-based selection — ideal for HPC and performance-critical workloads) or `grouped`
+  (NUMA/socket/machine aggregates exposed as consumable capacity — fewer API objects, scales
+  to large systems). See [Configuration](configuration.md#driver-configuration) for the
+  full description and how to choose.
 
 ## Not Supported
 
@@ -34,10 +36,56 @@ This gap is meant to be addressed by [KEP-5517 (Node Allocatable Resources)](htt
 However, until that KEP progresses and gets traction, the safest approach for this driver is to
 prevent any resource claim sharing.
 
-## CPU Manager Options Mapping
+## Matching CPU Manager Options
 
-See [Matching CPU Manager Options](cpu-manager-mapping.md) for a comparison of kubelet cpumanager
-policy options and their driver equivalents, including how to distribute CPUs across NUMA nodes.
+The kubelet cpumanager supports [options](https://kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/#cpu-policy-static--options) to fine-tune the CPU allocation behavior.
+This DRA driver aims to implement feature parity with the kubelet cpumanager. The following table summarizes how you can achieve a cpumanager functionality controlled by a cpumanager policy option.
+Reference: [kubernetes 1.35.0](https://github.com/kubernetes/kubernetes/blob/v1.35.0/pkg/kubelet/cm/cpumanager/policy_options.go).
+
+| CPU Manager Option        | Maturity | Kubelet development status | Driver equivalent functionality                                        | notes                 |
+| ------------------------- | -------- | -------------------------- | ---------------------------------------------------------------------- | --------------------- |
+| AlignBySocket             | alpha    | inactive                   | `cpuDeviceMode: grouped` + `groupBy: socket` config options            |                       |
+| DistributeCPUsAcrossCores | alpha    | inactive                   | none yet; postponed till k8s feature graduates to beta                 |                       |
+| DistributeCPUsAcrossNUMA  | beta     | active                     | see issue: https://github.com/kubernetes-sigs/dra-driver-cpu/issues/46 | see below for details |
+| PreferAlignByUnCoreCache  | beta     | active                     | builtin; enabled by default                                            |                       |
+| FullPCPUsOnly             | GA       | N/A                        | see issue: https://github.com/kubernetes-sigs/dra-driver-cpu/issues/45 |                       |
+| StrictCPUReservation      | GA       | N/A                        | builtin; enabled by default                                            |                       |
+
+### Distributing CPUs across NUMA nodes
+
+It is currently possible to encode a split of CPUs in such a way the allocator picks them from different NUMA nodes. Example:
+
+```yaml
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: claim-cpu-capacity-20
+spec:
+  devices:
+    requests:
+    - name: numa0-cpus
+      exactly:
+        deviceClassName: dra.cpu
+        capacity:
+          requests:
+            dra.cpu/cpu: "10"
+        selectors:
+        - cel:
+            expression: device.attributes["dra.cpu"].numaNodeID == 0
+    - name: numa1-cpus
+      exactly:
+        deviceClassName: dra.cpu
+        capacity:
+          requests:
+            dra.cpu/cpu: "10"
+        selectors:
+        - cel:
+            expression: device.attributes["dra.cpu"].numaNodeID == 1
+```
+
+However, this is only a partial replacement of the corresponding CPU Manager option. The main problem of this approach is that it leaks assumptions about machine properties.
+We hardcode the NUMA split and, unlike the cpumanager feature, it won't automatically adapt if the same claim is handled by a 1-NUMA, 2-NUMA or 4-NUMA machine;
+the claim would need to be updated or recreated manually.
 
 ## Exposing PCIe roots
 
@@ -58,7 +106,7 @@ The consequence is that `pcieRoot` in grouped mode should be read as "the group 
 not "the allocated CPUs are guaranteed to be local to the selected root".
 
 In practice, this distinction is currently not harmful because the kernel's PCIe bus CPU affinity collapses to NUMA-node granularity
-(see docs/dev/topology-linux-sysfs.md for in-depth research based on Linux kernel 7.0.9), so grouped allocation within a NUMA
+(see [the topology deep dive](../dev/topology-linux-sysfs.md) for in-depth research based on Linux kernel 7.0.9), so grouped allocation within a NUMA
 node inherently stays within a single root's affinity domain.
 
 For future releases, we plan to both introduce means to feed the driver with finer-grained PCIe root locality and to implement
