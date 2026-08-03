@@ -1929,6 +1929,33 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 			},
 		},
 		{
+			name: "CPU config block targeting parent request applies to selected subrequest",
+			claims: []*resourceapi.ResourceClaim{
+				func() *resourceapi.ResourceClaim {
+					claim := testClaim("claim-1", testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: 2})
+					claim.Status.Allocation.Devices.Results[0].Request = "claim-1/selected"
+					claim.Status.Allocation.Devices.Config = []resourceapi.DeviceAllocationConfiguration{
+						{
+							Source:   resourceapi.AllocationConfigSourceClaim,
+							Requests: []string{"claim-1"},
+							DeviceConfiguration: resourceapi.DeviceConfiguration{
+								Opaque: &resourceapi.OpaqueDeviceConfiguration{
+									Driver: testDriverName,
+									Parameters: runtime.RawExtension{
+										Raw: []byte(`{"apiVersion": "v1alpha1", "cpuConfig": {"cpuset": "2,6"}}`),
+									},
+								},
+							},
+						},
+					}
+					return claim
+				}(),
+			},
+			expectedAllocations: map[string]cpuset.CPUSet{
+				"claim-1": cpuset.New(2, 6),
+			},
+		},
+		{
 			name: "CPU allocation with offline cores",
 			claims: []*resourceapi.ResourceClaim{
 				testClaimWithOpaqueConfig("claim-1", testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: 2}, "99,100"),
