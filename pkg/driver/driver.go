@@ -42,7 +42,6 @@ import (
 )
 
 const (
-	kubeletPluginPath = "/var/lib/kubelet/plugins"
 	// maxAttempts indicates the number of times the driver will try to recover itself before failing
 	maxAttempts = 5
 )
@@ -84,6 +83,8 @@ type CPUDriver struct {
 	pcieRootMapper          *store.PCIeRootMapper
 	devicesPerResourceSlice int
 	metrics                 cpumetrics.Recorder
+
+	kubeletRootDir string
 }
 
 // deviceTopology holds the CPU topology and device-to-CPU/socket/NUMA
@@ -128,6 +129,11 @@ type Config struct {
 	CPUDeviceGroupBy string
 	ExposePCIeRoots  bool
 	Metrics          cpumetrics.Recorder
+	// KubeletRootDir is the kubelet root directory, from which the registrar
+	// and plugin data directories are derived. Required and absolute:
+	// driverconfig.Load refuses an empty or relative value, and New takes it as
+	// given rather than checking it again.
+	KubeletRootDir string
 }
 
 func (cfg Config) DevicesPerResourceSlice() int {
@@ -164,6 +170,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		pcieRootMapper:          store.NewPCIeRootMapper(),
 		devicesPerResourceSlice: config.DevicesPerResourceSlice(),
 		metrics:                 metricsRecorder,
+		kubeletRootDir:          config.KubeletRootDir,
 	}
 	sfs := providers.EnsureSysFS()
 
@@ -215,6 +222,40 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	return plugin, nil
 }
 
+// registrarDir is the kubelet plugin registration directory, always
+// <kubelet-root>/plugins_registry.
+func registrarDir(kubeletRootDir string) string {
+	return filepath.Join(kubeletRootDir, "plugins_registry")
+}
+
+// pluginDataDir is the per-driver directory where the DRA socket is created. It
+// includes the driver name because the kubeletplugin contract requires it not
+// to be shared with other kubelet plugins.
+func pluginDataDir(kubeletRootDir, driverName string) string {
+	return filepath.Join(kubeletRootDir, "plugins", driverName)
+}
+
+// unixPathMax is the longest pathname a Unix domain socket can be bound to:
+// sun_path is 108 bytes and the kernel needs the terminating NUL.
+const unixPathMax = 107
+
+// checkSocketPathFits rejects a kubelet root that leaves no room for the socket
+// the kubeletplugin helper binds underneath it. The registrar path is the longer
+// of the two the helper binds, so checking it covers both.
+//
+// Not in Config.Validate with the root's other checks because the length depends
+// on the driver name, which the config does not carry. sun_path is a byte
+// buffer, so this counts bytes rather than characters.
+func checkSocketPathFits(kubeletRootDir, driverName string) error {
+	socket := filepath.Join(registrarDir(kubeletRootDir), driverName+"-reg.sock")
+	if len(socket) > unixPathMax {
+		return fmt.Errorf("kubelet registrar socket path %q is %d bytes, over the %d-byte limit for a Unix socket path: kubeletRootDir has %d bytes to spend and is using %d",
+			socket, len(socket), unixPathMax,
+			unixPathMax-(len(socket)-len(kubeletRootDir)), len(kubeletRootDir))
+	}
+	return nil
+}
+
 // Start registers the plugin with kubelet, starts the NRI plugin, and begins
 // async resource publication. Setup must have been called first.
 func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
@@ -222,7 +263,11 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 
 	asyncErr := make(chan error, 1)
 
-	driverPluginPath := filepath.Join(kubeletPluginPath, cp.driverName)
+	if err := checkSocketPathFits(cp.kubeletRootDir, cp.driverName); err != nil {
+		return asyncErr, err
+	}
+
+	driverPluginPath := pluginDataDir(cp.kubeletRootDir, cp.driverName)
 	if err := os.MkdirAll(driverPluginPath, 0750); err != nil {
 		return asyncErr, fmt.Errorf("failed to create plugin path %s: %w", driverPluginPath, err)
 	}
@@ -237,6 +282,8 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 		kubeletplugin.DriverName(cp.driverName),
 		kubeletplugin.NodeName(cp.nodeName),
 		kubeletplugin.KubeClient(cp.kubeClient),
+		kubeletplugin.RegistrarDirectoryPath(registrarDir(cp.kubeletRootDir)),
+		kubeletplugin.PluginDataDirectoryPath(driverPluginPath),
 	}
 	d, err := kubeletplugin.Start(ctx, cp, kubeletOpts...)
 	if err != nil {

@@ -18,11 +18,16 @@ package driverconfig
 
 import "github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 
+// DefaultKubeletRootDir is the standard kubelet root directory, so behaviour is
+// unchanged unless the kubelet --root-dir is relocated.
+const DefaultKubeletRootDir = "/var/lib/kubelet"
+
 // Default returns a Config with built-in default values.
 func Default() Config {
 	return Config{
-		BindAddress:   ":8080",
-		CPUDeviceMode: device.CPU_DEVICE_MODE_GROUPED,
-		GroupBy:       device.GROUP_BY_NUMA_NODE,
+		BindAddress:    ":8080",
+		CPUDeviceMode:  device.CPU_DEVICE_MODE_GROUPED,
+		GroupBy:        device.GROUP_BY_NUMA_NODE,
+		KubeletRootDir: DefaultKubeletRootDir,
 	}
 }
