@@ -283,6 +283,22 @@ func (cp *CPUDriver) prepareDevices(logger logr.Logger, claim *resourceapi.Resou
 		if allocResult.Request != "" {
 			preparedDevice.Requests = []string{allocResult.Request}
 		}
+		if attrs, ok := getDeviceAttributes(cp.topology.deviceSlices, allocResult.Device); ok && len(attrs) > 0 {
+			metadataAttrs := make(map[string]resourceapi.DeviceAttribute, len(attrs))
+			for k, v := range attrs {
+				metadataAttrs[string(k)] = v
+			}
+			if quantity, ok := allocResult.ConsumedCapacity[device.CPUResourceQualifiedName]; ok {
+				allocatedCount := quantity.Value()
+				metadataAttrs[string(device.AttributeAllocatedNumCPUs)] = resourceapi.DeviceAttribute{
+					IntValue: &allocatedCount,
+				}
+			}
+			preparedDevice.Metadata = &kubeletplugin.DeviceMetadata{
+				Attributes: metadataAttrs,
+			}
+			logger.V(6).Info("added device metadata", "device", allocResult.Device, "numAttrs", len(metadataAttrs))
+		}
 		preparedDevices = append(preparedDevices, preparedDevice)
 	}
 

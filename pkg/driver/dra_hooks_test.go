@@ -643,8 +643,10 @@ func TestPrepareResourceClaims(t *testing.T) {
 			expectedCdiDevice:       cdiDeviceName,
 			expectedCdiEnvVar:       fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, "0-1"),
 			expectedPreparedDevices: []kubeletplugin.Device{
-				{PoolName: testNodeName, DeviceName: "cpudev000", CDIDeviceIDs: []string{cdiQualifiedName}},
-				{PoolName: testNodeName, DeviceName: "cpudev002", CDIDeviceIDs: []string{cdiQualifiedName}},
+				{PoolName: testNodeName, DeviceName: "cpudev000", CDIDeviceIDs: []string{cdiQualifiedName},
+					Metadata: metadataFromCPUInfo(cpuinfo.CPUInfo{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance}, false)},
+				{PoolName: testNodeName, DeviceName: "cpudev002", CDIDeviceIDs: []string{cdiQualifiedName},
+					Metadata: metadataFromCPUInfo(cpuinfo.CPUInfo{CpuID: 1, CoreID: 1, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance}, false)},
 			},
 		},
 		{
@@ -747,7 +749,8 @@ func TestPrepareResourceClaims(t *testing.T) {
 			expectedCdiDevice:       cdiDeviceName,
 			expectedCdiEnvVar:       fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, "0"),
 			expectedPreparedDevices: []kubeletplugin.Device{
-				{PoolName: testNodeName, DeviceName: "cpudev000", CDIDeviceIDs: []string{cdiQualifiedName}},
+				{PoolName: testNodeName, DeviceName: "cpudev000", CDIDeviceIDs: []string{cdiQualifiedName},
+					Metadata: metadataFromCPUInfo(cpuinfo.CPUInfo{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance}, false)},
 			},
 		},
 		{
@@ -1223,12 +1226,20 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 					// Build expected devices based on the claim request
 					expectedPreparedDevices := []kubeletplugin.Device{}
 					if tc.expectedCPUSet.Size() != 0 || tc.expectedError {
+						// testSysFS doesn't include cpu/smt/control, so
+						// the driver's cpuTopology.SMTEnabled is always false
+						smtEnabled := false
 						for _, res := range tc.claims[0].Status.Allocation.Devices.Results {
+							var allocatedCPUs int64
+							if q, ok := res.ConsumedCapacity[devattr.CPUResourceQualifiedName]; ok {
+								allocatedCPUs = q.Value()
+							}
 							expectedPreparedDevices = append(expectedPreparedDevices, kubeletplugin.Device{
 								PoolName:     res.Pool,
 								DeviceName:   res.Device,
 								CDIDeviceIDs: []string{cdiQualifiedName},
 								Requests:     []string{res.Request},
+								Metadata:     expectedGroupMetadata(tc.groupBy, tc.cpuInfos, tc.reservedCPUs, res.Device, smtEnabled, allocatedCPUs),
 							})
 						}
 					}
@@ -2109,4 +2120,74 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 		}
 	}
 	return driver
+}
+
+// metadataFromCPUInfo builds a DeviceMetadata from static test data,
+// independent of production code paths.
+func metadataFromCPUInfo(cpu cpuinfo.CPUInfo, smtEnabled bool) *kubeletplugin.DeviceMetadata {
+	attrs := map[string]resourceapi.DeviceAttribute{
+		string(devattr.AttributeCPUID):      {IntValue: new(int64(cpu.CpuID))},
+		string(devattr.AttributeCoreID):     {IntValue: new(int64(cpu.CoreID))},
+		string(devattr.AttributeSocketID):   {IntValue: new(int64(cpu.SocketID))},
+		string(devattr.AttributeNUMANodeID): {IntValue: new(int64(cpu.NUMANodeID))},
+		string(devattr.AttributeCacheL3ID):  {IntValue: new(int64(cpu.UncoreCacheID))},
+		string(devattr.AttributeCoreType):   {StringValue: new(cpu.CoreType.String())},
+		string(devattr.AttributeSMTEnabled): {BoolValue: new(smtEnabled)},
+		"dra.net/numaNode":                  {IntValue: new(int64(cpu.NUMANodeID))},
+	}
+	return &kubeletplugin.DeviceMetadata{Attributes: attrs}
+}
+
+// expectedGroupMetadata builds the expected DeviceMetadata for a grouped
+// device from static test data, independent of production code paths.
+func expectedGroupMetadata(groupBy string, cpuInfos []cpuinfo.CPUInfo, reservedCPUs cpuset.CPUSet, deviceName string, smtEnabled bool, allocatedCPUs int64) *kubeletplugin.DeviceMetadata {
+	attrs := map[string]resourceapi.DeviceAttribute{}
+
+	switch groupBy {
+	case devattr.GROUP_BY_SOCKET:
+		var socketID int
+		_, _ = fmt.Sscanf(deviceName, devattr.CPUDeviceSocketGroupedPrefix+"%d", &socketID)
+		var numCPUs int64
+		for _, ci := range cpuInfos {
+			if ci.SocketID == socketID && !reservedCPUs.Contains(ci.CpuID) {
+				numCPUs++
+			}
+		}
+		attrs[string(devattr.AttributeSocketID)] = resourceapi.DeviceAttribute{IntValue: new(int64(socketID))}
+		attrs[string(devattr.AttributeNumCPUs)] = resourceapi.DeviceAttribute{IntValue: new(numCPUs)}
+		attrs[string(devattr.AttributeSMTEnabled)] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
+
+	case devattr.GROUP_BY_NUMA_NODE:
+		var numaID int
+		_, _ = fmt.Sscanf(deviceName, devattr.CPUDeviceNUMAGroupedPrefix+"%d", &numaID)
+		var numCPUs int64
+		var socketID int
+		for _, ci := range cpuInfos {
+			if ci.NUMANodeID == numaID && !reservedCPUs.Contains(ci.CpuID) {
+				numCPUs++
+				socketID = ci.SocketID
+			}
+		}
+		attrs[string(devattr.AttributeNUMANodeID)] = resourceapi.DeviceAttribute{IntValue: new(int64(numaID))}
+		attrs[string(devattr.AttributeSocketID)] = resourceapi.DeviceAttribute{IntValue: new(int64(socketID))}
+		attrs[string(devattr.AttributeNumCPUs)] = resourceapi.DeviceAttribute{IntValue: new(numCPUs)}
+		attrs[string(devattr.AttributeSMTEnabled)] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
+		attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: new(int64(numaID))}
+
+	case devattr.GROUP_BY_MACHINE:
+		var numCPUs int64
+		for _, ci := range cpuInfos {
+			if !reservedCPUs.Contains(ci.CpuID) {
+				numCPUs++
+			}
+		}
+		attrs[string(devattr.AttributeNumCPUs)] = resourceapi.DeviceAttribute{IntValue: new(numCPUs)}
+		attrs[string(devattr.AttributeSMTEnabled)] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
+	}
+
+	if allocatedCPUs > 0 {
+		attrs[string(devattr.AttributeAllocatedNumCPUs)] = resourceapi.DeviceAttribute{IntValue: new(allocatedCPUs)}
+	}
+
+	return &kubeletplugin.DeviceMetadata{Attributes: attrs}
 }
