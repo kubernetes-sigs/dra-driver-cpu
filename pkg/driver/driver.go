@@ -61,9 +61,7 @@ type cdiManager interface {
 }
 
 // CPUInfoProvider is an interface for getting CPU information.
-// TODO(pravk03): This interface can be simplified. We can export only GetCPUTopology() and remove GetCPUInfos().
 type CPUInfoProvider interface {
-	GetCPUInfos(logger logr.Logger) ([]cpuinfo.CPUInfo, error)
 	GetCPUTopology(logger logr.Logger) (*cpuinfo.CPUTopology, error)
 }
 
