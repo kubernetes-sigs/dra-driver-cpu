@@ -132,7 +132,7 @@ func runDriver(logger logr.Logger, cfg driverconfig.Config) error {
 
 func run(logger logr.Logger, cfg driverconfig.Config) error {
 	printVersion(logger)
-	logger.Info("CONFIG", cfg.LogValues()...)
+	logger.Info("configuration successfully loaded", "configuration", cfg.Dump())
 
 	reservedCPUSet, err := cpuset.Parse(cfg.ReservedCPUs)
 	if err != nil {
