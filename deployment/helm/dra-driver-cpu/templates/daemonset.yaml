@@ -69,6 +69,18 @@ spec:
           - --bind-address=:{{ .Values.healthzPort }}
           {{- end }}
           - --expose-pcie-roots={{ .Values.args.exposePCIeRoots }}
+          {{- $kubeletRoot := include "dra-driver-cpu.kubeletRootDir" . }}
+          {{- if ne $kubeletRoot "/var/lib/kubelet" }}
+          {{- /* Emitted only when the root has been moved. The flag is newer than
+                 the chart's appVersion, so passing it to that image would make the
+                 documented local-checkout install exit on an unknown flag on every
+                 node. Anyone moving the root needs a newer image anyway, and anyone
+                 who has not gets no flag, no unknown-flag exit, and no rollout for
+                 a value identical to the driver's own default. The literal is
+                 DefaultKubeletRootDir in internal/driverconfig/defaults.go; the
+                 chart default in values.yaml is the same string by design. */}}
+          - {{ printf "--kubelet-root-dir=%s" $kubeletRoot | quote }}
+          {{- end }}
           {{- with .Values.extraArgs }}
           {{- toYaml . | nindent 10 }}
           {{- end }}
@@ -102,9 +114,9 @@ spec:
             add: ["NET_ADMIN", "SYS_ADMIN"]
         volumeMounts:
         - name: device-plugin
-          mountPath: /var/lib/kubelet/plugins
+          mountPath: {{ include "dra-driver-cpu.pluginsDir" . | quote }}
         - name: plugin-registry
-          mountPath: /var/lib/kubelet/plugins_registry
+          mountPath: {{ include "dra-driver-cpu.pluginRegistryDir" . | quote }}
         - name: nri-plugin
           mountPath: /var/run/nri
         - name: cdi-dir
@@ -120,10 +132,10 @@ spec:
       volumes:
       - name: device-plugin
         hostPath:
-          path: /var/lib/kubelet/plugins
+          path: {{ include "dra-driver-cpu.pluginsDir" . | quote }}
       - name: plugin-registry
         hostPath:
-          path: /var/lib/kubelet/plugins_registry
+          path: {{ include "dra-driver-cpu.pluginRegistryDir" . | quote }}
       - name: nri-plugin
         hostPath:
           path: /var/run/nri
