@@ -1226,6 +1226,10 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 					// Build expected devices based on the claim request
 					expectedPreparedDevices := []kubeletplugin.Device{}
 					if tc.expectedCPUSet.Size() != 0 || tc.expectedError {
+						cpuInfoMap := make(map[int]cpuinfo.CPUInfo)
+						for _, ci := range tc.cpuInfos {
+							cpuInfoMap[ci.CpuID] = ci
+						}
 						// testSysFS doesn't include cpu/smt/control, so
 						// the driver's cpuTopology.SMTEnabled is always false
 						smtEnabled := false
@@ -1240,6 +1244,23 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 								CDIDeviceIDs: []string{cdiQualifiedName},
 								Requests:     []string{res.Request},
 								Metadata:     expectedGroupMetadata(tc.groupBy, tc.cpuInfos, tc.reservedCPUs, res.Device, smtEnabled, allocatedCPUs),
+							})
+						}
+						// Collect request names for per-CPU devices
+						var requestNames []string
+						for _, res := range tc.claims[0].Status.Allocation.Devices.Results {
+							if res.Driver == testDriverName && res.Request != "" {
+								requestNames = append(requestNames, res.Request)
+							}
+						}
+						// Expect per-allocated-CPU metadata entries
+						for _, cpuID := range tc.expectedCPUSet.List() {
+							ci := cpuInfoMap[cpuID]
+							expectedPreparedDevices = append(expectedPreparedDevices, kubeletplugin.Device{
+								PoolName:   testNodeName,
+								DeviceName: fmt.Sprintf("%s%03d", devattr.CPUDevicePrefix, cpuID),
+								Requests:   requestNames,
+								Metadata:   metadataFromCPUInfo(ci, smtEnabled),
 							})
 						}
 					}

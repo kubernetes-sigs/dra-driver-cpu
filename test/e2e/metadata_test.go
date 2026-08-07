@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
@@ -158,6 +159,7 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 			gomega.Expect(dev.Driver).To(gomega.Equal("dra.cpu"))
 
 			ginkgo.By("verifying mode-specific attributes")
+			isGrouped := cpuDeviceMode != device.CPU_DEVICE_MODE_INDIVIDUAL
 			switch cpuDeviceMode {
 			case device.CPU_DEVICE_MODE_INDIVIDUAL:
 				expectIntAttr(dev.Attributes, "dra.cpu/cpuID")
@@ -177,6 +179,28 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 				default: // NUMA node (default when groupBy is "" or "numanode")
 					expectIntAttr(dev.Attributes, "dra.cpu/numaNodeID")
 					expectIntAttr(dev.Attributes, "dra.cpu/socketID")
+				}
+			}
+
+			if isGrouped {
+				ginkgo.By("verifying per-allocated-CPU metadata entries")
+				var perCPUDevices []metadataDevice
+				for _, d := range req.Devices {
+					if strings.HasPrefix(d.Name, device.CPUDevicePrefix) &&
+						!strings.HasPrefix(d.Name, device.CPUDeviceNUMAGroupedPrefix) &&
+						!strings.HasPrefix(d.Name, device.CPUDeviceSocketGroupedPrefix) &&
+						d.Name != device.CPUDeviceMachineGrouped {
+						perCPUDevices = append(perCPUDevices, d)
+					}
+				}
+				gomega.Expect(perCPUDevices).To(gomega.HaveLen(numCPUs),
+					"expected %d per-CPU metadata entries, got %d", numCPUs, len(perCPUDevices))
+				for _, cpuDev := range perCPUDevices {
+					expectIntAttr(cpuDev.Attributes, "dra.cpu/cpuID")
+					expectIntAttr(cpuDev.Attributes, "dra.cpu/numaNodeID")
+					expectIntAttr(cpuDev.Attributes, "dra.cpu/socketID")
+					expectIntAttr(cpuDev.Attributes, "dra.cpu/coreID")
+					expectBoolAttr(cpuDev.Attributes, "dra.cpu/smtEnabled")
 				}
 			}
 		})
