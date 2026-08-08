@@ -29,11 +29,7 @@ type Config struct {
 	GroupBy          string `json:"groupBy,omitempty"`
 	ExposePCIeRoots  bool   `json:"exposePCIeRoots,omitempty"`
 	SysFSOverlay     string `json:"sysfsOverlay,omitempty"`
-	// KubeletRootDir is the kubelet root directory. The plugin registration and
-	// plugins directories are derived from it as <root>/plugins_registry and
-	// <root>/plugins. Set it when the kubelet --root-dir is not the default
-	// /var/lib/kubelet.
-	KubeletRootDir string `json:"kubeletRootDir,omitempty"`
+	KubeletRootDir   string `json:"kubeletRootDir,omitempty"`
 }
 
 // LogValues returns key-value pairs for structured logging of the config.
