@@ -134,7 +134,7 @@ func TestGenerateDriverConfigSchema_ExcludesKubeletRootDir(t *testing.T) {
 	if _, ok := schema.Properties["kubeletRootDir"]; ok {
 		t.Errorf("kubeletRootDir must not appear in the generated schema; got:\n%s", out)
 	}
-	if want := "use the --kubelet-root-dir flag instead"; schemaExcludedFields["kubeletRootDir"] != want {
+	if want := "use the chart's top-level kubeletRootDir value, or --kubelet-root-dir when running the binary directly"; schemaExcludedFields["kubeletRootDir"] != want {
 		t.Errorf("kubeletRootDir exclusion hint = %q, want %q", schemaExcludedFields["kubeletRootDir"], want)
 	}
 }

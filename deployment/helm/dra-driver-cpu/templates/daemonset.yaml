@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 {{- $effectiveDriverConfig := include "dra-driver-cpu.effectiveDriverConfig" . | fromYaml }}
+{{- $kubeletRoot := include "dra-driver-cpu.kubeletRootDir" . }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -69,6 +70,9 @@ spec:
           - --bind-address=:{{ .Values.healthzPort }}
           {{- end }}
           - --expose-pcie-roots={{ .Values.args.exposePCIeRoots }}
+          {{- if ne $kubeletRoot "/var/lib/kubelet" }}
+          - {{ printf "--kubelet-root-dir=%s" $kubeletRoot | quote }}
+          {{- end }}
           {{- with .Values.extraArgs }}
           {{- toYaml . | nindent 10 }}
           {{- end }}
@@ -102,9 +106,9 @@ spec:
             add: ["NET_ADMIN", "SYS_ADMIN"]
         volumeMounts:
         - name: device-plugin
-          mountPath: /var/lib/kubelet/plugins
+          mountPath: {{ include "dra-driver-cpu.pluginsDir" $kubeletRoot | quote }}
         - name: plugin-registry
-          mountPath: /var/lib/kubelet/plugins_registry
+          mountPath: {{ include "dra-driver-cpu.pluginRegistryDir" $kubeletRoot | quote }}
         - name: nri-plugin
           mountPath: /var/run/nri
         - name: cdi-dir
@@ -120,10 +124,10 @@ spec:
       volumes:
       - name: device-plugin
         hostPath:
-          path: /var/lib/kubelet/plugins
+          path: {{ include "dra-driver-cpu.pluginsDir" $kubeletRoot | quote }}
       - name: plugin-registry
         hostPath:
-          path: /var/lib/kubelet/plugins_registry
+          path: {{ include "dra-driver-cpu.pluginRegistryDir" $kubeletRoot | quote }}
       - name: nri-plugin
         hostPath:
           path: /var/run/nri

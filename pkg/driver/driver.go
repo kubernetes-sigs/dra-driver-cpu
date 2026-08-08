@@ -246,6 +246,11 @@ const unixPathMax = 107
 // Not in Config.Validate with the root's other checks because the length depends
 // on the driver name, which the config does not carry. sun_path is a byte
 // buffer, so this counts bytes rather than characters.
+//
+// The name is <driver>-reg.sock while rolling updates are off. Turning them on
+// puts the UID in it, which this budget and the chart's both have to follow, and
+// RegistrarSocketFilename cannot pin the name back because the two options are
+// mutually exclusive.
 func checkSocketPathFits(kubeletRootDir, driverName string) error {
 	socket := filepath.Join(registrarDir(kubeletRootDir), driverName+"-reg.sock")
 	if len(socket) > unixPathMax {
