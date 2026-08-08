@@ -476,9 +476,13 @@ func TestLoad_ExcludedFieldInFileIsError(t *testing.T) {
 		{
 			field:   "kubeletRootDir",
 			content: "kubeletRootDir: /mnt/fast/k8s/kubelet",
+			// Both routes, because the chart refuses the flag through extraArgs:
+			// naming only the flag sends a Helm user to the one path the chart
+			// rejects, and the second failure arrives a deploy later.
 			wantErrs: []string{
 				"not configurable via the config file",
-				"use the --kubelet-root-dir flag instead",
+				"use the chart's top-level kubeletRootDir value",
+				"--kubelet-root-dir when running the binary directly",
 			},
 		},
 	} {
