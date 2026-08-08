@@ -30,6 +30,7 @@ import (
 
 	"github.com/go-logr/stdr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"k8s.io/utils/cpuset"
 )
@@ -101,13 +102,23 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error determining CPU affinity: %v\n", err)
 			os.Exit(2)
 		}
+		// The driver's --sysfs-overlay changes only the topology reported by the driver; it
+		// does not change the kernel's /sys/devices/system/cpu/online file. Report that file
+		// separately so tests can compare process affinity with the real kernel CPU set.
+		kernelSysFS := sysfs.Host()
+		kernelOnline, err := cpuinfo.OnlineCPUs(logger, kernelSysFS)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error determining online CPUs: %v\n", err)
+			os.Exit(2)
+		}
 		info := discovery.DRACPUTester{
 			Buildinfo: discovery.NewBuildinfo(),
 			Allocation: discovery.DRACPUAllocation{
 				CPUs: cpus.String(),
 			},
 			Runtimeinfo: discovery.DRACPURuntimeinfo{
-				CPUAffinity: cpuAff.String(),
+				CPUAffinity:      cpuAff.String(),
+				KernelOnlineCPUs: kernelOnline.String(),
 			},
 		}
 		err = json.NewEncoder(os.Stdout).Encode(info)
