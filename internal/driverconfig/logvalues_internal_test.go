@@ -44,3 +44,20 @@ func TestConfigLogValues_CoversAllFields(t *testing.T) {
 		}
 	}
 }
+
+// TestConfigDump_IncludesZeroValues: every Config json field appears in Dump,
+// even at its zero value.
+func TestConfigDump_IncludesZeroValues(t *testing.T) {
+	out := Config{}.Dump()
+
+	typ := reflect.TypeFor[Config]()
+	for field := range typ.Fields() {
+		jsonName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if jsonName == "" || jsonName == "-" {
+			continue
+		}
+		if !strings.Contains(out, jsonName+":") {
+			t.Errorf("Config field %q (json key %q) is missing from Dump output:\n%s", field.Name, jsonName, out)
+		}
+	}
+}

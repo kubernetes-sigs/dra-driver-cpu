@@ -16,6 +16,12 @@ limitations under the License.
 
 package driverconfig
 
+import (
+	"fmt"
+
+	"sigs.k8s.io/yaml"
+)
+
 // ConfigAPIVersion is the version validated in config files.
 const ConfigAPIVersion = "v1alpha1"
 
@@ -49,4 +55,29 @@ func (c Config) LogValues() []any {
 		"sysfsOverlay", c.SysFSOverlay,
 		"kubeletRootDir", c.KubeletRootDir,
 	}
+}
+
+// dumpConfig mirrors Config field-for-field but drops the omitempty json
+// tags, so Dump also prints zero values (e.g. exposePCIeRoots=false).
+type dumpConfig struct {
+	Kubeconfig       string `json:"kubeconfig"`
+	HostnameOverride string `json:"hostnameOverride"`
+	BindAddress      string `json:"bindAddress"`
+	ReservedCPUs     string `json:"reservedCPUs"`
+	CPUDeviceMode    string `json:"cpuDeviceMode"`
+	GroupBy          string `json:"groupBy"`
+	ExposePCIeRoots  bool   `json:"exposePCIeRoots"`
+	SysFSOverlay     string `json:"sysfsOverlay"`
+	KubeletRootDir   string `json:"kubeletRootDir"`
+}
+
+// Dump renders the Config as YAML, for logging a human-readable snapshot of
+// the fully loaded configuration. Zero values are included, unlike
+// marshalling Config directly, since they reflect real runtime state.
+func (c Config) Dump() string {
+	out, err := yaml.Marshal(dumpConfig(c))
+	if err != nil {
+		return fmt.Sprintf("<!!! FAILED TO MARSHAL Config: %v !!!>", err)
+	}
+	return string(out)
 }
