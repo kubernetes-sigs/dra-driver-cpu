@@ -111,7 +111,14 @@ func main() {
 		return
 	}
 
-	cfg, err := driverconfig.Load(driverFlags, configFile, flag.CommandLine, logger)
+	cfg, err := driverconfig.Resolve(logger, []driverconfig.Source{
+		// the ordering of Sources matters and determines the
+		// precedence of layers (aka overrides).
+		// Per our current policy, the priority (rightmost wins)
+		// is defaults -> config -> flags.
+		driverconfig.FromFile(configFile),
+		driverconfig.FromFlags(flag.CommandLine),
+	})
 	if err != nil {
 		logger.Error(err, "failed to load configuration")
 		os.Exit(1)

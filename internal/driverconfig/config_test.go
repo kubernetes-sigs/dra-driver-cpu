@@ -558,6 +558,48 @@ func TestLoad_KubeletRootDirFromFlag(t *testing.T) {
 	}
 }
 
+// TestFromFlags_BoolAndStringValues: FromFlags must produce typed values —
+// bool flags as bool (not the string "true"), string flags as string, and
+// custom flag.Value types (which don't implement flag.Getter) as string.
+// Without this, applyMap would fail to decode a JSON string into a bool field.
+func TestFromFlags_BoolAndStringValues(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		args           []string
+		wantPCIeRoots  bool
+		wantReserved   string
+		wantDeviceMode string
+	}{
+		{
+			name:           "bool flag set to true",
+			args:           []string{"--expose-pcie-roots=true", "--reserved-cpus=0-3", "--cpu-device-mode=individual"},
+			wantPCIeRoots:  true,
+			wantReserved:   "0-3",
+			wantDeviceMode: device.CPU_DEVICE_MODE_INDIVIDUAL,
+		},
+		{
+			name:           "bool flag set to false",
+			args:           []string{"--expose-pcie-roots=false", "--reserved-cpus=4-7"},
+			wantPCIeRoots:  false,
+			wantReserved:   "4-7",
+			wantDeviceMode: device.CPU_DEVICE_MODE_GROUPED,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := driverconfig.Default()
+			fs := newFlagSet(t, &cfg, tc.args)
+
+			src := driverconfig.FromFlags(fs)
+			result, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{src})
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantPCIeRoots, result.ExposePCIeRoots)
+			assert.Equal(t, tc.wantReserved, result.ReservedCPUs)
+			assert.Equal(t, tc.wantDeviceMode, result.CPUDeviceMode)
+		})
+	}
+}
+
 func TestLoad_KubeletRootDirWithAConfigFile(t *testing.T) {
 	for _, tc := range []struct {
 		name             string

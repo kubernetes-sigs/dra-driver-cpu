@@ -21,8 +21,40 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 )
+
+type FlagSource struct {
+	overrides map[string]any
+}
+
+func FromFlags(flagset *flag.FlagSet) FlagSource {
+	fs := FlagSource{
+		overrides: make(map[string]any),
+	}
+	flagset.Visit(func(f *flag.Flag) {
+		key, ok := flagToJSONKey[f.Name]
+		if !ok {
+			return
+		}
+		if g, ok := f.Value.(flag.Getter); ok {
+			fs.overrides[key] = g.Get()
+		} else {
+			fs.overrides[key] = f.Value.String()
+		}
+	})
+	return fs
+}
+
+func (fs FlagSource) Name() string {
+	return "flags"
+}
+
+func (fs FlagSource) Apply(logger logr.Logger, cfg *Config) error {
+	logger.V(6).Info("overrides", "stage", fs.Name(), "values", fs.overrides)
+	return applyMap(cfg, fs.overrides)
+}
 
 // AddFlags registers the Config fields that are exposed as CLI flags on fs.
 func (c *Config) AddFlags(fs *flag.FlagSet) {
