@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -38,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
+	registerapi "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
 	"k8s.io/utils/cpuset"
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
 )
@@ -66,6 +68,11 @@ func testSysFS(infos []cpuinfo.CPUInfo) fstest.MapFS {
 type mockKubeletPlugin struct {
 	publishedResources *resourceslice.DriverResources
 	publishError       error
+	// statusFunc answers one registration poll, and is given the number of the
+	// call so a test can change kubelet's answer over time. Left nil by the
+	// tests that do not exercise registration.
+	statusFunc  func(call int32) *registerapi.RegistrationStatus
+	statusCalls atomic.Int32
 }
 
 func (m *mockKubeletPlugin) PublishResources(ctx context.Context, resources resourceslice.DriverResources) error {
@@ -74,6 +81,13 @@ func (m *mockKubeletPlugin) PublishResources(ctx context.Context, resources reso
 		return m.publishError
 	}
 	return nil
+}
+
+func (m *mockKubeletPlugin) RegistrationStatus() *registerapi.RegistrationStatus {
+	if m.statusFunc == nil {
+		return nil
+	}
+	return m.statusFunc(m.statusCalls.Add(1))
 }
 
 func (m *mockKubeletPlugin) Stop() {}
