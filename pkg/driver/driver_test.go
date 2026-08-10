@@ -23,8 +23,10 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	registerapi "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
 )
 
 type mockNRIRunner struct {
@@ -100,6 +102,106 @@ func TestRunNRIPluginWithRetry_SuccessfulRunNoRetry(t *testing.T) {
 	err := runNRIPluginWithRetry(ctx, runner, maxAttempts)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, int32(1), runner.calls.Load())
+}
+
+// TestWaitForRegistration covers an unexported function, which we would normally
+// reach through its caller instead. CPUDriver.Start does a lot and takes no
+// injectable dependencies, so there is no seam to reach this behaviour from
+// outside the package today. Testing it directly is the exception rather than the
+// pattern, and it can move behind Start once Start is separable.
+func TestWaitForRegistration(t *testing.T) {
+	const registrarPath = "/var/lib/kubelet/plugins_registry"
+	rejection := func(reason string) *registerapi.RegistrationStatus {
+		return &registerapi.RegistrationStatus{Error: reason}
+	}
+
+	for _, tc := range []struct {
+		name string
+		// status answers one poll. Calling cancel ends the wait the way a shutdown does.
+		status       func(cancel context.CancelFunc, call int32) *registerapi.RegistrationStatus
+		wantErr      bool
+		wantErrIs    error
+		wantInErr    []string
+		wantNotInErr []string
+		minCalls     int32
+	}{
+		{
+			name: "registered on the first poll",
+			status: func(context.CancelFunc, int32) *registerapi.RegistrationStatus {
+				return &registerapi.RegistrationStatus{PluginRegistered: true}
+			},
+		},
+		{
+			name: "the newest rejection is the one reported",
+			status: func(_ context.CancelFunc, call int32) *registerapi.RegistrationStatus {
+				if call == 1 {
+					return rejection("unsupported plugin API version")
+				}
+				return rejection("driver name already registered")
+			},
+			wantErr:      true,
+			wantInErr:    []string{"driver name already registered"},
+			wantNotInErr: []string{"unsupported plugin API version"},
+			minCalls:     2,
+		},
+		{
+			name: "unregistered with no reason given",
+			status: func(context.CancelFunc, int32) *registerapi.RegistrationStatus {
+				return &registerapi.RegistrationStatus{}
+			},
+			wantErr:   true,
+			wantInErr: []string{"reported no reason"},
+		},
+		{
+			name: "kubelet never reported a status",
+			status: func(context.CancelFunc, int32) *registerapi.RegistrationStatus {
+				return nil
+			},
+			wantErr:   true,
+			wantInErr: []string{registrarPath},
+		},
+		{
+			name: "a shutdown is not diagnosed",
+			status: func(cancel context.CancelFunc, _ int32) *registerapi.RegistrationStatus {
+				cancel()
+				return nil
+			},
+			wantErr:      true,
+			wantErrIs:    context.Canceled,
+			wantNotInErr: []string{registrarPath},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			registrar := &mockKubeletPlugin{
+				statusFunc: func(call int32) *registerapi.RegistrationStatus {
+					return tc.status(cancel, call)
+				},
+			}
+
+			err := waitForRegistration(ctx, registrar, registrarPath, time.Millisecond, 200*time.Millisecond)
+			if tc.minCalls > 0 {
+				require.GreaterOrEqual(t, registrar.statusCalls.Load(), tc.minCalls, "too few polls for this case to prove anything")
+			}
+			if !tc.wantErr {
+				require.NoError(t, err)
+				require.Equal(t, int32(1), registrar.statusCalls.Load(), "a registered plugin should end the wait right away")
+				return
+			}
+			require.Error(t, err)
+			if tc.wantErrIs != nil {
+				require.ErrorIs(t, err, tc.wantErrIs)
+			}
+			for _, want := range tc.wantInErr {
+				require.ErrorContains(t, err, want)
+			}
+			for _, unwanted := range tc.wantNotInErr {
+				require.NotContains(t, err.Error(), unwanted)
+			}
+		})
+	}
 }
 
 func TestGenerateShortID(t *testing.T) {

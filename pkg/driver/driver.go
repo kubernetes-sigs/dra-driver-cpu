@@ -18,6 +18,7 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -39,12 +40,17 @@ import (
 	drametadatav1alpha1 "k8s.io/dynamic-resource-allocation/api/metadata/v1alpha1"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
+	registerapi "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
 	"k8s.io/utils/cpuset"
 )
 
 const (
 	// maxAttempts indicates the number of times the driver will try to recover itself before failing
 	maxAttempts = 5
+	// registrationPollInterval and registrationTimeout bound the wait for kubelet to
+	// acknowledge the plugin at startup
+	registrationPollInterval = 1 * time.Second
+	registrationTimeout      = 30 * time.Second
 )
 
 const opIDLen = 8
@@ -52,6 +58,7 @@ const opIDLen = 8
 // KubeletPlugin is an interface that describes the methods used from kubeletplugin.Helper.
 type KubeletPlugin interface {
 	PublishResources(context.Context, resourceslice.DriverResources) error
+	RegistrationStatus() *registerapi.RegistrationStatus
 	Stop()
 }
 
@@ -293,14 +300,7 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 		return asyncErr, fmt.Errorf("start kubelet plugin: %w", err)
 	}
 	cp.draPlugin = d
-	err = wait.PollUntilContextTimeout(ctx, 1*time.Second, 30*time.Second, true, func(context.Context) (bool, error) {
-		status := d.RegistrationStatus()
-		if status == nil {
-			return false, nil
-		}
-		return status.PluginRegistered, nil
-	})
-	if err != nil {
+	if err := waitForRegistration(ctx, d, registrarDir(cp.kubeletRootDir), registrationPollInterval, registrationTimeout); err != nil {
 		return asyncErr, err
 	}
 
@@ -354,6 +354,42 @@ func getDeviceAttributes(deviceSlices [][]resourceapi.Device, deviceName string)
 func (cp *CPUDriver) Shutdown(ctx context.Context) {
 	logger := ctxlog.FromContext(ctx)
 	logger.Info("runtime shutting down")
+}
+
+// waitForRegistration waits for kubelet to report the plugin as registered. On timeout
+// it reports the last reason kubelet gave for refusing, or that it never reported at all.
+func waitForRegistration(ctx context.Context, p KubeletPlugin, registrarPath string, interval, timeout time.Duration) error {
+	logger := ctxlog.FromContext(ctx)
+	var lastRejection string
+	var sawStatus bool
+	err := wait.PollUntilContextTimeout(ctx, interval, timeout, true, func(context.Context) (bool, error) {
+		status := p.RegistrationStatus()
+		if status == nil {
+			return false, nil
+		}
+		sawStatus = true
+		// Kubelet retries from scratch, so keep the newest reason but do not stop here.
+		// Only the newest survives to the error, so an earlier one is logged instead of lost.
+		if status.Error != "" && status.Error != lastRejection {
+			if lastRejection != "" {
+				logger.Info("kubelet gave a new reason for refusing the plugin", "previous", lastRejection, "current", status.Error)
+			}
+			lastRejection = status.Error
+		}
+		return status.PluginRegistered, nil
+	})
+	// Only a timeout is worth explaining; a cancelled context is the caller shutting down.
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	switch {
+	case lastRejection != "":
+		return fmt.Errorf("kubelet did not register the plugin, last rejection was %q: %w", lastRejection, err)
+	case sawStatus:
+		return fmt.Errorf("kubelet did not register the plugin and reported no reason: %w", err)
+	default:
+		return fmt.Errorf("kubelet never reported a registration status, check that it watches %s: %w", registrarPath, err)
+	}
 }
 
 type nriRunner interface {
