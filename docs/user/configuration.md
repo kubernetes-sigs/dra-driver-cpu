@@ -155,7 +155,6 @@ The remaining flags aren't part of that deprecation:
 - `--config`: path to the config file described above.
 - `--kubeconfig`: path to a kubeconfig file, for out-of-cluster use. Also settable via the `kubeconfig` config field.
 - `--bind-address`: address the metrics server listens on.
-- `--show-metrics`: print the metrics endpoint and exit.
 - `--expose-pcie-roots`: adds the `resource.kubernetes.io/pcieRoot` standard value to CPU
   devices, reporting the PCIe roots close to each device. Since it always reports values
   as a list, this option requires the cluster feature gate `DRAListTypeAttributes` (see
