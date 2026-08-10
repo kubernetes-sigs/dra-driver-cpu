@@ -123,7 +123,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 	}
 
 	var cpuAssignment cpuset.CPUSet
-	allocatableCPUs := cp.cpuAllocationStore.GetAllocatableCPUs()
+	allocatableCPUs := cp.cpuAllocationStore.GetSharedCPUs()
 	for _, alloc := range claim.Status.Allocation.Devices.Results {
 		if alloc.Driver != cp.driverName {
 			continue
@@ -248,7 +248,7 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 	}
 
 	// All the CPUs allocated to a claim must not be prepared for another claim.
-	allocatableCPUs := cp.cpuAllocationStore.GetAllocatableCPUs()
+	allocatableCPUs := cp.cpuAllocationStore.GetSharedCPUs()
 	if !claimCPUSet.IsSubsetOf(allocatableCPUs) {
 		return kubeletplugin.PrepareResult{
 			Err: fmt.Errorf("claim %s/%s has overlapping device assignment with other claims", claim.Namespace, claim.Name),

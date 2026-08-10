@@ -52,16 +52,13 @@ func TestCPUAllocationPreparedLifecycle(t *testing.T) {
 
 	require.NoError(t, store.ReserveResourceClaimAllocation(logger, claimUID, claimCPUs))
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
-	require.True(t, store.GetAllocatableCPUs().Equals(cpuset.New(2, 3)))
 	require.Error(t, store.ReserveResourceClaimAllocation(logger, "claim-2", claimCPUs))
 
 	require.NoError(t, store.ValidateResourceClaimAllocations(map[types.UID]cpuset.CPUSet{claimUID: claimCPUs}))
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
-	require.True(t, store.GetAllocatableCPUs().Equals(cpuset.New(2, 3)))
 
 	store.RemoveResourceClaimAllocation(logger, claimUID)
 	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
-	require.True(t, store.GetAllocatableCPUs().Equals(allCPUs))
 }
 
 func TestNewCPUAllocation(t *testing.T) {
@@ -189,7 +186,7 @@ func TestReserveResourceClaimAllocationRepeatedCalls(t *testing.T) {
 			gotCPUs, ok := store.GetResourceClaimAllocation(claimUID)
 			require.True(t, ok)
 			require.True(t, tc.firstCPUs.Equals(gotCPUs), "claim cpus mismatch: got %s, want %s", gotCPUs, tc.firstCPUs)
-			require.True(t, allCPUs.Difference(tc.firstCPUs).Equals(store.GetAllocatableCPUs()))
+			require.True(t, allCPUs.Difference(tc.firstCPUs).Equals(store.GetSharedCPUs()))
 		})
 	}
 }

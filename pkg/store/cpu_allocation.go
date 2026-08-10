@@ -123,13 +123,6 @@ func (s *CPUAllocation) GetSharedCPUs() cpuset.CPUSet {
 	return s.availableCPUs.Difference(s.preparedCPUs)
 }
 
-// GetAllocatableCPUs returns CPUs available for a new exclusive claim.
-func (s *CPUAllocation) GetAllocatableCPUs() cpuset.CPUSet {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.availableCPUs.Difference(s.preparedCPUs)
-}
-
 // GetResourceClaimAllocation returns the cpuset for a given resource claim.
 func (s *CPUAllocation) GetResourceClaimAllocation(claimUID types.UID) (cpuset.CPUSet, bool) {
 	s.mu.RLock()

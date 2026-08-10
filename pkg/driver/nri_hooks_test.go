@@ -378,7 +378,6 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, preparedCPUs.Equals(claimCPUs))
 	require.True(t, cpuStore.GetSharedCPUs().Equals(cpuset.New(2, 3)))
-	require.True(t, cpuStore.GetAllocatableCPUs().Equals(cpuset.New(2, 3)))
 	require.Equal(t, 1, driver.claimTracker.Len())
 
 	restarted := container("container-2")
@@ -727,8 +726,6 @@ func TestStopContainerKeepsClaimOutOfSharedPoolUntilUnprepare(t *testing.T) {
 	preparedCPUs, ok := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
 	require.True(t, ok, "StopContainer must retain the prepared claim")
 	require.True(t, preparedCPUs.Equals(claimedCPUs))
-	require.True(t, driver.cpuAllocationStore.GetAllocatableCPUs().Equals(allCPUs.Difference(claimedCPUs)),
-		"prepared CPUs must remain unavailable to new exclusive claims")
 	require.Empty(t, updates)
 
 	// UnprepareResourceClaims is the authoritative release point.
