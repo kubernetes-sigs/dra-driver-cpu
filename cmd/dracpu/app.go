@@ -55,7 +55,7 @@ const (
 )
 
 var (
-	driverFlags = driverconfig.Default()
+	driverFlags driverconfig.Config
 	configFile  string
 
 	ready atomic.Bool
@@ -96,12 +96,10 @@ func main() {
 			fmt.Fprintln(os.Stderr, "dracpu: root flags cannot be combined with subcommands")
 			os.Exit(1)
 		}
-
 		opts := subcommands.Options{
-			DriverConfig: driverFlags,
-			Logger:       logger,
-			Stdout:       os.Stdout,
-			Stderr:       os.Stderr,
+			Logger: logger,
+			Stdout: os.Stdout,
+			Stderr: os.Stderr,
 		}
 
 		if err := subcommands.Run(flag.Args(), opts); err != nil {
@@ -111,7 +109,14 @@ func main() {
 		return
 	}
 
-	cfg, err := driverconfig.Load(driverFlags, configFile, flag.CommandLine, logger)
+	cfg, err := driverconfig.Resolve(logger, []driverconfig.Source{
+		// the ordering of Sources matters and determines the
+		// precedence of layers (aka overrides).
+		// Per our current policy, the priority (rightmost wins)
+		// is defaults -> config -> flags.
+		driverconfig.FromFile(configFile),
+		driverconfig.FromFlags(flag.CommandLine),
+	})
 	if err != nil {
 		logger.Error(err, "failed to load configuration")
 		os.Exit(1)

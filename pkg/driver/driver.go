@@ -139,7 +139,7 @@ type Config struct {
 	Metrics          cpumetrics.Recorder
 	// KubeletRootDir is the kubelet root directory, from which the registrar
 	// and plugin data directories are derived. Required and absolute:
-	// driverconfig.Load refuses an empty or relative value, and New takes it as
+	// driverconfig.Resolve refuses an empty or relative value, and New takes it as
 	// given rather than checking it again.
 	KubeletRootDir string
 }
