@@ -55,7 +55,7 @@ const (
 )
 
 var (
-	driverFlags = driverconfig.Default()
+	driverFlags driverconfig.Config
 	configFile  string
 
 	ready atomic.Bool
@@ -96,12 +96,10 @@ func main() {
 			fmt.Fprintln(os.Stderr, "dracpu: root flags cannot be combined with subcommands")
 			os.Exit(1)
 		}
-
 		opts := subcommands.Options{
-			DriverConfig: driverFlags,
-			Logger:       logger,
-			Stdout:       os.Stdout,
-			Stderr:       os.Stderr,
+			Logger: logger,
+			Stdout: os.Stdout,
+			Stderr: os.Stderr,
 		}
 
 		if err := subcommands.Run(flag.Args(), opts); err != nil {

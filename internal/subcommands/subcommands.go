@@ -45,9 +45,7 @@ func Run(args []string, opts Options) error {
 
 	switch args[0] {
 	case "gatherinfo":
-		return gatherinfo.Run(args[1:], gatherinfo.Options{
-			DriverConfig: opts.DriverConfig,
-		}, opts.Logger)
+		return gatherinfo.Run(args[1:], gatherinfo.Options{}, opts.Logger)
 	case "introspect":
 		return runIntrospect(args[1:], opts.Stdout, opts.Stderr)
 	default:
