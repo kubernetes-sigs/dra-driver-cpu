@@ -52,8 +52,7 @@ var deprecatedFlags = sets.New(
 )
 
 // WarnDeprecatedFlags logs a warning for each deprecated flag explicitly set
-// on the command line. Not called by Load. gatherinfo also calls Load, but
-// on other processes' flags, where a warning wouldn't make sense.
+// on the command line.
 func WarnDeprecatedFlags(fs *flag.FlagSet, logger logr.Logger) {
 	fs.Visit(func(f *flag.Flag) {
 		if !deprecatedFlags.Has(f.Name) {
@@ -79,70 +78,14 @@ func Resolve(logger logr.Logger, sources []Source) (Config, error) {
 		}
 		logger.WithValues("applied", src.Name()).V(6).Info("config", cfg.LogValues()...)
 	}
+	if cfg.KubeletRootDir != "" {
+		cfg.KubeletRootDir = filepath.Clean(cfg.KubeletRootDir)
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, fmt.Errorf("cannot validate config: %w", err)
 	}
 	logger.WithValues("stage", "validated").V(6).Info("config", cfg.LogValues()...)
 	return cfg, nil
-}
-
-// Load merges the config file at filePath into base, giving CLI flags that were
-// explicitly set (reported by fs.Visit) priority over file values, then
-// normalizes and validates the result. When filePath is empty no file is read,
-// but base is still normalized and validated. fs must already be parsed.
-func Load(base Config, filePath string, fs *flag.FlagSet, logger logr.Logger) (Config, error) {
-	logger.V(6).Info("config: after flags", base.LogValues()...)
-
-	result := base
-
-	if filePath != "" {
-		// Collect the Config-backed flags that were set explicitly on the command
-		// line so the file does not override them. Flags that are not in
-		// flagToJSONKey (for example --config or the klog --v flag) are not Config
-		// fields, so the file cannot override them and they are simply ignored
-		// here. TestFlagToJSONKey_CoversAllFlags statically guarantees every
-		// AddFlags flag is mapped, so an unmapped Config flag is caught in CI
-		// rather than needing a runtime warning.
-		explicitJSONKeys := map[string]bool{}
-		fs.Visit(func(f *flag.Flag) {
-			if jsonKey, ok := flagToJSONKey[f.Name]; ok {
-				explicitJSONKeys[jsonKey] = true
-			}
-		})
-
-		confMap, err := buildConfMap(filePath)
-		if err != nil {
-			return Config{}, fmt.Errorf("config file %q: %w", filePath, err)
-		}
-
-		// CLI-explicit flags win; drop their keys so the file doesn't override them.
-		for jsonKey := range explicitJSONKeys {
-			delete(confMap, jsonKey)
-		}
-
-		if err := applyMap(&result, confMap); err != nil {
-			return Config{}, fmt.Errorf("applying config file %q: %w", filePath, err)
-		}
-
-		logger.V(6).Info("config: after applying config file", result.LogValues()...)
-	}
-
-	// An empty value is left for Validate to refuse.
-	if result.KubeletRootDir != "" {
-		result.KubeletRootDir = filepath.Clean(result.KubeletRootDir)
-	}
-
-	// Validated even with no config file, so a bad flag is refused too. The file
-	// is named as an input rather than as the source, since what is validated is
-	// the merged result.
-	if err := result.Validate(); err != nil {
-		if filePath != "" {
-			return Config{}, fmt.Errorf("validating the configuration after loading %q: %w", filePath, err)
-		}
-		return Config{}, fmt.Errorf("validating configuration: %w", err)
-	}
-
-	return result, nil
 }
 
 // applyMap applies only the keys present in m to cfg; absent keys are

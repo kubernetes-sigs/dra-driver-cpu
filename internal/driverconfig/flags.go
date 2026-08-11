@@ -99,7 +99,7 @@ func (c *Config) applyDefaults() {
 // Validate checks that enum fields hold recognised values and that
 // kubeletRootDir is non-empty and absolute. The root is required rather than
 // optional because the hostPath mounts render from the same value.
-// Config files bypass the flag.Value validators, so Load calls this after merging.
+// Config files bypass the flag.Value validators, so Resolve calls this after merging.
 func (c Config) Validate() error {
 	if c.CPUDeviceMode != device.CPU_DEVICE_MODE_GROUPED && c.CPUDeviceMode != device.CPU_DEVICE_MODE_INDIVIDUAL {
 		return fmt.Errorf("invalid cpuDeviceMode %q: must be %q or %q",
