@@ -229,8 +229,9 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					gomega.Expect(e2epod.DeleteSync(ctx, fxt.K8SClientset, pod)).To(gomega.Succeed(), "cannot delete pod %s", e2epod.Identify(pod))
 				}
 
-				verifySharedPoolMatches(ctx, fxt, shrPod1, availableCPUs)
-				verifySharedPoolMatches(ctx, fxt, shrPod2, availableCPUs)
+				ginkgo.By("checking existing shared containers keep their last cpuset until the next CreateContainer or Synchronize")
+				verifySharedPoolMatches(ctx, fxt, shrPod1, expectedSharedCPUs)
+				verifySharedPoolMatches(ctx, fxt, shrPod2, expectedSharedCPUs)
 			})
 
 			ginkgo.It("should allocate non-overlapping CPUs for multiple requests in the same grouped claim", func(ctx context.Context) {
@@ -363,8 +364,9 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					gomega.Expect(e2epod.DeleteSync(ctx, fxt.K8SClientset, pod)).To(gomega.Succeed(), "cannot delete pod %s", e2epod.Identify(pod))
 				}
 
-				verifySharedPoolMatches(ctx, fxt, shrPod1, availableCPUs)
-				verifySharedPoolMatches(ctx, fxt, shrPod2, availableCPUs)
+				ginkgo.By("checking existing shared containers keep their last cpuset until the next CreateContainer or Synchronize")
+				verifySharedPoolMatches(ctx, fxt, shrPod1, expectedSharedCPUs)
+				verifySharedPoolMatches(ctx, fxt, shrPod2, expectedSharedCPUs)
 			})
 		})
 	})

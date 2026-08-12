@@ -60,6 +60,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			containerUID := types.UID(container.GetId())
 			var claimUIDs []types.UID
 			allGuaranteedCPUs := cpuset.New()
+			validatedClaimAllocations := make(map[types.UID]cpuset.CPUSet)
 			for uid, cpus := range claimAllocations {
 				caLogger := cLogger.WithValues("claimUID", uid)
 				if !cdiCacheRefreshAttempted {
@@ -81,20 +82,25 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 					caLogger.Error(err, "ignoring invalid claim allocation during synchronize")
 					continue
 				}
-				err = claimTracker.SetOwner(caLogger, uid, types.UID(pod.Uid), container.Name)
-				if err != nil {
+				if err := cpuAllocationStore.ReserveResourceClaimAllocation(caLogger, uid, cpus); err != nil {
 					return nil, err
 				}
 
 				allGuaranteedCPUs = allGuaranteedCPUs.Union(cpus)
 				claimUIDs = append(claimUIDs, uid)
-				cpuAllocationStore.AddResourceClaimAllocation(caLogger, uid, cpus)
+				validatedClaimAllocations[uid] = cpus
 			}
 
 			var state *store.ContainerState
 			if len(claimUIDs) == 0 {
 				state = store.NewContainerState(container.GetName(), containerUID)
 			} else {
+				if _, err := claimTracker.SetOwner(cLogger, types.UID(pod.Uid), container.Name, claimUIDs...); err != nil {
+					return nil, err
+				}
+				if err := cpuAllocationStore.ValidateResourceClaimAllocations(validatedClaimAllocations); err != nil {
+					return nil, err
+				}
 				cLogger.V(2).Info("found guaranteed CPUs", "cpus", allGuaranteedCPUs.String())
 				state = store.NewContainerState(container.GetName(), containerUID, claimUIDs...)
 
@@ -152,17 +158,6 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 	return allocations, nil
 }
 
-func (cp *CPUDriver) validatePreparedClaimAllocation(uid types.UID, cpus cpuset.CPUSet) error {
-	preparedCPUs, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(uid)
-	if !ok {
-		return fmt.Errorf("claim %q is not prepared by this driver", uid)
-	}
-	if !preparedCPUs.Equals(cpus) {
-		return fmt.Errorf("validation failed for claim %q: cpuset mismatch (expected %q, got %q)", uid, preparedCPUs.String(), cpus.String())
-	}
-	return nil
-}
-
 func validateSynchronizedClaimAllocation(logger logr.Logger, uid types.UID, cpus cpuset.CPUSet, envs []string) error {
 	allocations, err := parseDRAEnvToClaimAllocations(logger, envs)
 	if err != nil {
@@ -178,7 +173,6 @@ func validateSynchronizedClaimAllocation(logger logr.Logger, uid types.UID, cpus
 	}
 	return nil
 }
-
 func (cp *CPUDriver) getSharedContainerUpdates(logger logr.Logger, excludeID types.UID) []*api.ContainerUpdate {
 	updates := []*api.ContainerUpdate{}
 	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
@@ -231,70 +225,51 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		guaranteedCPUs := cpuset.New()
 		claimUIDs := []types.UID{}
 		for uid, cpus := range claimAllocations {
-			cLogger := logger.WithValues("claimUID", uid)
-			if err := cp.validatePreparedClaimAllocation(uid, cpus); err != nil {
-				return nil, nil, err
-			}
-
-			err := cp.claimTracker.SetOwner(cLogger, uid, types.UID(pod.Uid), ctr.Name)
-			if err != nil {
-				return nil, nil, err
-			}
-
 			guaranteedCPUs = guaranteedCPUs.Union(cpus)
 			claimUIDs = append(claimUIDs, uid)
+		}
+		newOwners, err := cp.claimTracker.SetOwner(logger, podUID, ctr.Name, claimUIDs...)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := cp.cpuAllocationStore.ValidateResourceClaimAllocations(claimAllocations); err != nil {
+			cp.claimTracker.Cleanup(newOwners...)
+			return nil, nil, err
 		}
 		logger.V(2).Info("guaranteed CPUs found", "cpus", guaranteedCPUs.String())
 		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs...)
 		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
 		cp.podConfigStore.SetContainerState(podUID, state)
-		// Remove the guaranteed CPUs from the containers with shared CPUs.
-		updates = cp.getSharedContainerUpdates(logger, containerId)
+		// A new owner means this is the first CreateContainer after Prepare. On restart,
+		// the owner already exists and the shared cpuset has not changed.
+		if len(newOwners) > 0 {
+			updates = cp.getSharedContainerUpdates(logger, containerId)
+		}
 	}
 
 	return adjust, updates, nil
 }
 
-// StopContainer releases a guaranteed container's CPU claim back into the shared pool.
+// StopContainer removes runtime container state without changing DRA-owned allocations.
 //
 // CPU-allocation lifetime across the DRA and NRI hooks:
-//   - PrepareResourceClaims (DRA) records the claim's CPUs in cpuAllocationStore and writes the CDI
-//     spec carrying that cpuset.
-//   - CreateContainer (NRI) pins the guaranteed container and shrinks the other shared containers'
-//     pool accordingly.
-//   - StopContainer (NRI, here) releases the claim's CPUs back into the shared pool and re-broadens
-//     the surviving shared containers immediately, because NRI only lets us push cpuset updates to
-//     other containers during a container lifecycle event and UnprepareResourceClaims runs too late.
-//   - UnprepareResourceClaims (DRA) does the authoritative cleanup (remove the CDI device, then
-//     release the allocation); releasing an already-released claim is a no-op, so the early release
-//     here stays consistent with it.
+//   - PrepareResourceClaims (DRA) reserves CPUs and writes the CDI spec carrying that cpuset.
+//   - CreateContainer (NRI) validates the CDI cpuset and applies it to the container.
+//   - StopContainer (NRI, here) removes only the matching runtime container state. The prepared
+//     allocation and owner remain unchanged so a restarted container reuses the same CPUs.
+//   - UnprepareResourceClaims (DRA) is the authoritative release point for the allocation and owner.
 //   - Synchronize (NRI, on restart) rebuilds the stores from the running containers' CDI env.
-//
-// This relies on a ResourceClaim being owned by exactly one container (claim sharing is
-// unsupported), which is what makes the early release safe. Revisit before enabling claim sharing,
-// preemption, or mixed shared/isolated allocation.
 func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) ([]*api.ContainerUpdate, error) {
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen), "pod", ctxlog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
 	logger.V(2).Info("begin: StopContainer")
 	defer logger.V(2).Info("end: StopContainer")
 
 	updates := []*api.ContainerUpdate{}
-	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
-	entries := "none"
-	if len(claimUIDs) > 0 {
-		// Early release of the claim's CPUs; see the lifetime model in StopContainer's doc comment.
-		// TODO: assumes ResourceClaims are not shared across pods/containers; revisit if sharing lands.
-		for _, claimUID := range claimUIDs {
-			cLogger := logger.WithValues("claimUID", claimUID)
-			cp.cpuAllocationStore.RemoveResourceClaimAllocation(cLogger, claimUID)
-		}
-		cp.refreshAllocationMetrics()
-		// Remove the guaranteed CPUs from the containers with shared CPUs.
-		updates = cp.getSharedContainerUpdates(logger, types.UID(ctr.GetId()))
-		cp.claimTracker.Cleanup(claimUIDs...)
-		entries = fmt.Sprintf("%d entries", len(updates))
+	_, removed := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
+	if !removed {
+		logger.V(2).Info("ignoring stale or unknown StopContainer event")
+		return updates, nil
 	}
-	logger.V(2).Info("StopContainer updates needed", "entries", entries)
 	return updates, nil
 }
 
@@ -304,7 +279,11 @@ func (cp *CPUDriver) RemoveContainer(ctx context.Context, pod *api.PodSandbox, c
 	logger.V(2).Info("begin: RemoveContainer")
 	defer logger.V(2).Info("end: RemoveContainer")
 
-	claimUIDs := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName())
+	claimUIDs, removed := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
+	if !removed {
+		logger.V(2).Info("ignoring stale or unknown RemoveContainer event")
+		return nil
+	}
 	if len(claimUIDs) > 0 {
 		// this serves only for debugging purposes. We should never get here
 		logger.Info("RemoveContainer spurious updates needed (unexpected, please file a bug)", "updates", cp.getSharedContainerUpdates(logger, types.UID(ctr.GetId())))

@@ -54,18 +54,31 @@ func TestRemoveContainerState(t *testing.T) {
 	require.NotNil(t, store.GetContainerState(podUID, ctrName2))
 
 	// Remove one container
-	store.RemoveContainerState(podUID, ctrName1)
+	claimUIDs, removed := store.RemoveContainerState(podUID, ctrName1, "ctr-uid-1")
+	require.True(t, removed)
+	require.Equal(t, []types.UID{"claim-uid-1"}, claimUIDs)
 	require.Nil(t, store.GetContainerState(podUID, ctrName1))
 	require.NotNil(t, store.GetContainerState(podUID, ctrName2), "other container should still exist")
 
 	// Remove the second container, which should remove the pod entry
-	store.RemoveContainerState(podUID, ctrName2)
+	_, removed = store.RemoveContainerState(podUID, ctrName2, "ctr-uid-2")
+	require.True(t, removed)
 	require.Nil(t, store.GetContainerState(podUID, ctrName2))
 	_, podExists := store.configs[podUID]
 	require.False(t, podExists, "pod entry should be gone after last container is removed")
 
 	// Remove non-existent container, should not panic
-	store.RemoveContainerState(podUID, "non-existent-ctr")
+	_, removed = store.RemoveContainerState(podUID, "non-existent-ctr", "unknown-uid")
+	require.False(t, removed)
+
+	// A delayed event for an old container must not remove its replacement.
+	store.SetContainerState(podUID, NewContainerState(ctrName1, "old-uid", "claim-uid-1"))
+	store.SetContainerState(podUID, NewContainerState(ctrName1, "new-uid", "claim-uid-1"))
+	_, removed = store.RemoveContainerState(podUID, ctrName1, "old-uid")
+	require.False(t, removed)
+	require.Equal(t, types.UID("new-uid"), store.GetContainerState(podUID, ctrName1).containerUID)
+	_, removed = store.RemoveContainerState(podUID, ctrName1, "new-uid")
+	require.True(t, removed)
 }
 
 func TestGetSharedCPUContainerUIDs(t *testing.T) {
@@ -130,12 +143,14 @@ func TestSharedCPUContainersCacheConsistency(t *testing.T) {
 	require.Len(t, sharedUIDs, 2)
 	require.NotContains(t, sharedUIDs, types.UID("id1"))
 
-	store.RemoveContainerState("pod1", "c2")
+	_, removed := store.RemoveContainerState("pod1", "c2", "id2")
+	require.True(t, removed)
 	sharedUIDs = store.GetContainersWithSharedCPUs()
 	require.Len(t, sharedUIDs, 1)
 	require.ElementsMatch(t, []types.UID{"id3"}, sharedUIDs)
 
-	store.RemoveContainerState("pod2", "c3")
+	_, removed = store.RemoveContainerState("pod2", "c3", "id3")
+	require.True(t, removed)
 	sharedUIDs = store.GetContainersWithSharedCPUs()
 	require.Len(t, sharedUIDs, 0)
 }
