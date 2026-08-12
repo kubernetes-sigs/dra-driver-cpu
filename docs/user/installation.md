@@ -19,9 +19,9 @@ Optional features need additional cluster feature gates:
 | `grouped` device mode (the default) on Kubernetes 1.34/1.35 | `DRAConsumableCapacity` (enabled by default from 1.36) |
 | PCIe root attributes (`--expose-pcie-roots`)                | `DRAListTypeAttributes`                                |
 
-The driver is Linux-only and needs node-level privileges (host networking, the `NET_ADMIN`
-and `SYS_ADMIN` capabilities, and NRI socket, CDI directory, and kubelet plugin directory
-access) — see [Security considerations](#security-considerations).
+The driver is Linux-only and needs node-level privileges (host networking, and NRI socket,
+CDI directory, and kubelet plugin directory access) — see
+[Security considerations](#security-considerations).
 
 ## Installing with Helm
 
@@ -102,10 +102,9 @@ systemctl restart containerd
 
 ## Security considerations
 
-The driver needs node-level privileges. It runs as a DaemonSet with `hostNetwork: true` and
-the `NET_ADMIN` and `SYS_ADMIN` capabilities, with hostPath
-mounts for the NRI socket (`/var/run/nri`), the CDI spec directory (`/var/run/cdi`), and the
-kubelet plugin directories.
+The driver needs node-level privileges: `hostNetwork: true`, and hostPath mounts for the NRI
+socket (`/var/run/nri`), the CDI spec directory (`/var/run/cdi`), and the kubelet plugin
+directories.
 
 ## Upgrading
 

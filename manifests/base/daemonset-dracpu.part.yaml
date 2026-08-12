@@ -49,9 +49,6 @@ spec:
           requests:
             cpu: "100m"
             memory: "50Mi"
-        securityContext:
-          capabilities:
-            add: ["NET_ADMIN", "SYS_ADMIN"]
         volumeMounts:
         - name: device-plugin
           mountPath: /var/lib/kubelet/plugins

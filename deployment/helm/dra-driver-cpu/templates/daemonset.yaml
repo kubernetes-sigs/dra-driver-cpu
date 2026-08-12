@@ -101,9 +101,6 @@ spec:
           limits:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-        securityContext:
-          capabilities:
-            add: ["NET_ADMIN", "SYS_ADMIN"]
         volumeMounts:
         - name: device-plugin
           mountPath: {{ include "dra-driver-cpu.pluginsDir" $kubeletRoot | quote }}
