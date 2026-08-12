@@ -171,10 +171,6 @@ The remaining flags aren't part of that deprecation:
   config file (see [driverConfig sub-fields](#driverconfig-sub-fields) above) and stays a
   standalone flag (or Helm `args.exposePCIeRoots`).
 - `--kubelet-root-dir`: the kubelet's own root directory (default `/var/lib/kubelet`).
-  Under Helm, set the chart's `kubeletRootDir` value rather than passing this flag through
-  `extraArgs`: the hostPath mounts render from the chart value, so the flag would move on
-  its own and leave the driver registered somewhere the kubelet isn't watching, which
-  surfaces later as a registration timeout rather than as anything naming the mismatch.
   Running the binary directly, or writing the manifests by hand, the flag is the way to set
   the root, together with matching `<root>/plugins` and `<root>/plugins_registry` mounts.
   Like `--expose-pcie-roots`, it is not deprecated and has no config file equivalent: the
@@ -228,7 +224,3 @@ the kubelet root; splitting them across releases fails with `invalid ownership m
 since the chart's `DeviceClass` is cluster-scoped under a fixed name. A cluster whose nodes
 disagree needs the driver deployed some other way until the chart can vary the root per
 node.
-
-Passing `--kubelet-root-dir` through `extraArgs` is refused at template time — set
-`kubeletRootDir` instead, since `extraArgs` would win the flag while the mounts kept
-rendering from the chart value.

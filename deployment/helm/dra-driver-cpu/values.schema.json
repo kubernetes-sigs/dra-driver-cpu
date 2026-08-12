@@ -58,13 +58,6 @@
       "$ref": "driverconfig.schema.json",
       "type": "object"
     },
-    "extraArgs": {
-      "description": "Extra command-line arguments appended to the driver arguments",
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
     "extraVolumeMounts": {
       "description": "Extra volume mounts for the driver container",
       "type": "array",

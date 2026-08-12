@@ -73,9 +73,6 @@ spec:
           {{- if ne $kubeletRoot "/var/lib/kubelet" }}
           - {{ printf "--kubelet-root-dir=%s" $kubeletRoot | quote }}
           {{- end }}
-          {{- with .Values.extraArgs }}
-          {{- toYaml . | nindent 10 }}
-          {{- end }}
           {{- if $effectiveDriverConfig }}
           - --config=/etc/dracpu/config.yaml
           {{- end }}

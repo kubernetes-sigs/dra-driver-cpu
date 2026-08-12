@@ -42,7 +42,6 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
 | args.logLevel | int | `4` | Log verbosity level passed as `--v` |
 | args.reservedCPUs | string | `""` | **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.reservedCPUs` instead. CPUs reserved for the OS and kubelet, excluded from DRA management (e.g. `"0-1"`). |
 | driverConfig | object | `{}` | Driver config file contents. When non-empty, or when a deprecated `args.*` field below is set, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. `args.*` fields that mirror a deprecated CLI flag (`cpuDeviceMode`, `groupBy`, `reservedCPUs`, `hostnameOverride`) are folded into the generated config automatically and take priority over the same field set here. |
-| extraArgs | list | `[]` | Extra command-line arguments appended to the driver arguments |
 | extraVolumeMounts | list | `[]` | Extra volume mounts for the driver container |
 | extraVolumes | list | `[]` | Extra volumes for the DaemonSet pod |
 | fullnameOverride | string | `""` | Override the full release name |
