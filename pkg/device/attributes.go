@@ -48,6 +48,7 @@ const (
 	// ResourceSlice) that indicates how many CPUs were allocated to a specific
 	// claim from a grouped device's capacity.
 	AttributeAllocatedNumCPUs resourceapi.QualifiedName = "dra.cpu/allocatedNumCPUs"
+	AttributeCPUIDs           resourceapi.QualifiedName = "dra.cpu/cpuIDs"
 )
 
 // addCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other

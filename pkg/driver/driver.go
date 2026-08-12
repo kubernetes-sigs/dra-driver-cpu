@@ -269,7 +269,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 
 	if plugin.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
 		var nameToID map[string]int
-		devices, nameToID, err = device.BuildGrouped(logger, plugin.cpuDeviceGroupBy, plugin.topology.Inventory, plugin.pcieRootMapper, config.PublishNodeAllocatableResourceMapping)
+		devices, nameToID, err = device.BuildGrouped(logger, plugin.cpuDeviceGroupBy, plugin.topology.Inventory, plugin.pcieRootMapper, config.PublishNodeAllocatableResourceMapping, exposeCPUSet)
 		switch plugin.cpuDeviceGroupBy {
 		case device.GROUP_BY_SOCKET:
 			plugin.topology.deviceNameToSocketID = nameToID

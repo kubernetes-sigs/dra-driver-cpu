@@ -57,7 +57,7 @@ func Build(machine Inventory, pcieRootMapper *store.PCIeRootMapper, nodeAllocata
 	return devSlices, nameToID, err
 }
 
-func BuildGrouped(logger logr.Logger, groupBy string, machine Inventory, pcieRootMapper *store.PCIeRootMapper, nodeAllocatableResources bool) ([]resourceapi.Device, map[string]int, error) {
+func BuildGrouped(logger logr.Logger, groupBy string, machine Inventory, pcieRootMapper *store.PCIeRootMapper, nodeAllocatableResources, exposeCPUSet bool) ([]resourceapi.Device, map[string]int, error) {
 	deviceInfos := groupedCPUDeviceInfos(groupBy, machine)
 	nameToID := make(map[string]int)
 	for _, dev := range deviceInfos {
@@ -68,7 +68,7 @@ func BuildGrouped(logger logr.Logger, groupBy string, machine Inventory, pcieRoo
 			nameToID[dev.name] = dev.numaNodeID
 		}
 	}
-	devSlices, err := createGroupedCPUDeviceSlices(logger, groupBy, deviceInfos, pcieRootMapper, machine.CPUTopology.SMTEnabled, nodeAllocatableResources)
+	devSlices, err := createGroupedCPUDeviceSlices(logger, groupBy, deviceInfos, pcieRootMapper, machine.CPUTopology.SMTEnabled, nodeAllocatableResources, exposeCPUSet)
 	return devSlices, nameToID, err
 }
 
@@ -221,7 +221,7 @@ func cpuDeviceInfos(machine Inventory) []cpuDeviceInfo {
 }
 
 // createGroupedCPUDeviceSlices creates Device objects based on the CPU topology, grouped by a specific criteria.
-func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfos []groupedCPUDeviceInfo, pcieRootMapper *store.PCIeRootMapper, smtEnabled bool, nodeAllocatableResources bool) ([]resourceapi.Device, error) {
+func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfos []groupedCPUDeviceInfo, pcieRootMapper *store.PCIeRootMapper, smtEnabled, nodeAllocatableResources, exposeCPUSet bool) ([]resourceapi.Device, error) {
 	logger.V(4).Info("creating grouped CPU devices")
 	var devices []resourceapi.Device
 
@@ -240,6 +240,11 @@ func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfo
 			}
 			if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...); err != nil {
 				return nil, err
+			}
+			if exposeCPUSet {
+				if err := addCPUIDsAttribute(deviceAttrs, deviceInfo.cpus); err != nil {
+					return nil, err
+				}
 			}
 
 			devices = append(devices, resourceapi.Device{
@@ -261,6 +266,11 @@ func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfo
 			addCompatibilityAttributes(deviceAttrs, int64(deviceInfo.numaNodeID))
 			if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...); err != nil {
 				return nil, err
+			}
+			if exposeCPUSet {
+				if err := addCPUIDsAttribute(deviceAttrs, deviceInfo.cpus); err != nil {
+					return nil, err
+				}
 			}
 
 			devices = append(devices, resourceapi.Device{
@@ -342,5 +352,17 @@ func addPCIeRootsAttribute(pcieRootMapper *store.PCIeRootMapper, attrs map[resou
 		return fmt.Errorf("PCIe roots %q cannot be represented within the limit of DRA max value length=%d", pcieRoots, resourceapi.DeviceAttributeMaxValueLength)
 	}
 	attrs[deviceattribute.StandardDeviceAttributePCIeRoot] = resourceapi.DeviceAttribute{StringValues: pcieRoots}
+	return nil
+}
+
+func addCPUIDsAttribute(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, cpus cpuset.CPUSet) error {
+	if cpus.Size() == 0 {
+		return nil // nothing to do
+	}
+	cpuIDs := cpus.String()
+	if len(cpuIDs) > resourceapi.DeviceAttributeMaxValueLength {
+		return fmt.Errorf("cpus %q cannot be represented within the limit of DRA max value length=%d", cpus.String(), resourceapi.DeviceAttributeMaxValueLength)
+	}
+	attrs[AttributeCPUIDs] = resourceapi.DeviceAttribute{StringValue: &cpuIDs}
 	return nil
 }
