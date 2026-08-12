@@ -150,7 +150,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		claimCPUCount := int(count)
 		logger.V(4).Info("found CPU request", "numCPUs", claimCPUCount, "device", alloc.Device)
 
-		topo := cp.topology.cpuTopology
+		topo := cp.topology.CPUTopology
 		// TODO: what if `claimCPUCount==0`?
 
 		// The preferred hint comes from the request's opaque config (if any); the
@@ -182,7 +182,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, preferredCPUs, claimCPUCount)
 		case device.GROUP_BY_MACHINE:
 			// no mapping needed in machine mode - just one device = the whole machine
-			availableCPUs := cp.topology.onlineCPUs.Difference(cp.topology.reservedCPUs)
+			availableCPUs := cp.topology.OnlineCPUs.Difference(cp.topology.ReservedCPUs)
 			logger.V(4).Info("Machine CPU availability", "availableCPUs", availableCPUs.String())
 			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUs, preferredCPUs, claimCPUCount)
 			logger.V(2).Info("using opaque config CPU assignment", "device", alloc.Device, "assigned", cur.String())

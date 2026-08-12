@@ -140,13 +140,11 @@ type deviceHealthEntry struct {
 // deviceTopology holds the CPU topology and device-to-CPU/socket/NUMA
 // mappings. Set once in New(), read-only after that.
 type deviceTopology struct {
-	cpuTopology            *cpuinfo.CPUTopology
+	device.Inventory
 	deviceNameToCPUID      map[string]int
 	deviceNameToSocketID   map[string]int
 	deviceNameToNUMANodeID map[string]int
 	deviceSlices           [][]resourceapi.Device
-	reservedCPUs           cpuset.CPUSet
-	onlineCPUs             cpuset.CPUSet
 }
 
 // Providers group the interfaces the CPUDriver depends on
@@ -213,10 +211,12 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		nodeName:   config.NodeName,
 		kubeClient: providers.K8SClient,
 		topology: deviceTopology{
+			Inventory: device.Inventory{
+				ReservedCPUs: config.ReservedCPUs,
+			},
 			deviceNameToCPUID:      make(map[string]int),
 			deviceNameToSocketID:   make(map[string]int),
 			deviceNameToNUMANodeID: make(map[string]int),
-			reservedCPUs:           config.ReservedCPUs,
 		},
 		cpuDeviceMode:           config.CPUDeviceMode,
 		cpuDeviceGroupBy:        config.CPUDeviceGroupBy,
@@ -234,7 +234,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		return nil, fmt.Errorf("failed to get online CPUs: %w", err)
 	}
 	logger.V(2).Info("detected online CPUs", "cpus", onlineCPUs.String())
-	plugin.topology.onlineCPUs = onlineCPUs
+	plugin.topology.OnlineCPUs = onlineCPUs
 
 	topo, err := providers.EnsureCPUInfo().GetCPUTopology(logger)
 	if err != nil {
@@ -243,7 +243,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	if topo == nil {
 		return nil, fmt.Errorf("failed to get CPU topology: topology is nil")
 	}
-	plugin.topology.cpuTopology = topo
+	plugin.topology.CPUTopology = topo
 
 	if config.ExposePCIeRoots {
 		if err := plugin.pcieRootMapper.Probe(logger, sfs, onlineCPUs); err != nil {
@@ -251,14 +251,16 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		}
 	}
 
-	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.topology.cpuTopology, config.ReservedCPUs)
+	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.topology.CPUTopology, config.ReservedCPUs)
 	plugin.refreshAllocationMetrics()
 	plugin.podConfigStore = store.NewPodConfig()
 
+	exposeCPUSet := false
 	logger.Info("creating CPU allocator", "method", config.Allocator)
 	switch config.Allocator {
 	case driverconfig.AllocatorExternal:
-		plugin.cpuAllocator = cpuallocator.NewExternal(config.DriverName, plugin.topology.onlineCPUs, config.ReservedCPUs)
+		plugin.cpuAllocator = cpuallocator.NewExternal(config.DriverName, plugin.topology.OnlineCPUs, config.ReservedCPUs)
+		exposeCPUSet = true
 	default:
 		plugin.cpuAllocator = cpuallocator.NewCPUManager(config.DriverName, topo)
 	}
@@ -267,7 +269,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 
 	if plugin.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
 		var nameToID map[string]int
-		devices, nameToID = device.BuildGrouped(logger, plugin.cpuDeviceGroupBy, plugin.topology.cpuTopology, plugin.topology.onlineCPUs, plugin.topology.reservedCPUs, plugin.pcieRootMapper, config.PublishNodeAllocatableResourceMapping)
+		devices, nameToID, err = device.BuildGrouped(logger, plugin.cpuDeviceGroupBy, plugin.topology.Inventory, plugin.pcieRootMapper, config.PublishNodeAllocatableResourceMapping)
 		switch plugin.cpuDeviceGroupBy {
 		case device.GROUP_BY_SOCKET:
 			plugin.topology.deviceNameToSocketID = nameToID
@@ -275,7 +277,10 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 			plugin.topology.deviceNameToNUMANodeID = nameToID
 		}
 	} else {
-		devices, plugin.topology.deviceNameToCPUID = device.Build(plugin.topology.cpuTopology, plugin.topology.reservedCPUs, plugin.pcieRootMapper, config.PublishNodeAllocatableResourceMapping)
+		devices, plugin.topology.deviceNameToCPUID, err = device.Build(plugin.topology.Inventory, plugin.pcieRootMapper, config.PublishNodeAllocatableResourceMapping)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	if len(devices) > 0 {

@@ -24,6 +24,7 @@ import (
 	"github.com/containerd/nri/pkg/api"
 	"github.com/go-logr/logr/testr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/prometheus/client_golang/prometheus"
@@ -49,7 +50,9 @@ func newMetricsTestDriver(t *testing.T) (*CPUDriver, *prometheus.Registry) {
 	driver := &CPUDriver{
 		driverName: testDriverName,
 		topology: deviceTopology{
-			cpuTopology: topo,
+			Inventory: device.Inventory{
+				CPUTopology: topo,
+			},
 			deviceNameToCPUID: map[string]int{
 				"cpudev0": 0,
 				"cpudev1": 1,

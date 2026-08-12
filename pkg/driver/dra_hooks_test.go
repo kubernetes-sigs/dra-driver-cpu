@@ -942,7 +942,9 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			cpuDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
 			cpuDeviceGroupBy: devattr.GROUP_BY_SOCKET,
 			topology: deviceTopology{
-				cpuTopology:            topo,
+				Inventory: devattr.Inventory{
+					CPUTopology: topo,
+				},
 				deviceNameToSocketID:   map[string]int{"cpudevsocket0": 0},
 				deviceNameToNUMANodeID: map[string]int{},
 			},
@@ -1591,7 +1593,9 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			cpuDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
 			cpuDeviceGroupBy: devattr.GROUP_BY_SOCKET,
 			topology: deviceTopology{
-				cpuTopology:            topo,
+				Inventory: devattr.Inventory{
+					CPUTopology: topo,
+				},
 				deviceNameToSocketID:   map[string]int{"cpudevsocket0": 0, "cpudevsocket1": 1},
 				deviceNameToNUMANodeID: map[string]int{},
 			},
@@ -1611,7 +1615,9 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			cpuDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
 			cpuDeviceGroupBy: devattr.GROUP_BY_NUMA_NODE,
 			topology: deviceTopology{
-				cpuTopology:            topo,
+				Inventory: devattr.Inventory{
+					CPUTopology: topo,
+				},
 				deviceNameToSocketID:   map[string]int{},
 				deviceNameToNUMANodeID: map[string]int{"cpudevnuma0": 0, "cpudevnuma1": 1},
 			},
@@ -2213,12 +2219,12 @@ func createCPUDriverExternalAllocForTest(t *testing.T, groupBy string, cpuInfos 
 	driver.topology.deviceNameToSocketID = make(map[string]int)
 	driver.topology.deviceNameToNUMANodeID = make(map[string]int)
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
-	driver.topology.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
-	driver.topology.onlineCPUs = driver.topology.cpuTopology.CPUDetails.CPUs()
-	driver.topology.reservedCPUs = reservedCPUs
-	driver.cpuAllocationStore = store.NewCPUAllocation(driver.topology.cpuTopology, reservedCPUs)
+	driver.topology.CPUTopology, _ = mockProvider.GetCPUTopology(logger)
+	driver.topology.OnlineCPUs = driver.topology.CPUTopology.CPUDetails.CPUs()
+	driver.topology.ReservedCPUs = reservedCPUs
+	driver.cpuAllocationStore = store.NewCPUAllocation(driver.topology.CPUTopology, reservedCPUs)
 	driver.podConfigStore = store.NewPodConfig()
-	driver.cpuAllocator = cpuallocator.NewExternal(testDriverName, driver.topology.onlineCPUs, reservedCPUs)
+	driver.cpuAllocator = cpuallocator.NewExternal(testDriverName, driver.topology.OnlineCPUs, reservedCPUs)
 	for claimUID, cpus := range initialAllocations {
 		requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, cpus)
 	}

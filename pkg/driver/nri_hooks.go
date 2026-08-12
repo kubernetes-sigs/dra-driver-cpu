@@ -37,7 +37,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	logger.Info("begin: synchronize state with the runtime", "numPods", len(pods), "numContainers", len(containers))
 	defer logger.Info("end: synchronize state with the runtime", "numPods", len(pods), "numContainers", len(containers))
 
-	cpuAllocationStore := store.NewCPUAllocation(cp.topology.cpuTopology, cp.topology.reservedCPUs)
+	cpuAllocationStore := store.NewCPUAllocation(cp.topology.CPUTopology, cp.topology.ReservedCPUs)
 	podConfigStore := store.NewPodConfig()
 	claimTracker := store.NewClaimTracker()
 	var containerUpdates []*api.ContainerUpdate
