@@ -19,7 +19,6 @@ package device_test
 import (
 	"testing"
 
-	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
@@ -88,15 +87,19 @@ func TestDeviceBuilderNodeAllocatableResourceMapping(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var devices []resourceapi.Device
-			if tc.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
-				devices, _ = device.BuildGrouped(logr.Discard(), tc.groupBy, topo, reserved, store.NewPCIeRootMapper(), tc.publishNodeAllocatableMapping)
-			} else {
-				devices, _ = device.Build(topo, reserved, store.NewPCIeRootMapper(), tc.publishNodeAllocatableMapping)
-			}
-			require.NotEmpty(t, devices)
+			res, err := device.Build(device.BuildInput{
+				Inventory: device.Inventory{
+					CPUTopology:  topo,
+					ReservedCPUs: reserved,
+				},
+				Layout:                                device.FindLayout(tc.cpuDeviceMode, tc.groupBy),
+				PCIeRootMapper:                        store.NewPCIeRootMapper(),
+				PublishNodeAllocatableResourceMapping: tc.publishNodeAllocatableMapping,
+			})
+			require.NoError(t, err)
+			require.NotEmpty(t, res.Devices)
 
-			for _, dev := range devices {
+			for _, dev := range res.Devices {
 				if !tc.publishNodeAllocatableMapping {
 					require.Nil(t, dev.NodeAllocatableResources,
 						"device %q must not expose nodeAllocatableResources when publishing is disabled", dev.Name)
@@ -141,15 +144,22 @@ func TestMachineGroupedUsesTopologyValidatedCPUs(t *testing.T) {
 	// CPU 4 was omitted from CPUDetails because topology discovery could not
 	// validate it.
 
-	devices, _ := device.BuildGrouped(
-		logr.Discard(), device.GROUP_BY_MACHINE, topo, cpuset.New(),
-		store.NewPCIeRootMapper(), false,
-	)
-	require.Len(t, devices, 1)
+	res, err := device.Build(
+		device.BuildInput{
+			Inventory: device.Inventory{
+				CPUTopology:  topo,
+				ReservedCPUs: cpuset.New(),
+			},
+			Layout:                                device.LayoutMachine,
+			PCIeRootMapper:                        store.NewPCIeRootMapper(),
+			PublishNodeAllocatableResourceMapping: false,
+		})
+	require.NoError(t, err)
+	require.Len(t, res.Devices, 1)
 
-	capacity := devices[0].Capacity[resourceapi.QualifiedName(device.CPUResourceQualifiedName)]
+	capacity := res.Devices[0].Capacity[resourceapi.QualifiedName(device.CPUResourceQualifiedName)]
 	require.Equal(t, int64(4), capacity.Value.Value())
-	numCPUs := devices[0].Attributes[device.AttributeNumCPUs]
+	numCPUs := res.Devices[0].Attributes[device.AttributeNumCPUs]
 	require.NotNil(t, numCPUs.IntValue)
 	require.Equal(t, int64(4), *numCPUs.IntValue)
 }

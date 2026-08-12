@@ -40,7 +40,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 
 	defer func() { cp.metrics.RecordNRISynchronize(rerr, time.Since(startTime)) }()
 
-	cpuAllocationStore := store.NewCPUAllocation(cp.topology.cpuTopology, cp.topology.reservedCPUs)
+	cpuAllocationStore := store.NewCPUAllocation(cp.topology.CPUTopology, cp.topology.ReservedCPUs)
 	podConfigStore := store.NewPodConfig()
 	claimTracker := store.NewClaimTracker()
 	var containerUpdates []*api.ContainerUpdate

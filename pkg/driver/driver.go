@@ -140,12 +140,9 @@ type deviceHealthEntry struct {
 // deviceTopology holds the CPU topology and device-to-CPU/socket/NUMA
 // mappings. Set once in New(), read-only after that.
 type deviceTopology struct {
-	cpuTopology            *cpuinfo.CPUTopology
-	deviceNameToCPUID      map[string]int
-	deviceNameToSocketID   map[string]int
-	deviceNameToNUMANodeID map[string]int
-	deviceSlices           [][]resourceapi.Device
-	reservedCPUs           cpuset.CPUSet
+	device.Inventory
+	device.Mapping
+	deviceSlices [][]resourceapi.Device
 }
 
 // Providers group the interfaces the CPUDriver depends on
@@ -212,10 +209,9 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		nodeName:   config.NodeName,
 		kubeClient: providers.K8SClient,
 		topology: deviceTopology{
-			deviceNameToCPUID:      make(map[string]int),
-			deviceNameToSocketID:   make(map[string]int),
-			deviceNameToNUMANodeID: make(map[string]int),
-			reservedCPUs:           config.ReservedCPUs,
+			Inventory: device.Inventory{
+				ReservedCPUs: config.ReservedCPUs,
+			},
 		},
 		cpuDeviceMode:           config.CPUDeviceMode,
 		cpuDeviceGroupBy:        config.CPUDeviceGroupBy,
@@ -233,8 +229,8 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	if topo == nil {
 		return nil, fmt.Errorf("failed to get CPU topology: topology is nil")
 	}
-	plugin.topology.cpuTopology = topo
-	managedCPUs := topo.CPUDetails.CPUs()
+	plugin.topology.CPUTopology = topo
+	managedCPUs := plugin.topology.ManagedCPUs()
 	logger.V(2).Info("detected topology-validated CPUs", "cpus", managedCPUs.String())
 
 	if config.ExposePCIeRoots {
@@ -243,7 +239,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		}
 	}
 
-	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.topology.cpuTopology, config.ReservedCPUs)
+	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.topology.CPUTopology, config.ReservedCPUs)
 	plugin.refreshAllocationMetrics()
 	plugin.podConfigStore = store.NewPodConfig()
 
@@ -255,27 +251,23 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		plugin.cpuAllocator = cpuallocator.NewCPUManager(config.DriverName, topo)
 	}
 
-	var devices []resourceapi.Device
-
-	if plugin.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
-		var nameToID map[string]int
-		devices, nameToID = device.BuildGrouped(logger, plugin.cpuDeviceGroupBy, plugin.topology.cpuTopology, plugin.topology.reservedCPUs, plugin.pcieRootMapper, config.PublishNodeAllocatableResourceMapping)
-		switch plugin.cpuDeviceGroupBy {
-		case device.GROUP_BY_SOCKET:
-			plugin.topology.deviceNameToSocketID = nameToID
-		case device.GROUP_BY_NUMA_NODE:
-			plugin.topology.deviceNameToNUMANodeID = nameToID
-		}
-	} else {
-		devices, plugin.topology.deviceNameToCPUID = device.Build(plugin.topology.cpuTopology, plugin.topology.reservedCPUs, plugin.pcieRootMapper, config.PublishNodeAllocatableResourceMapping)
+	result, err := device.Build(device.BuildInput{
+		Inventory:                             plugin.topology.Inventory,
+		Layout:                                device.FindLayout(plugin.cpuDeviceMode, plugin.cpuDeviceGroupBy),
+		PCIeRootMapper:                        plugin.pcieRootMapper,
+		PublishNodeAllocatableResourceMapping: config.PublishNodeAllocatableResourceMapping,
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	if len(devices) > 0 {
+	plugin.topology.Mapping = result.Mapping
+	if len(result.Devices) > 0 {
 		// Chunk devices into slices of at most devicesPerResourceSlice
-		plugin.topology.deviceSlices = slices.Collect(slices.Chunk(devices, plugin.devicesPerResourceSlice))
+		plugin.topology.deviceSlices = slices.Collect(slices.Chunk(result.Devices, plugin.devicesPerResourceSlice))
 	}
 
-	for _, d := range devices {
+	for _, d := range result.Devices {
 		plugin.health.devices[d.Name] = &deviceHealthEntry{
 			status:  kubeletplugin.HealthStatusHealthy,
 			message: "device initialized",
