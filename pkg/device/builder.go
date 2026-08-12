@@ -65,24 +65,24 @@ type Mapping struct {
 	NameToCPUID map[string]int
 	// NameToSocketID is populated for LayoutSocket.
 	NameToSocketID map[string]int
-	// NameToNUMANodeID is populated for LayoutNUMA.
+	// NameToNUMANodeID is populated for LayoutNUMANode.
 	NameToNUMANodeID map[string]int
 }
 
 // Layout controls how CPUs are exposed as DRA devices.
 // It abstracts the driver configuration grouping mode and criteria on a single
 // device layer selector.
-type Layout string
+type Layout int
 
 const (
 	// LayoutIndividual exposes each CPU as a separate device.
-	LayoutIndividual Layout = "individual"
+	LayoutIndividual Layout = iota
 	// LayoutSocket exposes one device per CPU socket.
-	LayoutSocket Layout = "socket"
-	// LayoutNUMA exposes one device per NUMA node.
-	LayoutNUMA Layout = "numa"
+	LayoutSocket
+	// LayoutNUMANode exposes one device per NUMA node.
+	LayoutNUMANode
 	// LayoutMachine exposes one device for all allocatable CPUs in the machine.
-	LayoutMachine Layout = "machine"
+	LayoutMachine
 )
 
 // FindLayout converts the driver configuration into a device layout.
@@ -94,7 +94,7 @@ func FindLayout(cpuDeviceMode, cpuDeviceGroupBy string) Layout {
 	case GROUP_BY_SOCKET:
 		return LayoutSocket
 	case GROUP_BY_NUMA_NODE:
-		return LayoutNUMA
+		return LayoutNUMANode
 	default:
 		return LayoutMachine
 	}
@@ -111,6 +111,8 @@ type BuildInput struct {
 	// PublishNodeAllocatableResourceMapping enables node allocatable resource
 	// mappings on the generated devices.
 	PublishNodeAllocatableResourceMapping bool
+	// Expose the cpuset pertaining to a grouped device as attribute
+	ExposeCPUSet bool
 }
 
 type BuildResult struct {
@@ -143,7 +145,7 @@ func Build(input BuildInput) (BuildResult, error) {
 	switch input.Layout {
 	case LayoutSocket:
 		res.Mapping.NameToSocketID = make(map[string]int)
-	case LayoutNUMA:
+	case LayoutNUMANode:
 		res.Mapping.NameToNUMANodeID = make(map[string]int)
 	}
 	deviceInfos := groupedCPUDeviceInfos(input.Layout, input.Inventory)
@@ -151,11 +153,11 @@ func Build(input BuildInput) (BuildResult, error) {
 		switch input.Layout {
 		case LayoutSocket:
 			res.Mapping.NameToSocketID[dev.name] = dev.socketID
-		case LayoutNUMA:
+		case LayoutNUMANode:
 			res.Mapping.NameToNUMANodeID[dev.name] = dev.numaNodeID
 		}
 	}
-	res.Devices, err = createGroupedCPUDeviceSlices(input.Layout, deviceInfos, input.PCIeRootMapper, input.Inventory.CPUTopology.SMTEnabled, input.PublishNodeAllocatableResourceMapping)
+	res.Devices, err = createGroupedCPUDeviceSlices(input.Layout, deviceInfos, input.PCIeRootMapper, input.Inventory.CPUTopology.SMTEnabled, input.PublishNodeAllocatableResourceMapping, input.ExposeCPUSet)
 	if err != nil {
 		return BuildResult{}, err
 	}
@@ -220,7 +222,7 @@ func groupedCPUDeviceInfos(layout Layout, machine Inventory) []groupedCPUDeviceI
 				socketID: socketID,
 			})
 		}
-	case LayoutNUMA:
+	case LayoutNUMANode:
 		numaNodeIDs := topo.CPUDetails.NUMANodes().List()
 		for _, numaID := range numaNodeIDs {
 			allocatableCPUs := topo.CPUDetails.CPUsInNUMANodes(numaID).Difference(machine.ReservedCPUs)
@@ -313,7 +315,7 @@ func cpuDeviceInfos(machine Inventory) []cpuDeviceInfo {
 }
 
 // createGroupedCPUDeviceSlices creates Device objects based on the CPU topology, grouped by a specific criteria.
-func createGroupedCPUDeviceSlices(layout Layout, deviceInfos []groupedCPUDeviceInfo, pcieRootMapper *store.PCIeRootMapper, smtEnabled bool, nodeAllocatableResources bool) ([]resourceapi.Device, error) {
+func createGroupedCPUDeviceSlices(layout Layout, deviceInfos []groupedCPUDeviceInfo, pcieRootMapper *store.PCIeRootMapper, smtEnabled bool, nodeAllocatableResources, exposeCPUSet bool) ([]resourceapi.Device, error) {
 	var devices []resourceapi.Device
 
 	for _, deviceInfo := range deviceInfos {
@@ -332,6 +334,11 @@ func createGroupedCPUDeviceSlices(layout Layout, deviceInfos []groupedCPUDeviceI
 			if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...); err != nil {
 				return nil, err
 			}
+			if exposeCPUSet {
+				if err := addCPUIDsAttribute(deviceAttrs, deviceInfo.cpus); err != nil {
+					return nil, err
+				}
+			}
 
 			devices = append(devices, resourceapi.Device{
 				Name:                     deviceInfo.name,
@@ -340,7 +347,7 @@ func createGroupedCPUDeviceSlices(layout Layout, deviceInfos []groupedCPUDeviceI
 				AllowMultipleAllocations: new(true),
 				NodeAllocatableResources: groupedCPUNodeAllocatable(nodeAllocatableResources),
 			})
-		case LayoutNUMA:
+		case LayoutNUMANode:
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 				// DRA standard attributes first
 				deviceattribute.StandardDeviceAttributeNUMANode: {IntValue: new(int64(deviceInfo.numaNodeID))},
@@ -352,6 +359,11 @@ func createGroupedCPUDeviceSlices(layout Layout, deviceInfos []groupedCPUDeviceI
 			addCompatibilityAttributes(deviceAttrs, int64(deviceInfo.numaNodeID))
 			if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...); err != nil {
 				return nil, err
+			}
+			if exposeCPUSet {
+				if err := addCPUIDsAttribute(deviceAttrs, deviceInfo.cpus); err != nil {
+					return nil, err
+				}
 			}
 
 			devices = append(devices, resourceapi.Device{
@@ -433,5 +445,17 @@ func addPCIeRootsAttribute(pcieRootMapper *store.PCIeRootMapper, attrs map[resou
 		return fmt.Errorf("PCIe roots %q cannot be represented within the limit of DRA max value length=%d", pcieRoots, resourceapi.DeviceAttributeMaxValueLength)
 	}
 	attrs[deviceattribute.StandardDeviceAttributePCIeRoot] = resourceapi.DeviceAttribute{StringValues: pcieRoots}
+	return nil
+}
+
+func addCPUIDsAttribute(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, cpus cpuset.CPUSet) error {
+	if cpus.Size() == 0 {
+		return nil // nothing to do
+	}
+	cpuIDs := cpus.String()
+	if len(cpuIDs) > resourceapi.DeviceAttributeMaxValueLength {
+		return fmt.Errorf("cpus %q cannot be represented within the limit of DRA max value length=%d", cpus.String(), resourceapi.DeviceAttributeMaxValueLength)
+	}
+	attrs[AttributeCPUIDs] = resourceapi.DeviceAttribute{StringValue: &cpuIDs}
 	return nil
 }
