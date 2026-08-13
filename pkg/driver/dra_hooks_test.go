@@ -37,6 +37,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/dynamic-resource-allocation/deviceattribute"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	registerapi "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
@@ -449,7 +450,7 @@ func TestPublishResources(t *testing.T) {
 					coreType := cpuInfo.CoreType.String()
 					socketID := int64(cpuInfo.SocketID)
 
-					require.Equal(t, numaNode, *device.Attributes[devattr.AttributeNUMANodeID].IntValue)
+					require.Equal(t, numaNode, *device.Attributes[deviceattribute.StandardDeviceAttributeNUMANode].IntValue)
 					require.Equal(t, CacheL3ID, *device.Attributes[devattr.AttributeCacheL3ID].IntValue)
 					require.Equal(t, coreType, *device.Attributes[devattr.AttributeCoreType].StringValue)
 					require.Equal(t, socketID, *device.Attributes[devattr.AttributeSocketID].IntValue)
@@ -2151,14 +2152,17 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 // independent of production code paths.
 func metadataFromCPUInfo(cpu cpuinfo.CPUInfo, smtEnabled bool) *kubeletplugin.DeviceMetadata {
 	attrs := map[string]resourceapi.DeviceAttribute{
+		// DRA standard attributes first
+		string(deviceattribute.StandardDeviceAttributeNUMANode): {IntValue: new(int64(cpu.NUMANodeID))},
+		// Driver specific attributes next
 		string(devattr.AttributeCPUID):      {IntValue: new(int64(cpu.CpuID))},
 		string(devattr.AttributeCoreID):     {IntValue: new(int64(cpu.CoreID))},
 		string(devattr.AttributeSocketID):   {IntValue: new(int64(cpu.SocketID))},
-		string(devattr.AttributeNUMANodeID): {IntValue: new(int64(cpu.NUMANodeID))},
 		string(devattr.AttributeCacheL3ID):  {IntValue: new(int64(cpu.UncoreCacheID))},
 		string(devattr.AttributeCoreType):   {StringValue: new(cpu.CoreType.String())},
 		string(devattr.AttributeSMTEnabled): {BoolValue: new(smtEnabled)},
 		"dra.net/numaNode":                  {IntValue: new(int64(cpu.NUMANodeID))},
+		"dra.cpu/numaNodeID":                {IntValue: new(int64(cpu.NUMANodeID))},
 	}
 	return &kubeletplugin.DeviceMetadata{Attributes: attrs}
 }
@@ -2193,11 +2197,14 @@ func expectedGroupMetadata(groupBy string, cpuInfos []cpuinfo.CPUInfo, reservedC
 				socketID = ci.SocketID
 			}
 		}
-		attrs[string(devattr.AttributeNUMANodeID)] = resourceapi.DeviceAttribute{IntValue: new(int64(numaID))}
+		// DRA standard attributes first
+		attrs[string(deviceattribute.StandardDeviceAttributeNUMANode)] = resourceapi.DeviceAttribute{IntValue: new(int64(numaID))}
+		// Driver specific attributes next
 		attrs[string(devattr.AttributeSocketID)] = resourceapi.DeviceAttribute{IntValue: new(int64(socketID))}
 		attrs[string(devattr.AttributeNumCPUs)] = resourceapi.DeviceAttribute{IntValue: new(numCPUs)}
 		attrs[string(devattr.AttributeSMTEnabled)] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
 		attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: new(int64(numaID))}
+		attrs["dra.cpu/numaNodeID"] = resourceapi.DeviceAttribute{IntValue: new(int64(numaID))}
 
 	case devattr.GROUP_BY_MACHINE:
 		var numCPUs int64

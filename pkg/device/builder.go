@@ -235,7 +235,9 @@ func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfo
 			})
 		case GROUP_BY_NUMA_NODE:
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				AttributeNUMANodeID: {IntValue: new(int64(deviceInfo.numaNodeID))},
+				// DRA standard attributes first
+				deviceattribute.StandardDeviceAttributeNUMANode: {IntValue: new(int64(deviceInfo.numaNodeID))},
+				// Driver-specific/non-standard attributes next
 				AttributeSocketID:   {IntValue: new(int64(deviceInfo.socketID))},
 				AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
 				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
@@ -278,7 +280,9 @@ func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PC
 	for _, deviceInfo := range deviceInfos {
 		cpu := deviceInfo.cpu
 		deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-			AttributeNUMANodeID: {IntValue: new(int64(cpu.NUMANodeID))},
+			// DRA standard attributes first
+			deviceattribute.StandardDeviceAttributeNUMANode: {IntValue: new(int64(cpu.NUMANodeID))},
+			// Driver-specific/non-standard attributes next
 			AttributeSocketID:   {IntValue: new(int64(cpu.SocketID))},
 			AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
 			AttributeCacheL3ID:  {IntValue: new(int64(cpu.UncoreCacheID))},
