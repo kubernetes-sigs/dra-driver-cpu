@@ -5,6 +5,22 @@ on:
     branches: [ main ]
     paths:
       - 'deployment/helm/**'
+      # The image builds from the repository root with COPY ., so .dockerignore
+      # alone can change what goes into it.
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'go.mod'
+      - 'go.sum'
+      - 'api/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'hack/ci/kind-ci.yaml'
+      - 'hack/ci/kind-ci-relocated-root.yaml'
+      - 'hack/ci/wait-resourcelices.sh'
+      - 'test/kubeletroot/**'
+      - 'test/pkg/**'
+      - 'Makefile'
       - '.github/workflows/helm-e2e.yaml'
 
 env:
@@ -16,6 +32,20 @@ jobs:
   helm-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Default kubelet root; the baseline this workflow has always run.
+          - variant: default-root
+            kindConfig: hack/ci/kind-ci.yaml
+            kubeletRootDir: ""
+          # Kubelet relocated to a non-default --root-dir on every node, the
+          # scenario kubeletRootDir exists for (issue #231).
+          - variant: relocated-root
+            kindConfig: hack/ci/kind-ci-relocated-root.yaml
+            kubeletRootDir: /var/lib/custom-kubelet
+    name: helm-e2e (${{ matrix.variant }})
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -28,13 +58,15 @@ jobs:
       - name: Build the image
         run: make build-image
 
-      # Try to parse KIND_K8S_VERSION from the Makefile and use it to build the node image and create the cluster.
+      # Read KIND_K8S_VERSION from the Makefile and use it to build the node image and create the cluster.
       - name: Create kind cluster
+        env:
+          KIND_CONFIG: ${{ matrix.kindConfig }}
         run: |
           KIND_K8S_VERSION=$(make -s print-kind-k8s-version)
           kind delete cluster --name dra-driver-cpu || true
           kind build node-image --image=kindest/node:${KIND_K8S_VERSION} ${KIND_K8S_VERSION}
-          kind create cluster --name dra-driver-cpu --image=kindest/node:${KIND_K8S_VERSION} --config hack/ci/kind-ci.yaml
+          kind create cluster --name dra-driver-cpu --image=kindest/node:${KIND_K8S_VERSION} --config "${KIND_CONFIG}"
           kind get kubeconfig --name dra-driver-cpu > /tmp/kubeconfig-dra-driver-cpu
           kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
             label node dra-driver-cpu-worker node-role.kubernetes.io/worker=''
@@ -45,7 +77,13 @@ jobs:
             "${IMAGE}:${TAG}"
 
       - name: Install driver via Helm
+        env:
+          KUBELET_ROOT_DIR: ${{ matrix.kubeletRootDir }}
         run: |
+          extra=()
+          if [ -n "${KUBELET_ROOT_DIR}" ]; then
+            extra+=(--set-string "kubeletRootDir=${KUBELET_ROOT_DIR}")
+          fi
           helm install dra-driver-cpu deployment/helm/dra-driver-cpu \
             --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
             --namespace kube-system \
@@ -53,7 +91,8 @@ jobs:
             --set podLabels.app=dracpu \
             --set image.repository="${IMAGE}" \
             --set image.tag="${TAG}" \
-            --set image.pullPolicy=Never
+            --set image.pullPolicy=Never \
+            "${extra[@]}"
 
       - name: Wait for resourceSlices
         run: KUBECONFIG=/tmp/kubeconfig-dra-driver-cpu hack/ci/wait-resourcelices.sh
@@ -62,6 +101,20 @@ jobs:
         run: |
           kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
             rollout status daemonset/dracpu -n kube-system --timeout=120s
+
+      # The rollout above already proves the kubelet watched
+      # <root>/plugins_registry, since registration would otherwise time out.
+      # What is left to show is that the root it watched is the one the chart was
+      # given, which is the same question for both variants: an empty
+      # kubeletRootDir means the driver's own default.
+      - name: Verify the driver registered under the configured kubelet root
+        env:
+          KUBECONFIG: /tmp/kubeconfig-dra-driver-cpu
+          # Which job this is, so the verifier can refuse a relocated row that
+          # resolved to the default root rather than pass as a second baseline.
+          DRACPU_E2E_VARIANT: ${{ matrix.variant }}
+          DRACPU_E2E_KUBELET_ROOT_DIR: ${{ matrix.kubeletRootDir }}
+        run: make test-kubelet-root
 
       - name: Final check
         if: failure()

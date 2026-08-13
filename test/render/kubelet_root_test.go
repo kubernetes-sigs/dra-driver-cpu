@@ -839,3 +839,34 @@ func TestFindDaemonSetRefusesWhatItCannotVouchFor(t *testing.T) {
 		})
 	}
 }
+
+// The two e2e variants are a controlled experiment only while their clusters are
+// otherwise identical. The default config has already moved its node image and
+// gained a feature gate without the relocated one following.
+func TestTheRelocatedKindConfigDiffersOnlyByTheKubeletRoot(t *testing.T) {
+	const relocation = "        root-dir: \"/var/lib/custom-kubelet\"\n"
+	meaningful := func(path string) string {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var kept []string
+		for line := range strings.SplitSeq(string(raw), "\n") {
+			if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+				kept = append(kept, line)
+			}
+		}
+		return strings.Join(kept, "\n")
+	}
+	relocated := meaningful("../../hack/ci/kind-ci-relocated-root.yaml")
+	// Counted against the nodes rather than looked for once: a node left on the
+	// default root registers where its own kubelet is not watching, and the
+	// comparison below cannot see how many were relocated.
+	if nodes, roots := strings.Count(relocated, "- role:"), strings.Count(relocated, strings.TrimRight(relocation, "\n")); nodes == 0 || roots != nodes {
+		t.Fatalf("%d of %d nodes carry the relocated kubelet root", roots, nodes)
+	}
+	withoutRoot := strings.ReplaceAll(relocated, "\n"+strings.TrimRight(relocation, "\n"), "")
+	if diff := cmp.Diff(meaningful("../../hack/ci/kind-ci.yaml"), withoutRoot); diff != "" {
+		t.Errorf("the two kind configs differ by more than the kubelet root (-default,+relocated):\n%s", diff)
+	}
+}

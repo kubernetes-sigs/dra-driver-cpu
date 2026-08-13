@@ -18,7 +18,12 @@ To check what the Helm chart renders, without a cluster, run:
 make helm-render-check
 ```
 
-These live in `test/render` and need only a `helm` binary. `test/kubeletroot` holds the counterpart that needs a running cluster, and the `helm e2e` workflow runs it against both the default and a relocated kubelet root.
+These live in `test/render` and need only a `helm` binary. `test/kubeletroot` holds the counterpart that needs a running cluster, and the `helm e2e` workflow runs it against both the default and a relocated kubelet root. Run that one with `make test-kubelet-root`, naming the case it is checking:
+
+```bash
+DRACPU_E2E_VARIANT=default-root make test-kubelet-root
+DRACPU_E2E_VARIANT=relocated-root DRACPU_E2E_KUBELET_ROOT_DIR=/var/lib/custom-kubelet make test-kubelet-root
+```
 
 ### E2E Tests
 

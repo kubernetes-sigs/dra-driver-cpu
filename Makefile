@@ -262,6 +262,10 @@ helm-lint: install-helm ## lint helm chart with strict mode
 helm-render-check: install-helm ## verify the kubelet root derives the chart mounts and the driver flag
 	@HELM=$(HELM) go test -count=1 ./test/render/...
 
+.PHONY: test-kubelet-root
+test-kubelet-root: ## verify the driver registered under the configured kubelet root (needs a running kind cluster)
+	go test -v -count 1 ./test/kubeletroot/...
+
 .PHONY: helm-docs
 helm-docs: ## regenerate helm chart README from values.yaml annotations and README.md.gotmpl
 	go run github.com/norwoodj/helm-docs/cmd/helm-docs@v$(HELM_DOCS_VERSION) --chart-search-root=deployment/helm
