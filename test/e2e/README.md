@@ -55,7 +55,7 @@ honor these settings, where applicable.
   NOTE: Likewise the e2e tests, the Makefile also behaves differently depending on this setting.
   It is recommended to set it before to run targets like `make ci-manifests`.
 
-- `DRACPU_E2E_NODE_ALLOCATABLE`: (optional, default `true`): when `true`, *the Makefile*
+- `DRACPU_E2E_NODE_ALLOCATABLE_MAPPING`: (optional, default `false`): when `true`, *the Makefile*
   `ci-kind-setup` target deploys the driver with the
   `driverConfig.publishNodeAllocatableResourceMapping: true` option; any other value
   deploys without it. The cluster must have the `DRANodeAllocatableResources` feature
