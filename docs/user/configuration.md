@@ -101,6 +101,13 @@ on - is configured through other Helm values, not through this file.
 
 - Path to a kubeconfig file (for out-of-cluster use).
 
+`publishNodeAllocatableResourceMapping` (bool, default: `false`)
+
+- Publish `nodeAllocatableResources` mappings in ResourceSlice devices, so the scheduler
+  and kubelet account claimed CPUs as node allocatable `cpu`.
+- Requires the `DRANodeAllocatableResources` feature gate (alpha, 1.37+). See
+  [Workload Configuration Requirements](workload-requirements.md).
+
 #### Example
 
 ```yaml

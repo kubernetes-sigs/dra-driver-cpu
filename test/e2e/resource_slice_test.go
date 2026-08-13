@@ -23,17 +23,20 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	v1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/dynamic-resource-allocation/deviceattribute"
 )
 
 var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
 	var (
-		fxt           *fixture.Fixture
-		cpuDeviceMode string
-		groupBy       string
-		slices        []resourcev1.ResourceSlice
+		fxt                    *fixture.Fixture
+		cpuDeviceMode          string
+		groupBy                string
+		slices                 []resourcev1.ResourceSlice
+		nodeAllocatableMapping bool
 	)
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
@@ -50,7 +53,8 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot read dracpu driver config values")
 		cpuDeviceMode = cfgValues.CPUDeviceMode
 		groupBy = cfgValues.GroupBy
-		fxt.Log.Info("daemonset configuration", "cpuDeviceMode", cpuDeviceMode, "groupBy", groupBy)
+		nodeAllocatableMapping = cfgValues.PublishNodeAllocatableResourceMapping
+		fxt.Log.Info("daemonset configuration", "cpuDeviceMode", cpuDeviceMode, "groupBy", groupBy, "nodeAllocatableMapping", nodeAllocatableMapping)
 
 		ginkgo.By("listing ResourceSlices for driver " + driverName)
 		sliceList, err := fxt.K8SClientset.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{
@@ -125,6 +129,35 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 						"device %q in slice %q missing attribute %s", dev.Name, slice.Name, check.name)
 					gomega.Expect(check.checker(attr)).To(gomega.BeTrue(),
 						"device %q in slice %q attribute %s has wrong type", dev.Name, slice.Name, check.name)
+				}
+			}
+		}
+	})
+
+	ginkgo.It("should publish node allocatable cpu mappings only when enabled", func() {
+		for _, slice := range slices {
+			for _, dev := range slice.Spec.Devices {
+				if !nodeAllocatableMapping {
+					gomega.Expect(dev.NodeAllocatableResources).To(gomega.BeEmpty(),
+						"device %q in slice %q must not have nodeAllocatableResources when publishing is disabled", dev.Name, slice.Name)
+					continue
+				}
+
+				gomega.Expect(dev.NodeAllocatableResources).To(gomega.HaveKey(v1.ResourceCPU),
+					"device %q in slice %q has no cpu node allocatable mapping", dev.Name, slice.Name)
+				nar := dev.NodeAllocatableResources[v1.ResourceCPU]
+				gomega.Expect(nar.Mapping).ToNot(gomega.BeNil(), "device %q: mapping must be set", dev.Name)
+				gomega.Expect(nar.Overhead).To(gomega.BeNil(), "device %q: overhead must not be set", dev.Name)
+				if cpuDeviceMode == device.CPU_DEVICE_MODE_INDIVIDUAL {
+					gomega.Expect(nar.Mapping.DeviceMultiplier).ToNot(gomega.BeNil(), "device %q: deviceMultiplier must be set", dev.Name)
+					gomega.Expect(nar.Mapping.DeviceMultiplier.Cmp(resource.MustParse("1"))).To(gomega.BeZero(),
+						"device %q: deviceMultiplier must be 1", dev.Name)
+				} else {
+					gomega.Expect(nar.Mapping.CapacityKey).ToNot(gomega.BeNil(), "device %q: capacityKey must be set", dev.Name)
+					gomega.Expect(string(*nar.Mapping.CapacityKey)).To(gomega.Equal(device.CPUResourceQualifiedName))
+					gomega.Expect(nar.Mapping.CapacityMultiplier).ToNot(gomega.BeNil(), "device %q: capacityMultiplier must be set", dev.Name)
+					gomega.Expect(nar.Mapping.CapacityMultiplier.Cmp(resource.MustParse("1"))).To(gomega.BeZero(),
+						"device %q: capacityMultiplier must be 1", dev.Name)
 				}
 			}
 		}

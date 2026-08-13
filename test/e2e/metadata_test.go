@@ -70,6 +70,7 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 		dracpuTesterImage string
 		cpuDeviceMode     string
 		groupBy           string
+		nodeAllocMapping  bool
 	)
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
@@ -90,6 +91,7 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot read driver config values")
 		cpuDeviceMode = cfgValues.CPUDeviceMode
 		groupBy = cfgValues.GroupBy
+		nodeAllocMapping = cfgValues.PublishNodeAllocatableResourceMapping
 		rootFxt.Log.Info("daemonset configuration", "mode", cpuDeviceMode, "groupBy", groupBy)
 
 		targetNode, err = e2enode.PickWorker(ctx, rootFxt.K8SClientset, 5*time.Second, 1*time.Minute, rootFxt.Log)
@@ -130,7 +132,7 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 			ginkgo.By("creating a pod that references the claim")
-			pod := makeTesterPodWithNamedClaim(fxt.Namespace.Name, dracpuTesterImage, claimName, targetNode.Name)
+			pod := makeTesterPodWithNamedClaim(fxt.Namespace.Name, dracpuTesterImage, claimName, targetNode.Name, nodeAllocMapping)
 			pod, err = e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 

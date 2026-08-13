@@ -35,9 +35,10 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
 	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
-	drametadatav1alpha1 "k8s.io/dynamic-resource-allocation/api/metadata/v1alpha1"
+	drametadatav1beta1 "k8s.io/dynamic-resource-allocation/api/metadata/v1beta1"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	registerapi "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
@@ -142,6 +143,9 @@ type Config struct {
 	// driverconfig.Resolve refuses an empty or relative value, and New takes it as
 	// given rather than checking it again.
 	KubeletRootDir string
+	// PublishNodeAllocatableResourceMapping publishes KEP-5517 nodeAllocatableResources mappings in
+	// ResourceSlice devices. Requires the DRANodeAllocatableResources feature gate to be enabled in the cluster.
+	PublishNodeAllocatableResourceMapping bool
 }
 
 func (cfg Config) DevicesPerResourceSlice() int {
@@ -212,7 +216,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 
 	if plugin.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
 		var nameToID map[string]int
-		devices, nameToID = device.BuildGrouped(logger, plugin.cpuDeviceGroupBy, plugin.topology.cpuTopology, plugin.topology.onlineCPUs, plugin.topology.reservedCPUs, plugin.pcieRootMapper)
+		devices, nameToID = device.BuildGrouped(logger, plugin.cpuDeviceGroupBy, plugin.topology.cpuTopology, plugin.topology.onlineCPUs, plugin.topology.reservedCPUs, plugin.pcieRootMapper, config.PublishNodeAllocatableResourceMapping)
 		switch plugin.cpuDeviceGroupBy {
 		case device.GROUP_BY_SOCKET:
 			plugin.topology.deviceNameToSocketID = nameToID
@@ -220,7 +224,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 			plugin.topology.deviceNameToNUMANodeID = nameToID
 		}
 	} else {
-		devices, plugin.topology.deviceNameToCPUID = device.Build(plugin.topology.cpuTopology, plugin.topology.reservedCPUs, plugin.pcieRootMapper)
+		devices, plugin.topology.deviceNameToCPUID = device.Build(plugin.topology.cpuTopology, plugin.topology.reservedCPUs, plugin.pcieRootMapper, config.PublishNodeAllocatableResourceMapping)
 	}
 
 	if len(devices) > 0 {
@@ -297,8 +301,7 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 		kubeletplugin.KubeClient(cp.kubeClient),
 		kubeletplugin.RegistrarDirectoryPath(registrarDir(cp.kubeletRootDir)),
 		kubeletplugin.PluginDataDirectoryPath(driverPluginPath),
-		kubeletplugin.EnableDeviceMetadata(true),
-		kubeletplugin.MetadataVersions(drametadatav1alpha1.SchemeGroupVersion),
+		kubeletplugin.EnableDeviceMetadata(true, []schema.GroupVersion{drametadatav1beta1.SchemeGroupVersion}),
 	}
 	d, err := kubeletplugin.Start(ctx, cp, kubeletOpts...)
 	if err != nil {

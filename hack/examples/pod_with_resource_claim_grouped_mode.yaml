@@ -5,6 +5,8 @@
 #
 # Note: The CPU requests specified in the ResourceClaim must be replicated in the container's
 # standard resource requests (resources.requests.cpu) to ensure proper scheduling accounting and avoid double-booking.
+# This replication is NOT needed when the driver publishes node allocatable mappings
+# (driverConfig.publishNodeAllocatableResourceMapping) - see pod_with_resource_claim_node_allocatable.yaml.
 #
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim

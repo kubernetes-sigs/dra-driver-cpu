@@ -18,7 +18,6 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -62,14 +61,15 @@ Please note "Serial" is however unavoidable because we manage the shared node st
 */
 var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
 	var (
-		rootFxt           *fixture.Fixture
-		targetNode        *v1.Node
-		targetNodeCPUInfo discovery.DRACPUInfo
-		availableCPUs     cpuset.CPUSet
-		dracpuTesterImage string
-		reservedCPUs      cpuset.CPUSet
-		cpuDeviceMode     string
-		groupBy           string
+		rootFxt                *fixture.Fixture
+		targetNode             *v1.Node
+		targetNodeCPUInfo      discovery.DRACPUInfo
+		availableCPUs          cpuset.CPUSet
+		dracpuTesterImage      string
+		reservedCPUs           cpuset.CPUSet
+		cpuDeviceMode          string
+		groupBy                string
+		nodeAllocatableMapping bool
 	)
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
@@ -107,6 +107,9 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		rootFxt.Log.Info("daemonset --reserved-cpus configuration", "cpus", dsReservedCPUs.String())
 		gomega.Expect(dsReservedCPUs).To(cpusetmatchers.Equal(reservedCPUs), "daemonset reserved cpus do not match test reserved cpus")
 		rootFxt.Log.Info("daemonset --cpu-device-mode configuration", "mode", cpuDeviceMode, "groupBy", groupBy)
+		driverConfig := getDriverConfig(ctx, rootFxt.K8SClientset)
+		nodeAllocatableMapping = driverConfig.PublishNodeAllocatableResourceMapping
+		rootFxt.Log.Info("driver node allocatable mapping", "enabled", nodeAllocatableMapping)
 
 		targetNode, err = e2enode.PickWorker(ctx, rootFxt.K8SClientset, 5*time.Second, 1*time.Minute, rootFxt.Log)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -118,7 +121,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create discovery pod: %v", err)
 		data, err := e2epod.GetLogs(ctx, infraFxt.K8SClientset, infoPod)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs from discovery pod: %v", err)
-		gomega.Expect(json.Unmarshal([]byte(data), &targetNodeCPUInfo)).To(gomega.Succeed())
+		gomega.Expect(unmarshalLatestReport(data, &targetNodeCPUInfo)).To(gomega.Succeed())
 
 		allocatableCPUs := makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
 		availableCPUs = allocatableCPUs.Difference(reservedCPUs)
@@ -196,7 +199,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				createdClaimTemplate, err := fxt.K8SClientset.ResourceV1().ResourceClaimTemplates(fxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
 				for i := range numPods {
 					gomega.Expect(err).ToNot(gomega.HaveOccurred())
-					pod := makeTesterPodWithExclusiveCPUClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, int64(cpusPerClaim), targetNode.Name)
+					pod := makeTesterPodWithExclusiveCPUClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, int64(cpusPerClaim), targetNode.Name, nodeAllocatableMapping)
 					createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
 					gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create tester pod %d: %v", i, err)
 					exclPods = append(exclPods, createdPod)
@@ -210,6 +213,10 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					gomega.Expect(alloc.CPUAssigned).To(cpusetmatchers.BeSubsetOf(availableCPUs), "Pod %d got CPUs outside available set", i)
 					gomega.Expect(alloc.CPUAssigned).To(cpusetmatchers.HaveNoOverlapWith(allAllocatedCPUs), "Pod %d has overlapping CPUs", i)
 					allAllocatedCPUs = allAllocatedCPUs.Union(alloc.CPUAssigned)
+					// The scheduler reports the claim's CPUs in the pod status when the
+					// driver publishes node allocatable mappings; the field must be absent
+					// otherwise.
+					expectNodeAllocClaimStatus(ctx, fxt.K8SClientset, pod, int64(cpusPerClaim), nodeAllocatableMapping)
 				}
 				gomega.Expect(allAllocatedCPUs).To(cpusetmatchers.HaveSize(numPods * cpusPerClaim))
 				rootFxt.Log.Info("All exclusive allocation", "pod", "exclusive CPUs", allAllocatedCPUs.String(), "expected Shared CPUs", availableCPUs.Difference(allAllocatedCPUs).String())
@@ -284,7 +291,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 				fixture.By("creating a pod consuming the multi-request claim")
-				pod := makeTesterPodWithNamedClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaim.Name, targetNode.Name)
+				pod := makeTesterPodWithNamedClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaim.Name, targetNode.Name, nodeAllocatableMapping)
 				createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
@@ -338,7 +345,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 					fixture.By("creating pod referencing %s", tc.name)
-					pod := makeTesterPodWithNamedClaim(fxt.Namespace.Name, dracpuTesterImage, tc.name, targetNode.Name)
+					pod := makeTesterPodWithNamedClaim(fxt.Namespace.Name, dracpuTesterImage, tc.name, targetNode.Name, nodeAllocatableMapping)
 					createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
 					gomega.Expect(err).ToNot(gomega.HaveOccurred())
 					exclPods = append(exclPods, createdPod)

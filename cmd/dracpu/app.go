@@ -209,14 +209,15 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 	defer stop()
 
 	driverConfig := driver.Config{
-		DriverName:       driverName,
-		NodeName:         nodeName,
-		ReservedCPUs:     reservedCPUSet,
-		CPUDeviceMode:    cfg.CPUDeviceMode,
-		CPUDeviceGroupBy: cfg.GroupBy,
-		ExposePCIeRoots:  cfg.ExposePCIeRoots,
-		Metrics:          cpumetrics.New(prometheus.DefaultRegisterer),
-		KubeletRootDir:   cfg.KubeletRootDir,
+		DriverName:                            driverName,
+		NodeName:                              nodeName,
+		ReservedCPUs:                          reservedCPUSet,
+		CPUDeviceMode:                         cfg.CPUDeviceMode,
+		CPUDeviceGroupBy:                      cfg.GroupBy,
+		ExposePCIeRoots:                       cfg.ExposePCIeRoots,
+		PublishNodeAllocatableResourceMapping: cfg.PublishNodeAllocatableResourceMapping,
+		Metrics:                               cpumetrics.New(prometheus.DefaultRegisterer),
+		KubeletRootDir:                        cfg.KubeletRootDir,
 	}
 	driverProviders := driver.Providers{
 		K8SClient: clientset,

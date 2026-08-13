@@ -112,4 +112,5 @@ kubeletRootDir: /var/lib/kubelet # @schema type:string;minLength:1;pattern:^/
 #     cpuDeviceMode: individual
 #     groupBy: socket
 #     reservedCPUs: "0-3"
+#     publishNodeAllocatableResourceMapping: true  # KEP-5517; requires the DRANodeAllocatableResources feature gate
 driverConfig: {} # @schema $ref: ./driverconfig.schema.json
