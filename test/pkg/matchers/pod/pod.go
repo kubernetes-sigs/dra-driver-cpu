@@ -18,6 +18,8 @@ package pod
 
 import (
 	"errors"
+	"fmt"
+	"slices"
 
 	"github.com/go-logr/logr"
 	"github.com/onsi/gomega/gcustom"
@@ -61,4 +63,42 @@ func findWaitingContainerStatus(statuses []v1.ContainerStatus) *v1.ContainerStat
 		}
 	}
 	return nil
+}
+
+// HaveNodeAllocatableClaimStatus checks if the pod reports node allocatable resource claim status
+// with information about the container and claim.
+func HaveNodeAllocatableClaimStatus(containerNames []string, wantCPUs int64) types.GomegaMatcher {
+	return gcustom.MakeMatcher(func(actual *v1.Pod) (bool, error) {
+		if actual == nil {
+			return false, errors.New("nil Pod")
+		}
+		statuses := actual.Status.NodeAllocatableResourceClaimStatuses
+		if len(statuses) != 1 {
+			return false, nil
+		}
+		claimStatus := statuses[0]
+		if len(claimStatus.Containers) != len(containerNames) {
+			return false, nil
+		}
+		for _, name := range containerNames {
+			if !slices.Contains(claimStatus.Containers, name) {
+				return false, nil
+			}
+		}
+		if len(claimStatus.Mapping) != 1 {
+			return false, nil
+		}
+		mapping := claimStatus.Mapping[0]
+		if mapping.Name != v1.ResourceCPU || mapping.Quantity == nil || mapping.Quantity.Value() != wantCPUs {
+			return false, nil
+		}
+		if len(actual.Status.ResourceClaimStatuses) == 1 &&
+			actual.Status.ResourceClaimStatuses[0].ResourceClaimName != nil &&
+			claimStatus.ResourceClaimName != *actual.Status.ResourceClaimStatuses[0].ResourceClaimName {
+			return false, nil
+		}
+		return true, nil
+	}).WithTemplate(fmt.Sprintf(
+		"Expected pod {{.Actual.Namespace}}/{{.Actual.Name}} {{.To}} have a single node allocatable claim status for containers %v with %d cpus, got: {{.Actual.Status.NodeAllocatableResourceClaimStatuses}}",
+		containerNames, wantCPUs))
 }

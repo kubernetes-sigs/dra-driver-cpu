@@ -108,11 +108,11 @@ func EventuallyFailedToCreate(ctx context.Context, fxt *fixture.Fixture, pod *v1
 	}).WithTimeout(time.Minute).WithPolling(2 * time.Second).Should(podmatchers.BeFailedToCreate(fxt.Log))
 }
 
-// expectNodeAllocClaimStatus verifies the scheduler-populated node allocatable claim status
+// expectNodeAllocatableClaimStatus verifies the scheduler-populated node allocatable claim status
 // on a pod using one CPU claim: with the node allocatable mapping enabled it must report the
 // claim's CPUs, otherwise the field must be absent. The scheduler writes the status at
 // PreBind, so it is final by the time the pod runs; polling is defensive.
-func expectNodeAllocClaimStatus(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod, wantCPUs int64, nodeAllocatableMapping bool) {
+func expectNodeAllocatableClaimStatus(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod, wantCPUs int64, nodeAllocatableMapping bool) {
 	ginkgo.GinkgoHelper()
 
 	if !nodeAllocatableMapping {
@@ -123,23 +123,20 @@ func expectNodeAllocClaimStatus(ctx context.Context, cs kubernetes.Interface, po
 		return
 	}
 
-	gomega.Eventually(func(g gomega.Gomega) {
-		current, err := cs.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
-		g.Expect(err).ToNot(gomega.HaveOccurred())
-		g.Expect(current.Status.NodeAllocatableResourceClaimStatuses).To(gomega.HaveLen(1),
-			"expected exactly one node allocatable claim status")
-		claimStatus := current.Status.NodeAllocatableResourceClaimStatuses[0]
-		g.Expect(claimStatus.Containers).To(gomega.ContainElement(pod.Spec.Containers[0].Name))
-		g.Expect(claimStatus.Mapping).To(gomega.HaveLen(1))
-		g.Expect(claimStatus.Mapping[0].Name).To(gomega.Equal(v1.ResourceCPU))
-		g.Expect(claimStatus.Mapping[0].Quantity).ToNot(gomega.BeNil())
-		g.Expect(claimStatus.Mapping[0].Quantity.Value()).To(gomega.Equal(wantCPUs))
-		// The claim may be created from a template with a generated name; cross-check the
-		// reported name against the pod's resource claim statuses.
-		if len(current.Status.ResourceClaimStatuses) == 1 && current.Status.ResourceClaimStatuses[0].ResourceClaimName != nil {
-			g.Expect(claimStatus.ResourceClaimName).To(gomega.Equal(*current.Status.ResourceClaimStatuses[0].ResourceClaimName))
+	// The claim status must cover exactly the containers that reference a claim.
+	var claimContainers []string
+	for _, cnt := range pod.Spec.Containers {
+		if len(cnt.Resources.Claims) > 0 {
+			claimContainers = append(claimContainers, cnt.Name)
 		}
-	}).WithTimeout(time.Minute).WithPolling(2 * time.Second).Should(gomega.Succeed())
+	}
+	gomega.Expect(claimContainers).ToNot(gomega.BeEmpty(),
+		"pod %s/%s has no containers referencing resource claims", pod.Namespace, pod.Name)
+
+	gomega.Eventually(func(ctx context.Context) (*v1.Pod, error) {
+		return cs.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+	}).WithContext(ctx).WithTimeout(time.Minute).WithPolling(2 * time.Second).
+		Should(podmatchers.HaveNodeAllocatableClaimStatus(claimContainers, wantCPUs))
 }
 
 // getDriverConfig fetches the dracpu DaemonSet and returns the deployed driver's

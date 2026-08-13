@@ -61,15 +61,15 @@ Please note "Serial" is however unavoidable because we manage the shared node st
 */
 var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
 	var (
-		rootFxt                *fixture.Fixture
-		targetNode             *v1.Node
-		targetNodeCPUInfo      discovery.DRACPUInfo
-		availableCPUs          cpuset.CPUSet
-		dracpuTesterImage      string
-		reservedCPUs           cpuset.CPUSet
-		cpuDeviceMode          string
-		groupBy                string
-		nodeAllocatableMapping bool
+		rootFxt                       *fixture.Fixture
+		targetNode                    *v1.Node
+		targetNodeCPUInfo             discovery.DRACPUInfo
+		availableCPUs                 cpuset.CPUSet
+		dracpuTesterImage             string
+		reservedCPUs                  cpuset.CPUSet
+		cpuDeviceMode                 string
+		groupBy                       string
+		publishNodeAllocatableMapping bool
 	)
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
@@ -108,8 +108,8 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		gomega.Expect(dsReservedCPUs).To(cpusetmatchers.Equal(reservedCPUs), "daemonset reserved cpus do not match test reserved cpus")
 		rootFxt.Log.Info("daemonset --cpu-device-mode configuration", "mode", cpuDeviceMode, "groupBy", groupBy)
 		driverConfig := getDriverConfig(ctx, rootFxt.K8SClientset)
-		nodeAllocatableMapping = driverConfig.PublishNodeAllocatableResourceMapping
-		rootFxt.Log.Info("driver node allocatable mapping", "enabled", nodeAllocatableMapping)
+		publishNodeAllocatableMapping = driverConfig.PublishNodeAllocatableResourceMapping
+		rootFxt.Log.Info("driver node allocatable mapping", "enabled", publishNodeAllocatableMapping)
 
 		targetNode, err = e2enode.PickWorker(ctx, rootFxt.K8SClientset, 5*time.Second, 1*time.Minute, rootFxt.Log)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -199,7 +199,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				createdClaimTemplate, err := fxt.K8SClientset.ResourceV1().ResourceClaimTemplates(fxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
 				for i := range numPods {
 					gomega.Expect(err).ToNot(gomega.HaveOccurred())
-					pod := makeTesterPodWithExclusiveCPUClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, int64(cpusPerClaim), targetNode.Name, nodeAllocatableMapping)
+					pod := makeTesterPodWithExclusiveCPUClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, int64(cpusPerClaim), targetNode.Name, publishNodeAllocatableMapping)
 					createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
 					gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create tester pod %d: %v", i, err)
 					exclPods = append(exclPods, createdPod)
@@ -216,7 +216,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					// The scheduler reports the claim's CPUs in the pod status when the
 					// driver publishes node allocatable mappings; the field must be absent
 					// otherwise.
-					expectNodeAllocClaimStatus(ctx, fxt.K8SClientset, pod, int64(cpusPerClaim), nodeAllocatableMapping)
+					expectNodeAllocatableClaimStatus(ctx, fxt.K8SClientset, pod, int64(cpusPerClaim), publishNodeAllocatableMapping)
 				}
 				gomega.Expect(allAllocatedCPUs).To(cpusetmatchers.HaveSize(numPods * cpusPerClaim))
 				rootFxt.Log.Info("All exclusive allocation", "pod", "exclusive CPUs", allAllocatedCPUs.String(), "expected Shared CPUs", availableCPUs.Difference(allAllocatedCPUs).String())
@@ -291,7 +291,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 				fixture.By("creating a pod consuming the multi-request claim")
-				pod := makeTesterPodWithNamedClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaim.Name, targetNode.Name, nodeAllocatableMapping)
+				pod := makeTesterPodWithNamedClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaim.Name, targetNode.Name, publishNodeAllocatableMapping)
 				createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
@@ -345,7 +345,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 					fixture.By("creating pod referencing %s", tc.name)
-					pod := makeTesterPodWithNamedClaim(fxt.Namespace.Name, dracpuTesterImage, tc.name, targetNode.Name, nodeAllocatableMapping)
+					pod := makeTesterPodWithNamedClaim(fxt.Namespace.Name, dracpuTesterImage, tc.name, targetNode.Name, publishNodeAllocatableMapping)
 					createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
 					gomega.Expect(err).ToNot(gomega.HaveOccurred())
 					exclPods = append(exclPods, createdPod)
@@ -381,14 +381,10 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 func verifySharedPoolMatches(ctx context.Context, fxt *fixture.Fixture, sharedPod *v1.Pod, expectedSharedCPUs cpuset.CPUSet) {
 	ginkgo.GinkgoHelper()
-
 	fixture.By("checking the CPU pool of the best-effort tester pod %s matches expected %s", e2epod.Identify(sharedPod), expectedSharedCPUs.String())
-	gomega.Eventually(func() error {
+	gomega.Eventually(func() cpuset.CPUSet {
 		sharedAllocUpdated := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, sharedPod)
 		fxt.Log.Info("checking shared allocation", "pod", e2epod.Identify(sharedPod), "cpuAllocated", sharedAllocUpdated.CPUAssigned.String(), "cpuAffinity", sharedAllocUpdated.CPUAffinity.String())
-		if !expectedSharedCPUs.Equals(sharedAllocUpdated.CPUAssigned) {
-			return fmt.Errorf("shared CPUs mismatch: expected %v got %v", expectedSharedCPUs.String(), sharedAllocUpdated.CPUAssigned.String())
-		}
-		return nil
-	}).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(gomega.Succeed(), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", e2epod.Identify(sharedPod))
+		return sharedAllocUpdated.CPUAssigned
+	}).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(expectedSharedCPUs), "the CPU pool of the best-effort tester pod %s does not match the expected shared CPUs", e2epod.Identify(sharedPod))
 }
