@@ -235,12 +235,14 @@ func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfo
 			})
 		case GROUP_BY_NUMA_NODE:
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				AttributeNUMANodeID: {IntValue: new(int64(deviceInfo.numaNodeID))},
+				// DRA standard attributes first
+				deviceattribute.StandardDeviceAttributeNUMANode: {IntValue: new(int64(deviceInfo.numaNodeID))},
+				// Driver-specific/non-standard attributes next
 				AttributeSocketID:   {IntValue: new(int64(deviceInfo.socketID))},
 				AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
 				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
 			}
-			SetCompatibilityAttributes(deviceAttrs, int64(deviceInfo.numaNodeID))
+			addCompatibilityAttributes(deviceAttrs, int64(deviceInfo.numaNodeID))
 			addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...)
 
 			devices = append(devices, resourceapi.Device{
@@ -278,7 +280,9 @@ func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PC
 	for _, deviceInfo := range deviceInfos {
 		cpu := deviceInfo.cpu
 		deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-			AttributeNUMANodeID: {IntValue: new(int64(cpu.NUMANodeID))},
+			// DRA standard attributes first
+			deviceattribute.StandardDeviceAttributeNUMANode: {IntValue: new(int64(cpu.NUMANodeID))},
+			// Driver-specific/non-standard attributes next
 			AttributeSocketID:   {IntValue: new(int64(cpu.SocketID))},
 			AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
 			AttributeCacheL3ID:  {IntValue: new(int64(cpu.UncoreCacheID))},
@@ -286,7 +290,7 @@ func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PC
 			AttributeCoreID:     {IntValue: new(int64(cpu.CoreID))},
 			AttributeCPUID:      {IntValue: new(int64(cpu.CpuID))},
 		}
-		SetCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID))
+		addCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID))
 		addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, cpu.CpuID)
 
 		cpuDevice := resourceapi.Device{

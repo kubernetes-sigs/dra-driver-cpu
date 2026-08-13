@@ -37,7 +37,6 @@ const (
 )
 
 const (
-	AttributeNUMANodeID resourceapi.QualifiedName = "dra.cpu/numaNodeID"
 	AttributeSocketID   resourceapi.QualifiedName = "dra.cpu/socketID"
 	AttributeSMTEnabled resourceapi.QualifiedName = "dra.cpu/smtEnabled"
 	AttributeCacheL3ID  resourceapi.QualifiedName = "dra.cpu/cacheL3ID"
@@ -51,9 +50,10 @@ const (
 	AttributeAllocatedNumCPUs resourceapi.QualifiedName = "dra.cpu/allocatedNumCPUs"
 )
 
-// SetCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other
+// addCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other
 // DRA resource drivers leveraging attributes which are not kubernetes standard.
 // This is the "staging area" which enables attribute sharing until (or before) they become standard.
-func SetCompatibilityAttributes(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, numaID int64) {
+func addCompatibilityAttributes(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, numaID int64) {
 	attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: new(numaID)}
+	attrs["dra.cpu/numaNodeID"] = resourceapi.DeviceAttribute{IntValue: new(numaID)}
 }

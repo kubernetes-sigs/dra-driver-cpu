@@ -88,7 +88,9 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 		switch cpuDeviceMode {
 		case device.CPU_DEVICE_MODE_INDIVIDUAL:
 			checks = []attrCheck{
-				{device.AttributeNUMANodeID, isInt},
+				// DRA standard attributes first
+				{deviceattribute.StandardDeviceAttributeNUMANode, isInt},
+				// Driver specific attributes next
 				{device.AttributeSocketID, isInt},
 				{device.AttributeSMTEnabled, isBool},
 				{device.AttributeCacheL3ID, isInt},
@@ -105,7 +107,9 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 				}
 			case device.GROUP_BY_NUMA_NODE:
 				checks = []attrCheck{
-					{device.AttributeNUMANodeID, isInt},
+					// DRA standard attributes first
+					{deviceattribute.StandardDeviceAttributeNUMANode, isInt},
+					// Driver specific attributes next
 					{device.AttributeSocketID, isInt},
 					{device.AttributeSMTEnabled, isBool},
 					{device.AttributeNumCPUs, isInt},
