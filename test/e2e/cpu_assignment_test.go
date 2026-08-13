@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
@@ -239,6 +240,84 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				ginkgo.By("checking existing shared containers keep their last cpuset until the next CreateContainer or Synchronize")
 				verifySharedPoolMatches(ctx, fxt, shrPod1, expectedSharedCPUs)
 				verifySharedPoolMatches(ctx, fxt, shrPod2, expectedSharedCPUs)
+			})
+
+			ginkgo.It("should reproduce shared CPU overlap when the shared pool becomes empty", ginkgo.Label("negative"), func(ctx context.Context) {
+				if cpuDeviceMode == "grouped" && groupBy == "machine" {
+					ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
+				}
+				if availableCPUs.IsEmpty() {
+					ginkgo.Skip("need at least one driver-managed CPU for this test")
+				}
+
+				fixture.By("creating a shared pod before any DRA CPUs are allocated")
+				sharedPod := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
+				sharedBefore := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, sharedPod)
+				nodeCPUs := makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
+				gomega.Expect(sharedBefore.CPUAssigned).To(cpusetmatchers.BeSubsetOf(nodeCPUs), "the initial shared pod should use CPUs visible on the node")
+
+				fixture.By("creating ResourceClaims which consume all driver-managed CPUs")
+				claimSizes := []int{availableCPUs.Size()}
+				if cpuDeviceMode == "grouped" && (groupBy == "numanode" || groupBy == "socket") {
+					byGroup := map[int]int{}
+					for _, cpu := range targetNodeCPUInfo.CPUs {
+						if availableCPUs.Contains(cpu.CpuID) {
+							groupID := cpu.NUMANodeID
+							if groupBy == "socket" {
+								groupID = cpu.SocketID
+							}
+							byGroup[groupID]++
+						}
+					}
+					groupIDs := make([]int, 0, len(byGroup))
+					for groupID := range byGroup {
+						groupIDs = append(groupIDs, groupID)
+					}
+					sort.Ints(groupIDs)
+					claimSizes = claimSizes[:0]
+					for _, groupID := range groupIDs {
+						claimSizes = append(claimSizes, byGroup[groupID])
+					}
+					// Allocate the largest group request first so the scheduler cannot
+					// consume a large device for a smaller request.
+					sort.Sort(sort.Reverse(sort.IntSlice(claimSizes)))
+				}
+
+				exclusiveAllocation := cpuset.New()
+				for i, claimSize := range claimSizes {
+					claimTemplate := resourcev1.ResourceClaimTemplate{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: fmt.Sprintf("cpu-request-all-excl-%d", i),
+						},
+						Spec: resourcev1.ResourceClaimTemplateSpec{
+							Spec: makeResourceClaimSpec(claimSize, cpuDeviceMode == "grouped"),
+						},
+					}
+					createdClaimTemplate, err := fxt.K8SClientset.ResourceV1().ResourceClaimTemplates(fxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
+					gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+					exclusivePod := makeTesterPodWithExclusiveCPUClaim(fxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, int64(claimSize), targetNode.Name, nodeAllocatableMapping)
+					createdExclusivePod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, exclusivePod)
+					gomega.Expect(err).ToNot(gomega.HaveOccurred())
+					allocation := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, createdExclusivePod)
+					gomega.Expect(allocation.CPUAssigned).To(cpusetmatchers.HaveSize(claimSize), "the DRA pod should consume its requested CPU pool")
+					gomega.Expect(allocation.CPUAssigned).To(cpusetmatchers.BeSubsetOf(availableCPUs), "the DRA pod should consume only driver-managed CPUs")
+					gomega.Expect(allocation.CPUAssigned).To(cpusetmatchers.HaveNoOverlapWith(exclusiveAllocation), "DRA pod allocations must not overlap")
+					exclusiveAllocation = exclusiveAllocation.Union(allocation.CPUAssigned)
+					expectNodeAllocClaimStatus(ctx, fxt.K8SClientset, createdExclusivePod, int64(claimSize), nodeAllocatableMapping)
+				}
+				gomega.Expect(exclusiveAllocation).To(cpusetmatchers.Equal(availableCPUs), "the DRA pods should consume the complete driver-managed CPU pool")
+
+				fixture.By("creating a second shared pod after the shared pool becomes empty")
+				sharedAfter := makeTesterPodBestEffort(fxt.Namespace.Name, dracpuTesterImage)
+				sharedAfter = e2epod.PinToNode(sharedAfter, targetNode.Name)
+				createdSharedAfter, err := fxt.K8SClientset.CoreV1().Pods(sharedAfter.Namespace).Create(ctx, sharedAfter, metav1.CreateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(e2epod.WaitToBeRunning(ctx, fxt.K8SClientset, createdSharedAfter.Namespace, createdSharedAfter.Name)).To(gomega.Succeed())
+				gomega.Eventually(func() bool {
+					allocation := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, createdSharedAfter).CPUAssigned
+					return !allocation.Intersection(exclusiveAllocation).IsEmpty()
+				}).WithTimeout(time.Minute).WithPolling(2*time.Second).Should(gomega.BeTrue(), "a shared pod created with an empty shared pool must overlap the DRA allocation")
 			})
 
 			ginkgo.It("should allocate non-overlapping CPUs for multiple requests in the same grouped claim", func(ctx context.Context) {
