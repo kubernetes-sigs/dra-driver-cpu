@@ -16,10 +16,7 @@ limitations under the License.
 
 package discovery
 
-import (
-	"github.com/kubernetes-sigs/dra-driver-cpu/internal/buildinfo"
-	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
-)
+import "github.com/kubernetes-sigs/dra-driver-cpu/internal/buildinfo"
 
 type DRACPUBuildinfo struct {
 	GoVersion   string `json:"goVersion"`
@@ -33,11 +30,9 @@ type DRACPUAllocation struct {
 
 type DRACPURuntimeinfo struct {
 	CPUAffinity string `json:"affinity"`
-}
-
-type DRACPUInfo struct {
-	Buildinfo DRACPUBuildinfo   `json:"buildinfo"`
-	CPUs      []cpuinfo.CPUInfo `json:"cpus"`
+	// KernelOnlineCPUs is the CPU set exposed by /sys/devices/system/cpu/online.
+	// Unlike the driver's discovered topology, it is unaffected by --sysfs-overlay.
+	KernelOnlineCPUs string `json:"kernelOnlineCPUs"`
 }
 
 type DRACPUTester struct {

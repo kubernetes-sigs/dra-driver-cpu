@@ -18,11 +18,9 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"time"
 
-	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	cpusetmatchers "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/matchers/cpuset"
 	e2enode "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/node"
@@ -46,7 +44,6 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 	var (
 		rootFxt           *fixture.Fixture
 		targetNode        *v1.Node
-		targetNodeCPUInfo discovery.DRACPUInfo
 		dracpuTesterImage string
 		allocatableCPUs   cpuset.CPUSet
 		reservedCPUs      cpuset.CPUSet
@@ -70,9 +67,6 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 
 		rootFxt, err = fixture.ForGinkgo()
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create fixture")
-		infraFxt := rootFxt.WithPrefix("infra")
-		gomega.Expect(infraFxt.Setup(ctx)).To(gomega.Succeed())
-		ginkgo.DeferCleanup(infraFxt.Teardown)
 
 		ginkgo.By("getting the daemonset configuration")
 		orgDaemonSet, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Get(ctx, "dracpu", metav1.GetOptions{})
@@ -89,15 +83,7 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		rootFxt.Log.Info("using worker node", "nodeName", targetNode.Name)
 
-		// Discover topology
-		infoPod := discovery.MakePod(infraFxt.Namespace.Name, dracpuTesterImage)
-		infoPod = e2epod.PinToNode(infoPod, targetNode.Name)
-		infoPod, err = e2epod.RunToCompletion(ctx, infraFxt.K8SClientset, infoPod)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		data, err := e2epod.GetLogs(ctx, infraFxt.K8SClientset, infoPod)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		gomega.Expect(json.Unmarshal([]byte(data), &targetNodeCPUInfo)).To(gomega.Succeed())
-		allocatableCPUs = makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
+		allocatableCPUs = discoverDriverCPUs(ctx, rootFxt.K8SClientset, targetNode.Name)
 	})
 
 	ginkgo.It("should recover shared pool mask and preserve exclusive mask after restart", func(ctx context.Context) {
@@ -205,11 +191,13 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 		createdPod2, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod2)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
-		ginkgo.By("Verifying Pod 2 CPU mask is NOT restricted to shared pool (should be default/all)")
+		ginkgo.By("Verifying Pod 2 CPU mask is NOT restricted to the shared pool")
 		alloc2 := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, createdPod2)
-		fxt.Log.Info("Pod 2 CPU allocation (without NRI)", "cpuAssigned", alloc2.CPUAssigned.String())
-		// Since NRI is down, pod2 is not restricted to shared pool CPUs and gets all online CPUs.
-		gomega.Expect(alloc2.CPUAffinity).To(cpusetmatchers.Equal(allocatableCPUs), "Pod 2 CPU mask not equal to all CPUs")
+		fxt.Log.Info("Pod 2 CPU allocation (without NRI)", "cpuAssigned", alloc2.CPUAssigned.String(), "cpuAffinity", alloc2.CPUAffinity.String(), "kernelOnlineCPUs", alloc2.KernelOnlineCPUs.String())
+		// Since NRI is down, pod2's affinity must match the CPUs that the kernel reports online.
+		gomega.Expect(alloc2.CPUAffinity).To(cpusetmatchers.Equal(alloc2.KernelOnlineCPUs), "Pod 2 CPU mask not equal to all kernel-online CPUs")
+		gomega.Expect(allocatableCPUs).To(cpusetmatchers.BeSubsetOf(alloc2.CPUAffinity), "Pod 2 does not have access to all driver CPUs")
+		gomega.Expect(exclusiveCPUs).To(cpusetmatchers.BeSubsetOf(alloc2.CPUAffinity), "Pod 2 is still restricted away from exclusive CPUs")
 
 		ginkgo.By("Bringing up the cpu dra driver on target node")
 		gomega.Eventually(func(g gomega.Gomega) {
