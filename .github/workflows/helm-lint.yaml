@@ -6,6 +6,15 @@ on:
       - 'deployment/helm/**'
       - 'internal/driverconfig/**'
       - 'tools/gen-driverconfig-schema/**'
+      # Read by test/render: the driver name sets the registrar socket name,
+      # which is what the chart's byte budget for the root is left over from.
+      - 'cmd/dracpu/app.go'
+      - 'test/render/**'
+      # The check runs through a Makefile target and is a Go test, so both can
+      # change what it does without any of the paths above moving.
+      - 'Makefile'
+      - 'go.mod'
+      - 'go.sum'
       - '.github/workflows/helm-lint.yaml'
 
 jobs:
@@ -24,6 +33,9 @@ jobs:
 
       - name: Run Helm lint
         run: make helm-lint
+
+      - name: Check the kubelet root derives the chart mounts and driver flag
+        run: make helm-render-check
 
       - name: Check helm-docs is up to date
         run: make helm-docs-check
