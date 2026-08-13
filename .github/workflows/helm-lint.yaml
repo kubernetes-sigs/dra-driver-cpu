@@ -6,9 +6,13 @@ on:
       - 'deployment/helm/**'
       - 'internal/driverconfig/**'
       - 'tools/gen-driverconfig-schema/**'
-      # Read by test/render: the driver name sets the registrar socket name,
-      # which is what the chart's byte budget for the root is left over from.
-      - 'cmd/dracpu/app.go'
+      # Read by test/render: the driver name sets the registrar socket name and
+      # the byte budget left for the root, the flag registrations are what the
+      # rendered command line is parsed against, and the image decides whether
+      # the first argument is the program or a flag.
+      - 'cmd/dracpu/**'
+      - 'internal/ctxlog/**'
+      - 'Dockerfile'
       - 'test/render/**'
       # The check runs through a Makefile target and is a Go test, so both can
       # change what it does without any of the paths above moving.

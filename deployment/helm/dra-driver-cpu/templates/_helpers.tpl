@@ -79,6 +79,9 @@ check below for why that specific check exists.
 {{- if not (isAbs $root) -}}
 {{- fail (printf "kubeletRootDir must be an absolute path, got %q" $root) -}}
 {{- end -}}
+{{- if or (contains "$(" $root) (contains "$$" $root) -}}
+{{- fail (printf "kubeletRootDir must not contain %q or %q, got %q: the kubelet expands those in a container's arguments and not in its mount paths, so the driver would be given a root the volumes were not mounted at" "$(" "$$" $root) -}}
+{{- end -}}
 {{- /* Cleaned (not just trimmed) so this resolves to the same directory the
        driver's filepath.Join produces. */ -}}
 {{- $cleaned := clean $root -}}

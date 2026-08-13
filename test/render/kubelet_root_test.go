@@ -55,6 +55,7 @@ const (
 	appSourcePath = "../../cmd/dracpu/app.go"
 
 	driverContainer = "dracpu"
+	driverBinary    = "/dracpu"
 	pluginsVolume   = "device-plugin"
 	registryVolume  = "plugin-registry"
 
@@ -279,14 +280,17 @@ func (b bindings) check(t *testing.T, plugins, registry string) {
 }
 
 // The image sets no entrypoint, so a container without a command runs its
-// arguments as the whole command line and the first of them is argv0.
+// arguments as the whole command line and the first of them is argv0. Which
+// program that is decides how the rest is read: the image also ships
+// /dracpu-gatherinfo, and the driver turns that basename into a subcommand,
+// which it then refuses to run alongside flags.
 func commandLine(c *corev1.Container) ([]string, error) {
 	argv := append(slices.Clone(c.Command), c.Args...)
 	if len(argv) == 0 {
 		return nil, errors.New("the container carries no command line")
 	}
-	if strings.HasPrefix(argv[0], "-") {
-		return nil, fmt.Errorf("the command line starts with %q, so there is no program to run", argv[0])
+	if argv[0] != driverBinary {
+		return nil, fmt.Errorf("the command line runs %q, want %q", argv[0], driverBinary)
 	}
 	return argv, nil
 }
@@ -480,6 +484,11 @@ func TestUnusableRootIsRefused(t *testing.T) {
 		{"over the byte budget", "/mnt/kubelet-root-long-enough-to-overrun-the-sun-path-budget-0123456789012345", "over the 107-byte limit"},
 		{"one byte over the registrar socket limit", "/mnt/kubelet-root-of-exactly-74-bytes-pins-the-socket-budget-xxxxxxxxxxxxx", "over the 107-byte limit"},
 		{"multibyte inside the character limit", "/" + strings.Repeat("界", 30), "over the 107-byte limit"},
+		// The kubelet expands these in the container's arguments and not in its
+		// mount paths, so a root carrying one is mounted at one place and given to
+		// the driver as another.
+		{"a variable reference", "/mnt/$(KUBERNETES_SERVICE_HOST)/kubelet", "expands those in a container's arguments"},
+		{"an escaped dollar", "/mnt/$$kubelet", "expands those in a container's arguments"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			forEachSchemaMode(t, func(t *testing.T, mode []string, schemaOff bool) {
@@ -781,7 +790,8 @@ func TestRenderedArgumentsAreReadAsTheDriverReadsThem(t *testing.T) {
 		{name: "a plain argument ends the flags", container: args("/dracpu", "x", "--kubelet-root-dir=/a"), refusal: "was not parsed as a flag"},
 		{name: "a near match is a flag the driver does not have", container: args("/dracpu", "--kubelet-root-directory=/a"), refusal: "not defined"},
 		{name: "nothing to run", container: corev1.Container{}, refusal: "no command line"},
-		{name: "a command line that is only flags", container: args("--kubelet-root-dir=/a"), refusal: "no program to run"},
+		{name: "a command line that is only flags", container: args("--kubelet-root-dir=/a"), refusal: `want "/dracpu"`},
+		{name: "the gatherinfo compatibility program", container: args("/dracpu-gatherinfo", "--kubelet-root-dir=/a"), refusal: `want "/dracpu"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, sent, err := renderedRoot(&tc.container)
