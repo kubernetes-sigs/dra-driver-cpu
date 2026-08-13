@@ -488,6 +488,10 @@ func TestUnusableRootIsRefused(t *testing.T) {
 		// mount paths, so a root carrying one is mounted at one place and given to
 		// the driver as another.
 		{"a variable reference", "/mnt/$(KUBERNETES_SERVICE_HOST)/kubelet", "expands those in a container's arguments"},
+		// Cleaning would take this one back to /mnt/kubelet, where nothing diverges.
+		// Refused anyway, because the rule is on the spelling: which sequences
+		// survive cleaning is not something a reader of the value can tell.
+		{"a variable reference cleaning would remove", "/mnt/$(discarded)/../kubelet", "refused wherever it appears"},
 		{"an escaped dollar", "/mnt/$$kubelet", "expands those in a container's arguments"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -878,5 +882,48 @@ func TestTheRelocatedKindConfigDiffersOnlyByTheKubeletRoot(t *testing.T) {
 	withoutRoot := strings.ReplaceAll(relocated, "\n"+strings.TrimRight(relocation, "\n"), "")
 	if diff := cmp.Diff(meaningful("../../hack/ci/kind-ci.yaml"), withoutRoot); diff != "" {
 		t.Errorf("the two kind configs differ by more than the kubelet root (-default,+relocated):\n%s", diff)
+	}
+}
+
+// The cluster verifier can only judge a row that runs, so deleting the relocated
+// entry leaves every remaining check green and takes the only proof of issue 231
+// with it. Read the workflow rather than the rows it happened to produce.
+func TestBothKubeletRootsStayInTheMatrix(t *testing.T) {
+	raw, err := os.ReadFile("../../.github/workflows/helm-e2e.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type variant struct {
+		Name       string `json:"variant"`
+		KindConfig string `json:"kindConfig"`
+		Root       string `json:"kubeletRootDir"`
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Strategy struct {
+				Matrix struct {
+					Include []variant `json:"include"`
+				} `json:"matrix"`
+			} `json:"strategy"`
+		} `json:"jobs"`
+	}
+	if err := yaml.Unmarshal(raw, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	job, ok := workflow.Jobs["helm-e2e"]
+	if !ok {
+		t.Fatal("the helm-e2e job is gone from the workflow")
+	}
+	// Compared whole rather than by name: a relocated row pointed at the default
+	// kind config, or left with an empty root, runs the same cluster twice and
+	// reads as two variants.
+	want := []variant{
+		{Name: "default-root", KindConfig: "hack/ci/kind-ci.yaml", Root: ""},
+		{Name: "relocated-root", KindConfig: "hack/ci/kind-ci-relocated-root.yaml", Root: "/var/lib/custom-kubelet"},
+	}
+	got := slices.Clone(job.Strategy.Matrix.Include)
+	slices.SortFunc(got, func(a, b variant) int { return strings.Compare(a.Name, b.Name) })
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("the helm-e2e matrix no longer runs exactly the two kubelet roots (-want,+got):\n%s", diff)
 	}
 }

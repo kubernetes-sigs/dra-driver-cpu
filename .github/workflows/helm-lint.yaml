@@ -14,6 +14,12 @@ on:
       - 'internal/ctxlog/**'
       - 'Dockerfile'
       - 'test/render/**'
+      # Read by test/render as well: the workflow decides whether both kubelet
+      # roots are still exercised, and the two kind configs have to stay a
+      # controlled experiment where only the root differs.
+      - '.github/workflows/helm-e2e.yaml'
+      - 'hack/ci/kind-ci.yaml'
+      - 'hack/ci/kind-ci-relocated-root.yaml'
       # The check runs through a Makefile target and is a Go test, so both can
       # change what it does without any of the paths above moving.
       - 'Makefile'

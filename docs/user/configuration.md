@@ -200,6 +200,12 @@ kubeletRootDir: /mnt/data/kubelet
 
 That one value becomes the driver's `--kubelet-root-dir` and both hostPath mounts.
 
+The value may not contain `$(` or `$$`. The kubelet expands those in a container's
+arguments but not in its mount paths, so a root spelled that way would reach the driver
+as one path and the volumes as another. The chart refuses the spelling wherever it
+appears, including where cleaning would have removed the sequence, because which ones
+survive cleaning is not something a reader of the value can tell.
+
 Leaving `kubeletRootDir` out, or setting it to YAML `null`, selects `/var/lib/kubelet`. Helm
 drops a null key while coalescing values, so by the time the chart is rendered it looks the
 same as a release installed before this value existed, and both have to mean the standard
