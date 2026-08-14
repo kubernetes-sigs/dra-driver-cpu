@@ -54,7 +54,7 @@
       "additionalProperties": false
     },
     "driverConfig": {
-      "description": "Driver config file contents. When non-empty, or when a deprecated `args.*` field below is set, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. `args.*` fields that mirror a deprecated CLI flag (`cpuDeviceMode`, `groupBy`, `reservedCPUs`, `hostnameOverride`) are folded into the generated config automatically and take priority over the same field set here. Example: driverConfig: cpuDeviceMode: individual groupBy: socket reservedCPUs: \"0-3\" publishNodeAllocatableResourceMapping: true  # KEP-5517; requires the DRANodeAllocatableResources feature gate",
+      "description": "Driver config file contents. When non-empty, or when a deprecated `args.*` field below is set, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. `args.*` fields that mirror a deprecated CLI flag (`cpuDeviceMode`, `groupBy`, `reservedCPUs`, `hostnameOverride`) are folded into the generated config automatically and take priority over the same field set here.",
       "$ref": "driverconfig.schema.json",
       "type": "object"
     },

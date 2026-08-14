@@ -115,8 +115,7 @@ DRACPU_E2E_RESERVED_CPUS ?= 0
 # publishNodeAllocatableResourceMapping driverConfig option.
 # Also requires a cluster (KIND_K8S_VERSION node image) with the
 # DRANodeAllocatableResources feature gate enabled.
-DRACPU_E2E_NODE_ALLOCATABLE ?= true
-HELM_NODE_ALLOCATABLE_ARGS := $(if $(filter true,$(DRACPU_E2E_NODE_ALLOCATABLE)),--set driverConfig.publishNodeAllocatableResourceMapping=true,)
+DRACPU_E2E_NODE_ALLOCATABLE_MAPPING ?= false
 # Extra arguments passed to golangci-lint in the lint target.
 # For example, set GOLANGCI_LINT_EXTRA_ARGS=--fix to auto-fix issues.
 GOLANGCI_LINT_EXTRA_ARGS ?=
@@ -213,7 +212,7 @@ endif
 		--set args.groupBy=${DRACPU_E2E_CPU_GROUP_BY} \
 		--set-string args.reservedCPUs=${DRACPU_E2E_RESERVED_CPUS} \
 		--set args.exposePCIeRoots=true \
-		$(HELM_NODE_ALLOCATABLE_ARGS)
+		--set driverConfig.publishNodeAllocatableResourceMapping=$(DRACPU_E2E_NODE_ALLOCATABLE_MAPPING)
 	hack/ci/wait-resourcelices.sh
 
 build-test-image: ## build tests image
