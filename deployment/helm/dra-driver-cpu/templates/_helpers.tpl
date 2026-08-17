@@ -62,13 +62,6 @@ check below for why that specific check exists.
 {{- fail (printf "value %q differs from kubeletRootDir only in case, and the chart reads the exact name: it would be ignored and the kubelet paths would render at the default" $key) -}}
 {{- end -}}
 {{- end -}}
-{{- /* Matched on the parsed flag name: the flag package treats -name and --name
-       alike. */ -}}
-{{- range .Values.extraArgs -}}
-{{- if eq "kubelet-root-dir" (. | trimPrefix "--" | trimPrefix "-" | splitList "=" | first) -}}
-{{- fail "set kubeletRootDir instead of passing --kubelet-root-dir through extraArgs: the hostPath mounts render from kubeletRootDir, so the flag would move on its own" -}}
-{{- end -}}
-{{- end -}}
 {{- /* An upgrade run with --reuse-values carries the values the release was
        installed with, so a release older than this value has no key here at
        all. Absent reads as the default, and so does null, which Helm drops

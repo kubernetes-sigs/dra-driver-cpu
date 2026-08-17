@@ -43,9 +43,6 @@ podAnnotations: {}
 # -- Extra labels to add to pods
 podLabels: {}
 
-# -- Extra command-line arguments appended to the driver arguments
-extraArgs: [] # @schema item: string
-
 # -- Extra volume mounts for the driver container
 extraVolumeMounts: [] # @schema item: object
 
