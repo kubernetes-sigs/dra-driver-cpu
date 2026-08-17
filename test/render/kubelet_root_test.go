@@ -353,6 +353,14 @@ func renderedRoot(c *corev1.Container) (root string, sent bool, err error) {
 	return cfg.KubeletRootDir, seen.n == 1, nil
 }
 
+func checkDriverRoot(t *testing.T, ds *appsv1.DaemonSet, want string) {
+	t.Helper()
+	got, sent := driverRoot(t, ds)
+	if !sent || got != want {
+		t.Errorf("the driver starts on %q, sent=%v, want %q", got, sent, want)
+	}
+}
+
 func driverRoot(t *testing.T, ds *appsv1.DaemonSet) (string, bool) {
 	t.Helper()
 	root, sent, err := renderedRoot(container(t, ds))
@@ -538,20 +546,14 @@ func TestDriverConfigLeavesTheRootWiringAlone(t *testing.T) {
 		"--set-string", "kubeletRootDir=/mnt/data/kubelet",
 		"--set-string", "driverConfig.reservedCPUs=0-1")
 	readBindings(t, ds).check(t, "/mnt/data/kubelet/plugins", "/mnt/data/kubelet/plugins_registry")
-	got, sent := driverRoot(t, ds)
-	if !sent || got != "/mnt/data/kubelet" {
-		t.Errorf("the driver starts on %q, sent=%v, want /mnt/data/kubelet", got, sent)
-	}
+	checkDriverRoot(t, ds, "/mnt/data/kubelet")
 }
 
 // The spelling the chart does render, so the guard above cannot be passing by
 // refusing everything.
 func TestCorrectlySpelledRootKeyStillReachesTheDriver(t *testing.T) {
 	ds := daemonSet(t, "--skip-schema-validation", "--set-string", "kubeletRootDir=/mnt/data/kubelet")
-	got, sent := driverRoot(t, ds)
-	if !sent || got != "/mnt/data/kubelet" {
-		t.Errorf("the driver starts on %q, sent=%v, want /mnt/data/kubelet", got, sent)
-	}
+	checkDriverRoot(t, ds, "/mnt/data/kubelet")
 }
 
 func forEachSchemaMode(t *testing.T, run func(t *testing.T, mode []string, schemaOff bool)) {
@@ -562,25 +564,30 @@ func forEachSchemaMode(t *testing.T, run func(t *testing.T, mode []string, schem
 	})
 }
 
-// extraArgs are spliced in after the managed flag and the driver takes the last
-// value, so one naming the root would win it while the mounts kept rendering
-// from the chart value. One dash and two are the same flag to the driver.
-func TestExtraArgsCannotNameTheManagedFlag(t *testing.T) {
-	for _, tc := range []struct {
-		arg      string
-		accepted bool
-	}{
-		{"--kubelet-root-dir=/other", false},
-		{"-kubelet-root-dir=/other", false},
-		{"--kubelet-root-dir", false},
-		{"-kubelet-root-dir", false},
-		{"--kubelet-root-directory", true},
+// The chart has no extraArgs, so the splice that would land a second root flag
+// after the managed one is gone. The key is ignored rather than refused, so this
+// reads the rendered arguments and not the render's exit status.
+func TestExtraArgsCannotReachTheDriver(t *testing.T) {
+	for _, arg := range []string{
+		"--kubelet-root-dir=/other",
+		"-kubelet-root-dir=/other",
+		"--kubelet-root-dir",
+		"-kubelet-root-dir",
+		// One the driver takes, so a failure is the splice and not a flag refused.
+		"--v=9",
 	} {
-		t.Run(tc.arg, func(t *testing.T) {
-			_, err := template(t, chartPath, "--set-string", "extraArgs[0]="+tc.arg)
-			if accepted := err == nil; accepted != tc.accepted {
-				t.Errorf("extraArgs %q accepted=%v, want %v", tc.arg, accepted, tc.accepted)
+		t.Run(arg, func(t *testing.T) {
+			ds := daemonSet(t,
+				"--set-string", "kubeletRootDir=/mnt/data/kubelet",
+				"--set-string", "extraArgs[0]="+arg)
+			args, err := commandLine(container(t, ds))
+			if err != nil {
+				t.Fatalf("reading the rendered arguments: %v", err)
 			}
+			if slices.Contains(args, arg) {
+				t.Errorf("extraArgs reached the driver: %v", args)
+			}
+			checkDriverRoot(t, ds, "/mnt/data/kubelet")
 		})
 	}
 }
