@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
@@ -243,12 +242,15 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				verifySharedPoolMatches(ctx, fxt, shrPod2, expectedSharedCPUs)
 			})
 
-			ginkgo.It("should reject a shared container when the shared pool becomes empty", ginkgo.Label("negative"), func(ctx context.Context) {
+			ginkgo.It("should reject a claim that would exhaust the shared pool while shared containers exist", ginkgo.Label("negative"), func(ctx context.Context) {
 				if cpuDeviceMode == "grouped" && groupBy == "machine" {
 					ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
 				}
 				if availableCPUs.IsEmpty() {
 					ginkgo.Skip("need at least one driver-managed CPU for this test")
+				}
+				if publishNodeAllocatableMapping {
+					ginkgo.Skip("skipping this test with node allocatable mapping enabled: scheduler-side accounting prevents exhausting the shared pool")
 				}
 
 				fixture.By("creating ResourceClaims which consume all driver-managed CPUs")
@@ -279,6 +281,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				}
 
 				exclusiveAllocation := cpuset.New()
+				var blockedPod *v1.Pod
 				for i, claimSize := range claimSizes {
 					claimTemplate := resourcev1.ResourceClaimTemplate{
 						ObjectMeta: metav1.ObjectMeta{
@@ -293,20 +296,12 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 					exclusivePod := makeTesterPodWithExclusiveCPUClaimWithoutCPURequest(fxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, targetNode.Name)
 					if i == len(claimSizes)-1 {
-						// The last claim exhausts the shared pool. Existing kube-system
-						// containers are shared containers, so the driver must reject the
-						// exclusive container instead of sending an empty CPUSet update.
+						// The last claim would exhaust the shared pool. Existing kube-system
+						// containers are shared containers, so the driver must reject the claim
+						// during Prepare instead of letting NRI send an empty CPUSet update.
 						createdExclusivePod, err := fxt.K8SClientset.CoreV1().Pods(exclusivePod.Namespace).Create(ctx, exclusivePod, metav1.CreateOptions{})
 						gomega.Expect(err).ToNot(gomega.HaveOccurred())
-						gomega.Eventually(func() bool {
-							pod, getErr := fxt.K8SClientset.CoreV1().Pods(createdExclusivePod.Namespace).Get(ctx, createdExclusivePod.Name, metav1.GetOptions{})
-							if getErr != nil || pod.Status.Phase == v1.PodRunning || len(pod.Status.ContainerStatuses) == 0 || len(pod.Status.ResourceClaimStatuses) == 0 {
-								return false
-							}
-							waiting := pod.Status.ContainerStatuses[0].State.Waiting
-							return waiting != nil && strings.Contains(waiting.Message, "no shared CPUs available")
-						}).WithTimeout(time.Minute).WithPolling(2*time.Second).Should(gomega.BeTrue(), "an exclusive container which exhausts the shared pool must not start")
-						gomega.Expect(exclusiveAllocation.Size()+claimSize).To(gomega.Equal(availableCPUs.Size()), "the rejected Claim should account for the final driver-managed CPUs")
+						blockedPod = createdExclusivePod
 						continue
 					}
 					createdExclusivePod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, exclusivePod)
@@ -320,22 +315,26 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				}
 				gomega.Expect(exclusiveAllocation.Size()+claimSizes[len(claimSizes)-1]).To(gomega.Equal(availableCPUs.Size()), "the DRA Claims should consume the complete driver-managed CPU pool")
 
-				// The driver must reject this container. Applying an empty shared
-				// CPUSet through NRI would be a no-op and could restore the default
-				// affinity, overlapping the exclusive allocation.
-				fixture.By("creating a shared pod after the shared pool becomes empty")
+				// The claim is rejected during Prepare, so the pod stays Pending and
+				// never starts: preparing it would leave no CPUs for the shared pool,
+				// which NRI cannot represent.
+				fixture.By("verifying the claim that would exhaust the shared pool stays blocked")
+				gomega.Consistently(func() v1.PodPhase {
+					pod, getErr := fxt.K8SClientset.CoreV1().Pods(blockedPod.Namespace).Get(ctx, blockedPod.Name, metav1.GetOptions{})
+					if getErr != nil {
+						return v1.PodUnknown
+					}
+					return pod.Status.Phase
+				}).WithTimeout(45*time.Second).WithPolling(2*time.Second).ShouldNot(gomega.Equal(v1.PodRunning), "a claim which would exhaust the shared pool must stay blocked")
+
+				// Because the exhausting claim is never prepared, the shared pool keeps
+				// its CPUs: existing and new shared containers must keep working.
+				fixture.By("creating a shared pod while the exhausting claim stays blocked")
 				sharedAfter := makeTesterPodBestEffort(fxt.Namespace.Name, dracpuTesterImage)
 				sharedAfter = e2epod.PinToNode(sharedAfter, targetNode.Name)
-				createdSharedAfter, err := fxt.K8SClientset.CoreV1().Pods(sharedAfter.Namespace).Create(ctx, sharedAfter, metav1.CreateOptions{})
+				createdSharedAfter, err := e2epod.CreateSync(ctx, fxt.K8SClientset, sharedAfter)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
-				gomega.Eventually(func() bool {
-					pod, getErr := fxt.K8SClientset.CoreV1().Pods(createdSharedAfter.Namespace).Get(ctx, createdSharedAfter.Name, metav1.GetOptions{})
-					if getErr != nil || pod.Status.Phase == v1.PodRunning || len(pod.Status.ContainerStatuses) == 0 {
-						return false
-					}
-					waiting := pod.Status.ContainerStatuses[0].State.Waiting
-					return waiting != nil && strings.Contains(waiting.Message, "no shared CPUs available")
-				}).WithTimeout(time.Minute).WithPolling(2*time.Second).Should(gomega.BeTrue(), "a shared pod created with an empty shared pool must be rejected by the driver")
+				verifySharedPoolMatches(ctx, fxt, createdSharedAfter, availableCPUs.Difference(exclusiveAllocation))
 			})
 
 			ginkgo.It("should allocate non-overlapping CPUs for multiple requests in the same grouped claim", func(ctx context.Context) {

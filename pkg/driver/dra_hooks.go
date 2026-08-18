@@ -193,6 +193,13 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		return kubeletplugin.PrepareResult{}
 	}
 
+	// Refuse to exhaust the shared pool while shared containers are running: NRI
+	// cannot represent an empty CPUSet, so an emptied pool would leave shared
+	// containers with unsafe affinity (see #295).
+	if len(cp.podConfigStore.GetContainersWithSharedCPUs()) > 0 && allocatableCPUs.Difference(cpuAssignment).IsEmpty() {
+		return kubeletplugin.PrepareResult{Err: fmt.Errorf("claim %q would exhaust the shared CPU pool while shared containers are running", claim.UID)}
+	}
+
 	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.
 	if err := cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claim.UID, cpuAssignment); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
@@ -253,6 +260,13 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 		return kubeletplugin.PrepareResult{
 			Err: fmt.Errorf("claim %s/%s has overlapping device assignment with other claims", claim.Namespace, claim.Name),
 		}
+	}
+
+	// Refuse to exhaust the shared pool while shared containers are running: NRI
+	// cannot represent an empty CPUSet, so an emptied pool would leave shared
+	// containers with unsafe affinity (see #295).
+	if len(cp.podConfigStore.GetContainersWithSharedCPUs()) > 0 && allocatableCPUs.Difference(claimCPUSet).IsEmpty() {
+		return kubeletplugin.PrepareResult{Err: fmt.Errorf("claim %q would exhaust the shared CPU pool while shared containers are running", claim.UID)}
 	}
 
 	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.

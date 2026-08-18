@@ -450,7 +450,7 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 	require.True(t, cpuStore.GetSharedCPUs().Equals(cpuset.New(2, 3)))
 }
 
-func TestGuaranteedContainerRestartRejectsInconsistentEmptySharedPool(t *testing.T) {
+func TestGuaranteedContainerRestartNotBlockedByEmptySharedPool(t *testing.T) {
 	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3)
 	infos := make([]cpuinfo.CPUInfo, 0, allCPUs.Size())
@@ -482,11 +482,13 @@ func TestGuaranteedContainerRestartRejectsInconsistentEmptySharedPool(t *testing
 		Env:          []string{fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, allCPUs.String())},
 	}
 
+	// An existing exclusive container may restart even if the shared pool is
+	// empty: restart does not emit shared-container updates, and exhausting the
+	// shared pool is rejected earlier during DRA claim preparation.
 	adjustment, updates, err := driver.CreateContainer(context.Background(), pod, container)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "cannot update shared containers: no shared CPUs available")
-	require.Nil(t, adjustment)
-	require.Nil(t, updates)
+	require.NoError(t, err)
+	require.NotNil(t, adjustment)
+	require.Empty(t, updates)
 	require.Equal(t, 1, claimTracker.Len(), "an existing owner must not be removed on restart rejection")
 }
 

@@ -177,25 +177,18 @@ func validateSynchronizedClaimAllocation(logger logr.Logger, uid types.UID, cpus
 	return nil
 }
 
-func validateSharedCPUAvailability(sharedCPUs, preparedCPUs cpuset.CPUSet, sharedCPUContainers []types.UID) error {
+func (cp *CPUDriver) getSharedContainerUpdates(logger logr.Logger, excludeID types.UID) ([]*api.ContainerUpdate, error) {
+	updates := []*api.ContainerUpdate{}
+	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
+	preparedCPUs := cp.cpuAllocationStore.GetPreparedCPUs()
+	sharedCPUContainers := cp.podConfigStore.GetContainersWithSharedCPUs()
 	// An empty CPUSet is serialized by NRI as Cpus="", which means "do not
 	// change the current CPUSet" rather than "clear the CPUSet". Never emit
 	// that update while a prepared DRA allocation has exhausted the pool and
 	// shared containers still exist. An empty pool with no prepared allocation
 	// is valid when the node has no driver-managed CPUs.
 	if sharedCPUs.IsEmpty() && !preparedCPUs.IsEmpty() && len(sharedCPUContainers) > 0 {
-		return fmt.Errorf("cannot update shared containers: no shared CPUs available")
-	}
-	return nil
-}
-
-func (cp *CPUDriver) getSharedContainerUpdates(logger logr.Logger, excludeID types.UID) ([]*api.ContainerUpdate, error) {
-	updates := []*api.ContainerUpdate{}
-	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
-	preparedCPUs := cp.cpuAllocationStore.GetPreparedCPUs()
-	sharedCPUContainers := cp.podConfigStore.GetContainersWithSharedCPUs()
-	if err := validateSharedCPUAvailability(sharedCPUs, preparedCPUs, sharedCPUContainers); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("cannot update shared containers: no shared CPUs available")
 	}
 	logger.V(2).Info("updating CPU allocation for containers without guaranteed CPUs", "sharedCPUs", sharedCPUs.String())
 	for _, containerUID := range sharedCPUContainers {
@@ -264,19 +257,14 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		logger.V(2).Info("guaranteed CPUs found", "cpus", guaranteedCPUs.String())
 		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs...)
 		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
-		// A new owner means this is the first CreateContainer after Prepare. On restart,
-		// the owner already exists and the shared cpuset has not changed.
+		// A new owner means this is the first CreateContainer after Prepare, so
+		// existing shared containers must be moved off the newly claimed CPUs.
+		// On restart the owner already exists and no shared-container updates are
+		// needed.
 		if len(newOwners) > 0 {
 			updates, err = cp.getSharedContainerUpdates(logger, containerId)
 			if err != nil {
 				cp.claimTracker.Cleanup(newOwners...)
-				return nil, nil, err
-			}
-		} else {
-			// A restarted container normally does not need shared-container updates,
-			// but it must not be admitted into an already inconsistent state left by
-			// an empty shared pool and running shared containers.
-			if err := validateSharedCPUAvailability(cp.cpuAllocationStore.GetSharedCPUs(), cp.cpuAllocationStore.GetPreparedCPUs(), cp.podConfigStore.GetContainersWithSharedCPUs()); err != nil {
 				return nil, nil, err
 			}
 		}
