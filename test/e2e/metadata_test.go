@@ -33,6 +33,7 @@ import (
 	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/dynamic-resource-allocation/deviceattribute"
 )
 
 type metadataEntry struct {
@@ -165,7 +166,9 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 				expectIntAttr(dev.Attributes, "dra.cpu/cpuID")
 				expectIntAttr(dev.Attributes, "dra.cpu/coreID")
 				expectIntAttr(dev.Attributes, "dra.cpu/socketID")
+				expectIntAttr(dev.Attributes, string(deviceattribute.StandardDeviceAttributeNUMANode))
 				expectIntAttr(dev.Attributes, "dra.cpu/numaNodeID")
+				expectIntAttr(dev.Attributes, "dra.net/numaNode")
 				expectIntAttr(dev.Attributes, "dra.cpu/cacheL3ID")
 				expectStringAttr(dev.Attributes, "dra.cpu/coreType")
 				expectBoolAttr(dev.Attributes, "dra.cpu/smtEnabled")
@@ -177,7 +180,9 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 				case device.GROUP_BY_SOCKET:
 					expectIntAttr(dev.Attributes, "dra.cpu/socketID")
 				default: // NUMA node (default when groupBy is "" or "numanode")
+					expectIntAttr(dev.Attributes, string(deviceattribute.StandardDeviceAttributeNUMANode))
 					expectIntAttr(dev.Attributes, "dra.cpu/numaNodeID")
+					expectIntAttr(dev.Attributes, "dra.net/numaNode")
 					expectIntAttr(dev.Attributes, "dra.cpu/socketID")
 				}
 			}
