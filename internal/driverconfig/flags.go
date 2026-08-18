@@ -111,6 +111,10 @@ func (c Config) Validate() error {
 				c.GroupBy, device.GROUP_BY_SOCKET, device.GROUP_BY_NUMA_NODE, device.GROUP_BY_MACHINE)
 		}
 	}
+	if c.Allocator != AllocatorExternal && c.Allocator != AllocatorCPUManager {
+		return fmt.Errorf("invalid allocator %q: must be %q or %q",
+			c.Allocator, AllocatorExternal, AllocatorCPUManager)
+	}
 	// The kubelet root becomes socket and mount locations, so a relative path
 	// would resolve against the working directory and silently break
 	// registration.

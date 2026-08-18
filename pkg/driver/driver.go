@@ -29,8 +29,11 @@ import (
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpumanager"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/extalloc"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
@@ -75,6 +78,32 @@ type CPUInfoProvider interface {
 	GetCPUTopology(logger logr.Logger) (*cpuinfo.CPUTopology, error)
 }
 
+// CPUAllocator abstracts the behavior of a cpu allocator code. The caller MUST call
+// * Allocate - to get the optimal (according to the backend policy) set of the given size within the available set
+// * Validate - to ensure the optimal set returned by Allocate is consistent with in-flight and consolidated allocations
+// GetPreferredCPUs is optional and allows the users (or external scheduler) to specify which available CPUs should
+// be prioritized in the current allocation. The caller CAN call it, and if it does, it MUST call it first, before
+// Allocate; the caller should then feed the preferred CPUs to Allocate(). If the caller doesn't need or want
+// to call GetPreferredCPUs, it must use an empty CPU set where preferred CPUs are required.
+type CPUAllocator interface {
+	// Allocate produces a cpuset from the given `availableCPUs` of `count` items. `availableCPUs` must be non-empty;
+	// if it is or contains less than `count` CPUs, the allocation fails and `err` is non-nil.
+	// `preferredCPUs` optionally provides a set of CPUs the allocator must include in the returned set.
+	// if `preferredCPUs` is empty, is ignored. `preferredCPUs` must be a subset of `availableCPUs`.
+	Allocate(logger logr.Logger, availableCPUs, preferredCPUs cpuset.CPUSet, count int) (cpuset.CPUSet, error)
+	// GetPreferredCPUs extract from the allocation data extracted from the DRA request the preferred CPU set.
+	// If and how the preferred CPU set is represented, or if supported at all, is allocator-specific.
+	// If an allocator does not support a preferred CPU set, it must return empty set and no error.
+	// Returns error if the preferred CPU set is expressed with a wrong syntax, or if it violates general
+	// constraints (e.g. an offline CPU is in the preferred set) or allocator-specific constraints.
+	GetPreferredCPUs(logger logr.Logger, allocation *resourceapi.AllocationResult, alloc resourceapi.DeviceRequestAllocationResult, count int) (cpuset.CPUSet, error)
+	// Validate verifies performed allocation is consistent with all the other active
+	// claims already prepared on this node (preparedCPUs) and with the other allocations
+	// performed in the same batch (assignedCPUs, claim asking for two or more allocations).
+	// Returns error detailing the inconsistency, nil if the allocation is correct.
+	Validate(preferredCPUs, preparedCPUs, assignedCPUs cpuset.CPUSet) error
+}
+
 // CPUDriver is the structure that holds all the driver runtime information.
 type CPUDriver struct {
 	driverName              string
@@ -92,8 +121,8 @@ type CPUDriver struct {
 	pcieRootMapper          *store.PCIeRootMapper
 	devicesPerResourceSlice int
 	metrics                 cpumetrics.Recorder
-
-	kubeletRootDir string
+	kubeletRootDir          string
+	cpuAllocator            CPUAllocator
 }
 
 // deviceTopology holds the CPU topology and device-to-CPU/socket/NUMA
@@ -136,6 +165,7 @@ type Config struct {
 	ReservedCPUs     cpuset.CPUSet
 	CPUDeviceMode    string
 	CPUDeviceGroupBy string
+	Allocator        string
 	ExposePCIeRoots  bool
 	Metrics          cpumetrics.Recorder
 	// KubeletRootDir is the kubelet root directory, from which the registrar
@@ -211,6 +241,15 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.topology.cpuTopology, config.ReservedCPUs)
 	plugin.refreshAllocationMetrics()
 	plugin.podConfigStore = store.NewPodConfig()
+
+	allocMode := findAllocatorMode(logger, config)
+	logger.Info("creating CPU allocator", "method", allocMode)
+	switch allocMode {
+	case driverconfig.AllocatorExternal:
+		plugin.cpuAllocator = extalloc.NewAllocator(config.DriverName, topo, plugin.topology.onlineCPUs, config.ReservedCPUs)
+	default:
+		plugin.cpuAllocator = cpumanager.NewAllocator(config.DriverName, topo)
+	}
 
 	var devices []resourceapi.Device
 
@@ -427,4 +466,16 @@ func generateShortID(length int) string {
 		b[i] = hexDigits[rand.IntN(len(hexDigits))] //nolint:gosec
 	}
 	return string(b)
+}
+
+func findAllocatorMode(logger logr.Logger, config *Config) string {
+	if config.Allocator == driverconfig.AllocatorExternal {
+		// easy case: explicit user preference
+		return config.Allocator
+	}
+	if config.CPUDeviceMode == device.CPU_DEVICE_MODE_GROUPED && config.CPUDeviceGroupBy == device.GROUP_BY_MACHINE {
+		logger.Info("machine grouping in grouped device mode requires external allocator, forcing")
+		return driverconfig.AllocatorExternal
+	}
+	return driverconfig.AllocatorCPUManager
 }
