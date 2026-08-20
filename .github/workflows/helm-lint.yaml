@@ -6,6 +6,25 @@ on:
       - 'deployment/helm/**'
       - 'internal/driverconfig/**'
       - 'tools/gen-driverconfig-schema/**'
+      # Read by test/render: the driver name sets the registrar socket name and
+      # the byte budget left for the root, the flag registrations are what the
+      # rendered command line is parsed against, and the image decides whether
+      # the first argument is the program or a flag.
+      - 'cmd/dracpu/**'
+      - 'internal/ctxlog/**'
+      - 'Dockerfile'
+      - 'test/render/**'
+      # Read by test/render as well: the workflow decides whether both kubelet
+      # roots are still exercised, and the two kind configs have to stay a
+      # controlled experiment where only the root differs.
+      - '.github/workflows/helm-e2e.yaml'
+      - 'hack/ci/kind-ci.yaml'
+      - 'hack/ci/kind-ci-relocated-root.yaml'
+      # The check runs through a Makefile target and is a Go test, so both can
+      # change what it does without any of the paths above moving.
+      - 'Makefile'
+      - 'go.mod'
+      - 'go.sum'
       - '.github/workflows/helm-lint.yaml'
 
 jobs:
@@ -24,6 +43,9 @@ jobs:
 
       - name: Run Helm lint
         run: make helm-lint
+
+      - name: Check the kubelet root derives the chart mounts and driver flag
+        run: make helm-render-check
 
       - name: Check helm-docs is up to date
         run: make helm-docs-check
