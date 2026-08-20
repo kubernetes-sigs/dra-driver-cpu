@@ -103,6 +103,13 @@ func getCDIDeviceName(uid types.UID) string {
 	return fmt.Sprintf("claim-%s", uid)
 }
 
+// reserveResourceClaimAllocation records a new claim allocation while applying
+// the shared-pool guard for currently running shared containers.
+func (cp *CPUDriver) reserveResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet) error {
+	hasSharedContainers := len(cp.podConfigStore.GetContainersWithSharedCPUs()) > 0
+	return cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claimUID, cpus, hasSharedContainers)
+}
+
 func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
 	logger.V(4).Info("preparing grouped resource claim")
 
@@ -193,15 +200,8 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		return kubeletplugin.PrepareResult{}
 	}
 
-	// Refuse to exhaust the shared pool while shared containers are running: NRI
-	// cannot represent an empty CPUSet, so an emptied pool would leave shared
-	// containers with unsafe affinity (see #295).
-	if len(cp.podConfigStore.GetContainersWithSharedCPUs()) > 0 && allocatableCPUs.Difference(cpuAssignment).IsEmpty() {
-		return kubeletplugin.PrepareResult{Err: fmt.Errorf("claim %q would exhaust the shared CPU pool while shared containers are running", claim.UID)}
-	}
-
 	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.
-	if err := cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claim.UID, cpuAssignment); err != nil {
+	if err := cp.reserveResourceClaimAllocation(logger, claim.UID, cpuAssignment); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
 	result := cp.prepareDevices(logger, claim, cpuAssignment)
@@ -262,15 +262,8 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 		}
 	}
 
-	// Refuse to exhaust the shared pool while shared containers are running: NRI
-	// cannot represent an empty CPUSet, so an emptied pool would leave shared
-	// containers with unsafe affinity (see #295).
-	if len(cp.podConfigStore.GetContainersWithSharedCPUs()) > 0 && allocatableCPUs.Difference(claimCPUSet).IsEmpty() {
-		return kubeletplugin.PrepareResult{Err: fmt.Errorf("claim %q would exhaust the shared CPU pool while shared containers are running", claim.UID)}
-	}
-
 	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.
-	if err := cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claim.UID, claimCPUSet); err != nil {
+	if err := cp.reserveResourceClaimAllocation(logger, claim.UID, claimCPUSet); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
 	result := cp.prepareDevices(logger, claim, claimCPUSet)

@@ -61,8 +61,10 @@ func NewCPUAllocation(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUS
 }
 
 // ReserveResourceClaimAllocation records a prepared claim. Its CPUs remain unavailable
-// to shared containers and other exclusive claims until Unprepare.
-func (s *CPUAllocation) ReserveResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet) error {
+// to shared containers and other exclusive claims until Unprepare. When shared
+// containers are present, the reservation must leave at least one CPU in the
+// shared pool because NRI cannot represent an empty CPUSet.
+func (s *CPUAllocation) ReserveResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet, hasSharedContainers bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if allocation, ok := s.resourceClaimAllocations[claimUID]; ok {
@@ -71,8 +73,12 @@ func (s *CPUAllocation) ReserveResourceClaimAllocation(logger logr.Logger, claim
 		}
 		return fmt.Errorf("claim %q is already prepared with CPUs %q (requested %q)", claimUID, allocation.String(), cpus.String())
 	}
-	if !cpus.IsSubsetOf(s.availableCPUs.Difference(s.preparedCPUs)) {
+	sharedCPUs := s.availableCPUs.Difference(s.preparedCPUs)
+	if !cpus.IsSubsetOf(sharedCPUs) {
 		return fmt.Errorf("claim %q has overlapping CPU assignment %q", claimUID, cpus.String())
+	}
+	if hasSharedContainers && !cpus.IsEmpty() && sharedCPUs.Difference(cpus).IsEmpty() {
+		return fmt.Errorf("claim %q would exhaust the shared CPU pool while shared containers are running", claimUID)
 	}
 	s.resourceClaimAllocations[claimUID] = cpus
 	s.preparedCPUs = s.preparedCPUs.Union(cpus)

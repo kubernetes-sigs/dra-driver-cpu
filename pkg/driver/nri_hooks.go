@@ -82,7 +82,9 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 					caLogger.Error(err, "ignoring invalid claim allocation during synchronize")
 					continue
 				}
-				if err := cpuAllocationStore.ReserveResourceClaimAllocation(caLogger, uid, cpus); err != nil {
+				// Synchronize restores an allocation that already exists in the runtime;
+				// the shared-pool guard applies only to new reservations.
+				if err := cpuAllocationStore.ReserveResourceClaimAllocation(caLogger, uid, cpus, false); err != nil {
 					return nil, err
 				}
 

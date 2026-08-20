@@ -52,7 +52,7 @@ const (
 
 func requirePreparedResourceClaim(t testing.TB, logger logr.Logger, allocationStore *store.CPUAllocation, claimUID types.UID, cpus cpuset.CPUSet) {
 	t.Helper()
-	require.NoError(t, allocationStore.ReserveResourceClaimAllocation(logger, claimUID, cpus))
+	require.NoError(t, allocationStore.ReserveResourceClaimAllocation(logger, claimUID, cpus, false))
 }
 
 // testSysFS enables full isolation and full mocking from the host filesystem.

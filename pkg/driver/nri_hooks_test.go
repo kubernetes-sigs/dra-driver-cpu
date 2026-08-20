@@ -389,7 +389,7 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 	claimUID := types.UID("claim-restart")
 	claimCPUs := cpuset.New(0, 1)
 	cpuStore := store.NewCPUAllocation(topo, cpuset.New())
-	require.NoError(t, cpuStore.ReserveResourceClaimAllocation(logger, claimUID, claimCPUs))
+	require.NoError(t, cpuStore.ReserveResourceClaimAllocation(logger, claimUID, claimCPUs, false))
 	driver := &CPUDriver{
 		podConfigStore:     store.NewPodConfig(),
 		cpuAllocationStore: cpuStore,
@@ -462,7 +462,7 @@ func TestGuaranteedContainerRestartNotBlockedByEmptySharedPool(t *testing.T) {
 
 	claimUID := types.UID("claim-full")
 	cpuStore := store.NewCPUAllocation(topo, cpuset.New())
-	require.NoError(t, cpuStore.ReserveResourceClaimAllocation(logger, claimUID, allCPUs))
+	require.NoError(t, cpuStore.ReserveResourceClaimAllocation(logger, claimUID, allCPUs, false))
 	claimTracker := store.NewClaimTracker()
 	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod", Name: "pod", Namespace: "ns"}
 	_, err = claimTracker.SetOwner(logger, types.UID(pod.Uid), "app", claimUID)
