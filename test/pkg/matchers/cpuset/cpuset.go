@@ -17,6 +17,9 @@ limitations under the License.
 package cpuset
 
 import (
+	"fmt"
+
+	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/onsi/gomega/gcustom"
 	"github.com/onsi/gomega/types"
 	"k8s.io/utils/cpuset"
@@ -48,4 +51,22 @@ func HaveSize(expected int) types.GomegaMatcher {
 	return gcustom.MakeMatcher(func(actual cpuset.CPUSet) (bool, error) {
 		return actual.Size() == expected, nil
 	}).WithTemplate("Expected CPUSet\n\t{{.FormattedActual}}\nto have size {{.Data}} but got size {{.Actual.Size}}", expected)
+}
+
+func BeDistributedAcrossNUMANodes(numaInfo map[int]discovery.DRACPUNUMAInfo, expectedSpread int) types.GomegaMatcher {
+	return gcustom.MakeMatcher(func(actual cpuset.CPUSet) (bool, error) {
+		distribution := make(map[int]int)
+		for node, info := range numaInfo {
+			cpuCount := info.CPUs.Intersection(actual).Size()
+			if cpuCount == 0 {
+				continue
+			}
+			distribution[node] = cpuCount
+		}
+		if len(distribution) != expectedSpread {
+			return false, fmt.Errorf("NUMA distribution does not match expected spread %d  across active nodes: %v", expectedSpread, distribution)
+		}
+		// TODO: also check the spread is even, not skewed
+		return true, nil
+	}).WithTemplate("Expected CPUSet\n\t{{.FormattedActual}}\nto be spread as evenly as possible across NUMA nodes {{format .Data}}", numaInfo)
 }
