@@ -134,3 +134,11 @@ Kubernetes `status.extendedResourceClaimStatus` is for DRA-backed extended resou
 For example, a Pod that references a CPU `ResourceClaim` explicitly through `containers[].resources.claims` follows this driver's supported path. A Pod that only patches `status.extendedResourceClaimStatus` with `requestMappings[].resourceName: cpu` does not, because `cpu` is a native resource rather than a DRA-backed extended resource.
 
 For integrations that model native `cpu`, use the Kubernetes node-allocatable DRA status path when available instead.
+
+## Device Health Reporting
+
+The driver reports the health of every device it manages to the kubelet over the DRA `WatchHealthStatus` gRPC API, so the kubelet can reflect it in `pod.status.containerStatuses[].allocatedResourcesStatus`.
+
+- `Healthy`: the default state. The driver has not observed any failure for this device.
+- `Unhealthy`: reserved for failures attributable to the device itself. The driver does not currently report this for any condition. A claim that fails to prepare (for example, a CDI spec write error) surfaces as a claim error instead, not a device health change.
+- `Unknown`: reported by the kubelet itself and not the driver, when it stops receiving health updates for a device within its lease window (for example, if the driver process is down).
