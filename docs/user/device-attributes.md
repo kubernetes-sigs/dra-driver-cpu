@@ -17,21 +17,32 @@ CPU group, `individual` one device per CPU.
 
 ### Grouped mode (default)
 
+#### Currently supported attributes
+
 | Attribute                         | Type    | Description                                                                                                    |
 | --------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------- |
 | `resource.kubernetes.io/numaNode` | int     | Standard NUMA node of the group (published when grouping by NUMA node)                                         |
-| `dra.cpu/numaNodeID`              | int     | Legacy driver-specific NUMA node attribute (NUMA grouping)                                                     |
 | `dra.cpu/socketID`                | int     | CPU socket of the group (published when grouping by NUMA node or socket)                                       |
 | `dra.cpu/numCPUs`                 | int     | CPUs available in the group                                                                                    |
 | `dra.cpu/smtEnabled`              | bool    | Whether SMT/hyper-threading is enabled on the node                                                             |
-| `dra.net/numaNode`                | int     | Legacy cross-driver NUMA alignment attribute (NUMA grouping)                                                  |
 | `resource.kubernetes.io/pcieRoot` | strings | PCIe roots local to the group's CPUs; needs `--expose-pcie-roots` and the `DRAListTypeAttributes` feature gate |
+
+#### Legacy attributes (deprecated)
+
+These compatibility attributes will be removed in a future version:
+
+| Attribute            | Type | Description                                                    |
+| -------------------- | ---- | -------------------------------------------------------------- |
+| `dra.cpu/numaNodeID` | int  | Driver-specific NUMA node attribute (NUMA grouping)            |
+| `dra.net/numaNode`   | int  | Cross-driver NUMA alignment attribute (NUMA grouping)          |
 
 Grouped devices also expose the consumable capacity `dra.cpu/cpu` — the number of CPUs
 claimable from the group. With `groupBy: machine`, only `numCPUs`, `smtEnabled`, and — when
 `--expose-pcie-roots` is enabled — `resource.kubernetes.io/pcieRoot` are published.
 
 ### Individual mode
+
+#### Currently supported attributes
 
 | Attribute                         | Type    | Description                                                                                           |
 | --------------------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
@@ -40,11 +51,18 @@ claimable from the group. With `groupBy: machine`, only `numCPUs`, `smtEnabled`,
 | `dra.cpu/coreType`                | string  | `standard`, `p-core`, or `e-core`                                                                     |
 | `dra.cpu/cacheL3ID`               | int     | L3 (last-level/uncore) cache group                                                                    |
 | `resource.kubernetes.io/numaNode` | int     | Standard NUMA node                                                                                    |
-| `dra.cpu/numaNodeID`              | int     | Legacy driver-specific NUMA node attribute                                                            |
 | `dra.cpu/socketID`                | int     | CPU socket                                                                                            |
 | `dra.cpu/smtEnabled`              | bool    | Whether SMT/hyper-threading is enabled on the node                                                    |
-| `dra.net/numaNode`                | int     | Legacy cross-driver NUMA alignment attribute                                                          |
 | `resource.kubernetes.io/pcieRoot` | strings | PCIe roots local to the CPU; needs `--expose-pcie-roots` and the `DRAListTypeAttributes` feature gate |
+
+#### Legacy attributes (deprecated)
+
+These compatibility attributes will be removed in a future version:
+
+| Attribute            | Type | Description                           |
+| -------------------- | ---- | ------------------------------------- |
+| `dra.cpu/numaNodeID` | int  | Driver-specific NUMA node attribute   |
+| `dra.net/numaNode`   | int  | Cross-driver NUMA alignment attribute |
 
 `resource.kubernetes.io/pcieRoot` is intended for cross-driver co-location via
 `matchAttribute` — see [Feature Support](feature-support.md#exposing-pcie-roots) for details
