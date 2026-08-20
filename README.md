@@ -55,7 +55,7 @@ spec:
         selectors:
         # Only allocate CPUs on NUMA node 0
         - cel:
-            expression: device.attributes["dra.cpu"].numaNodeID == 0
+            expression: device.attributes["resource.kubernetes.io"].numaNode == 0
 ---
 apiVersion: v1
 kind: Pod
@@ -138,9 +138,11 @@ spec:
 ```
 
 PCIe root attributes are opt-in — see
-[Feature Support](docs/user/feature-support.md#exposing-pcie-roots). CPUs and DraNet NICs
-can also be aligned per NUMA node through the shared `dra.net/numaNode` attribute. For all
-selectable attributes and more example claims, see
+[Feature Support](docs/user/feature-support.md#exposing-pcie-roots). CPUs and other
+DRA-managed devices can also be aligned per NUMA node through the standard
+`resource.kubernetes.io/numaNode` attribute. The driver-specific `dra.cpu/numaNodeID` and
+`dra.net/numaNode` attributes remain available for compatibility. For all selectable
+attributes and more example claims, see
 [Device Attributes and Selectors](docs/user/device-attributes.md). Coming from the kubelet
 CPU Manager? See the
 [option-by-option mapping](docs/user/feature-support.md#matching-cpu-manager-options).

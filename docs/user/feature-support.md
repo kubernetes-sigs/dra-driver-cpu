@@ -75,7 +75,7 @@ spec:
             dra.cpu/cpu: "10"
         selectors:
         - cel:
-            expression: device.attributes["dra.cpu"].numaNodeID == 0
+            expression: device.attributes["resource.kubernetes.io"].numaNode == 0
     - name: numa1-cpus
       exactly:
         deviceClassName: dra.cpu
@@ -84,7 +84,7 @@ spec:
             dra.cpu/cpu: "10"
         selectors:
         - cel:
-            expression: device.attributes["dra.cpu"].numaNodeID == 1
+            expression: device.attributes["resource.kubernetes.io"].numaNode == 1
 ```
 
 However, this is only a partial replacement of the corresponding CPU Manager option. The main problem of this approach is that it leaks assumptions about machine properties.
@@ -145,7 +145,7 @@ spec:
     attributes:
       dra.cpu/numCPUs:
         int: 31
-      dra.cpu/numaNodeID:
+      resource.kubernetes.io/numaNode:
         int: 0
       resource.kubernetes.io/pcieRoot:
         strings:
@@ -155,6 +155,8 @@ spec:
       dra.cpu/socketID:
         int: 0
       dra.net/numaNode:
+        int: 0
+      dra.cpu/numaNodeID:
         int: 0
     capacity:
       dra.cpu/cpu:
