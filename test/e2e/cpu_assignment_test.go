@@ -227,10 +227,10 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 				fixture.By("creating a second best-effort reference pod")
 				shrPod2 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
-				verifySharedPoolMatches(ctx, fxt, shrPod2, expectedSharedCPUs)
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod2)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(expectedSharedCPUs), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", e2epod.Identify(shrPod2))
 
 				ginkgo.By("checking the CPU pool of the best-effort pod created before the pods with CPU resource claims")
-				verifySharedPoolMatches(ctx, fxt, shrPod1, expectedSharedCPUs)
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod1)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(expectedSharedCPUs), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", e2epod.Identify(shrPod1))
 
 				fixture.By("deleting the pods with exclusive CPUs")
 				for _, pod := range exclPods {
@@ -238,8 +238,8 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				}
 
 				ginkgo.By("checking existing shared containers keep their last cpuset until the next CreateContainer or Synchronize")
-				verifySharedPoolMatches(ctx, fxt, shrPod1, expectedSharedCPUs)
-				verifySharedPoolMatches(ctx, fxt, shrPod2, expectedSharedCPUs)
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod1)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(expectedSharedCPUs), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", e2epod.Identify(shrPod1))
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod2)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(expectedSharedCPUs), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", e2epod.Identify(shrPod2))
 			})
 
 			ginkgo.It("should allocate non-overlapping CPUs for multiple requests in the same grouped claim", func(ctx context.Context) {
@@ -525,7 +525,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 				fixture.By("creating a best-effort pod")
 				shrPod1 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
-				verifySharedPoolMatches(ctx, fxt, shrPod1, availableCPUs)
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod1)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(availableCPUs), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", e2epod.Identify(shrPod1))
 
 				claimsAndCPUSets := []struct {
 					name   string
@@ -566,10 +566,10 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 				fixture.By("creating a second best-effort pod")
 				shrPod2 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
-				verifySharedPoolMatches(ctx, fxt, shrPod2, expectedSharedCPUs)
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod2)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(expectedSharedCPUs), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", e2epod.Identify(shrPod2))
 
 				ginkgo.By("checking the CPU pool of the best-effort pod created before the pods with CPU resource claims")
-				verifySharedPoolMatches(ctx, fxt, shrPod1, expectedSharedCPUs)
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod1)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(expectedSharedCPUs), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", e2epod.Identify(shrPod1))
 
 				fixture.By("deleting the pods with exclusive CPUs")
 				for _, pod := range exclPods {
@@ -577,19 +577,17 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				}
 
 				ginkgo.By("checking existing shared containers keep their last cpuset until the next CreateContainer or Synchronize")
-				verifySharedPoolMatches(ctx, fxt, shrPod1, expectedSharedCPUs)
-				verifySharedPoolMatches(ctx, fxt, shrPod2, expectedSharedCPUs)
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod1)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(expectedSharedCPUs), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", e2epod.Identify(shrPod1))
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod2)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(expectedSharedCPUs), "the best-effort tester pod %s does not have access to the exclusively allocated CPUs", e2epod.Identify(shrPod2))
 			})
 		})
 	})
 })
 
-func verifySharedPoolMatches(ctx context.Context, fxt *fixture.Fixture, sharedPod *v1.Pod, expectedSharedCPUs cpuset.CPUSet) {
-	ginkgo.GinkgoHelper()
-	fixture.By("checking the CPU pool of the best-effort tester pod %s matches expected %s", e2epod.Identify(sharedPod), expectedSharedCPUs.String())
-	gomega.Eventually(func() cpuset.CPUSet {
-		sharedAllocUpdated := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, sharedPod)
-		fxt.Log.Info("checking shared allocation", "pod", e2epod.Identify(sharedPod), "cpuAllocated", sharedAllocUpdated.CPUAssigned.String(), "cpuAffinity", sharedAllocUpdated.CPUAffinity.String())
-		return sharedAllocUpdated.CPUAssigned
-	}).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(expectedSharedCPUs), "the CPU pool of the best-effort tester pod %s does not match the expected shared CPUs", e2epod.Identify(sharedPod))
+func observeAssignedCPUs(ctx context.Context, fxt *fixture.Fixture, pod *v1.Pod) func() cpuset.CPUSet {
+	return func() cpuset.CPUSet {
+		alloc := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, pod)
+		fxt.Log.Info("checking shared allocation", "pod", e2epod.Identify(pod), "cpuAllocated", alloc.CPUAssigned.String(), "cpuAffinity", alloc.CPUAffinity.String())
+		return alloc.CPUAssigned
+	}
 }
