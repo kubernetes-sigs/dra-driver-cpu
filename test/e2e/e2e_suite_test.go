@@ -194,6 +194,14 @@ func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod
 	return ret
 }
 
+func observeAssignedCPUs(ctx context.Context, fxt *fixture.Fixture, pod *v1.Pod) func() cpuset.CPUSet {
+	return func() cpuset.CPUSet {
+		alloc := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, pod)
+		fxt.Log.Info("checking shared allocation", "pod", e2epod.Identify(pod), "cpuAllocated", alloc.CPUAssigned.String(), "cpuAffinity", alloc.CPUAffinity.String())
+		return alloc.CPUAssigned
+	}
+}
+
 // claimContainerResources returns the standard resources for a container using a CPU claim
 // of numCPUs, following docs/user/workload-requirements.md for the given mode:
 // with the node allocatable mapping the claim's CPUs must not be duplicated in the spec,
