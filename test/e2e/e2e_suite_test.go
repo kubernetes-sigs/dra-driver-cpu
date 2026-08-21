@@ -216,6 +216,27 @@ func claimContainerResources(numCPUs int64, nodeAllocatableMapping bool) (reques
 func makeTesterPodWithExclusiveCPUClaim(ns, image, cpuClaimTemplateName string, numCPUs int64, nodeName string, nodeAllocatableMapping bool) *v1.Pod {
 	ginkgo.GinkgoHelper()
 	requests, limits := claimContainerResources(numCPUs, nodeAllocatableMapping)
+	return makeTesterPodWithExclusiveCPUClaimResources(ns, image, cpuClaimTemplateName, nodeName, requests, limits)
+}
+
+// makeTesterPodWithExclusiveCPUClaimWithoutCPURequest deliberately omits the
+// ordinary CPU request/limit. This allows the scheduler to place all DRA
+// claims, so the test can exercise the driver's NRI handling when the shared
+// pool is exhausted. The mirrored CPU request/limit behavior is covered by
+// the regular claim tests and is expected to be scheduler-safe.
+func makeTesterPodWithExclusiveCPUClaimWithoutCPURequest(ns, image, cpuClaimTemplateName, nodeName string) *v1.Pod {
+	ginkgo.GinkgoHelper()
+	memQty, err := resource.ParseQuantity("256Mi")
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	return makeTesterPodWithExclusiveCPUClaimResources(
+		ns, image, cpuClaimTemplateName, nodeName,
+		v1.ResourceList{v1.ResourceMemory: memQty},
+		v1.ResourceList{v1.ResourceMemory: memQty},
+	)
+}
+
+func makeTesterPodWithExclusiveCPUClaimResources(ns, image, cpuClaimTemplateName, nodeName string, requests, limits v1.ResourceList) *v1.Pod {
+	ginkgo.GinkgoHelper()
 
 	podWithClaim := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

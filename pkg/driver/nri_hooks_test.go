@@ -177,6 +177,18 @@ func TestCreateContainer(t *testing.T) {
 			expectedContainerUpdates: []*api.ContainerUpdate{},
 		},
 		{
+			name:           "shared container is rejected when shared pool is empty",
+			podConfigStore: store.NewPodConfig(),
+			cpuAllocationStore: func() *store.CPUAllocation {
+				allocation := store.NewCPUAllocation(topo, cpuset.New())
+				requirePreparedResourceClaim(t, logger, allocation, types.UID(claimUID), allCPUs)
+				return allocation
+			}(),
+			claimTracker:          store.NewClaimTracker(),
+			container:             newTestContainer("", ""),
+			expectedErrorContains: "cannot create shared container: no shared CPUs available",
+		},
+		{
 			name: "guaranteed container triggers container adjustment and update for other shared container",
 			podConfigStore: func() *store.PodConfig {
 				conf := store.NewPodConfig()
@@ -204,6 +216,37 @@ func TestCreateContainer(t *testing.T) {
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1,4-7"}}},
 				},
 			},
+		},
+		{
+			name: "guaranteed container is rejected when it would empty an existing shared pool",
+			podConfigStore: func() *store.PodConfig {
+				conf := store.NewPodConfig()
+				conf.SetContainerState("shared-pod", store.NewContainerState("shared-ctr", "shared-uid"))
+				return conf
+			}(),
+			cpuAllocationStore: func() *store.CPUAllocation {
+				allocation := store.NewCPUAllocation(topo, cpuset.New())
+				requirePreparedResourceClaim(t, logger, allocation, types.UID(claimUID), allCPUs)
+				return allocation
+			}(),
+			claimTracker:          store.NewClaimTracker(),
+			container:             newTestContainer(claimUID, "0-7"),
+			expectedErrorContains: "cannot update shared containers: no shared CPUs available",
+		},
+		{
+			name:           "guaranteed container may consume the full pool when no shared containers exist",
+			podConfigStore: store.NewPodConfig(),
+			cpuAllocationStore: func() *store.CPUAllocation {
+				allocation := store.NewCPUAllocation(topo, cpuset.New())
+				requirePreparedResourceClaim(t, logger, allocation, types.UID(claimUID), allCPUs)
+				return allocation
+			}(),
+			claimTracker: store.NewClaimTracker(),
+			container:    newTestContainer(claimUID, "0-7"),
+			expectedContainerAdjustment: &api.ContainerAdjustment{
+				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
+			},
+			expectedContainerUpdates: []*api.ContainerUpdate{},
 		},
 		{
 			name:               "guaranteed container with malformed env fails closed",
@@ -262,6 +305,7 @@ func TestCreateContainer(t *testing.T) {
 				require.Nil(t, adjust)
 				require.Nil(t, updates)
 				require.Zero(t, tc.claimTracker.Len(), "failed CreateContainer must not retain claim owners")
+				require.Nil(t, tc.podConfigStore.GetContainerState(types.UID(pod.Uid), tc.container.Name), "failed CreateContainer must not retain container state")
 				return
 			}
 
@@ -345,7 +389,7 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 	claimUID := types.UID("claim-restart")
 	claimCPUs := cpuset.New(0, 1)
 	cpuStore := store.NewCPUAllocation(topo, cpuset.New())
-	require.NoError(t, cpuStore.ReserveResourceClaimAllocation(logger, claimUID, claimCPUs))
+	require.NoError(t, cpuStore.ReserveResourceClaimAllocation(logger, claimUID, claimCPUs, false))
 	driver := &CPUDriver{
 		podConfigStore:     store.NewPodConfig(),
 		cpuAllocationStore: cpuStore,
@@ -404,6 +448,48 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 	require.Empty(t, updates)
 	require.Nil(t, driver.podConfigStore.GetContainerState(types.UID(pod.Uid), restarted.Name))
 	require.True(t, cpuStore.GetSharedCPUs().Equals(cpuset.New(2, 3)))
+}
+
+func TestGuaranteedContainerRestartNotBlockedByEmptySharedPool(t *testing.T) {
+	logger := testr.New(t)
+	allCPUs := cpuset.New(0, 1, 2, 3)
+	infos := make([]cpuinfo.CPUInfo, 0, allCPUs.Size())
+	for _, cpuID := range allCPUs.UnsortedList() {
+		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
+	}
+	topo, err := (&cpuinfo.MockCPUInfoProvider{CPUInfos: infos}).GetCPUTopology(logger)
+	require.NoError(t, err)
+
+	claimUID := types.UID("claim-full")
+	cpuStore := store.NewCPUAllocation(topo, cpuset.New())
+	require.NoError(t, cpuStore.ReserveResourceClaimAllocation(logger, claimUID, allCPUs, false))
+	claimTracker := store.NewClaimTracker()
+	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod", Name: "pod", Namespace: "ns"}
+	_, err = claimTracker.SetOwner(logger, types.UID(pod.Uid), "app", claimUID)
+	require.NoError(t, err)
+
+	driver := &CPUDriver{
+		podConfigStore:     store.NewPodConfig(),
+		cpuAllocationStore: cpuStore,
+		claimTracker:       claimTracker,
+		topology:           deviceTopology{cpuTopology: topo},
+	}
+	driver.podConfigStore.SetContainerState("shared-pod", store.NewContainerState("shared", "shared-container"))
+	container := &api.Container{
+		Id:           "replacement",
+		PodSandboxId: pod.Id,
+		Name:         "app",
+		Env:          []string{fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, allCPUs.String())},
+	}
+
+	// An existing exclusive container may restart even if the shared pool is
+	// empty: restart does not emit shared-container updates, and exhausting the
+	// shared pool is rejected earlier during DRA claim preparation.
+	adjustment, updates, err := driver.CreateContainer(context.Background(), pod, container)
+	require.NoError(t, err)
+	require.NotNil(t, adjustment)
+	require.Empty(t, updates)
+	require.Equal(t, 1, claimTracker.Len(), "an existing owner must not be removed on restart rejection")
 }
 
 func TestNRISynchronize(t *testing.T) {
@@ -502,6 +588,25 @@ func TestNRISynchronize(t *testing.T) {
 					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
 				},
 			},
+		},
+		{
+			name: "synchronize rejects an empty shared pool with existing shared containers",
+			driver: &CPUDriver{
+				podConfigStore:     store.NewPodConfig(),
+				cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+				claimTracker:       store.NewClaimTracker(),
+				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+					"claim-full": allCPUs,
+				}),
+				topology: deviceTopology{cpuTopology: topo},
+			},
+			runtimePods: []*api.PodSandbox{pod1},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-full=%s", cdiEnvVarPrefix, allCPUs.String())}},
+				{Id: "p1-shared", PodSandboxId: pod1.Id, Name: "shared-ctr"},
+			},
+			expectedError:        "cannot update shared containers: no shared CPUs available",
+			expectedRefreshCalls: 1,
 		},
 		{
 			name: "only guaranteed containers",

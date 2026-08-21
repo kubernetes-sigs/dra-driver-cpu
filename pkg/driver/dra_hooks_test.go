@@ -52,7 +52,7 @@ const (
 
 func requirePreparedResourceClaim(t testing.TB, logger logr.Logger, allocationStore *store.CPUAllocation, claimUID types.UID, cpus cpuset.CPUSet) {
 	t.Helper()
-	require.NoError(t, allocationStore.ReserveResourceClaimAllocation(logger, claimUID, cpus))
+	require.NoError(t, allocationStore.ReserveResourceClaimAllocation(logger, claimUID, cpus, false))
 }
 
 // testSysFS enables full isolation and full mocking from the host filesystem.
@@ -835,6 +835,74 @@ func TestPrepareResourceClaims(t *testing.T) {
 	}
 }
 
+func TestPrepareResourceClaimsRejectsExhaustingSharedPool(t *testing.T) {
+	logger := testr.New(t)
+
+	newDriver := func(grouped bool) *CPUDriver {
+		t.Helper()
+		prov := Providers{
+			CPUInfo: &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT},
+			SysFS:   testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
+		}
+		conf := Config{
+			DriverName: testDriverName,
+			NodeName:   testNodeName,
+		}
+		if grouped {
+			conf.CPUDeviceMode = devattr.CPU_DEVICE_MODE_GROUPED
+			conf.CPUDeviceGroupBy = devattr.GROUP_BY_SOCKET
+		}
+		driver, err := New(logger, prov, &conf)
+		require.NoError(t, err)
+		driver.cdiMgr = newMockCdiMgr()
+		return driver
+	}
+
+	claimForAllCPUs := func(uid types.UID, grouped bool) *resourceapi.ResourceClaim {
+		if grouped {
+			return testClaim(uid, testDriverName, testNodeName, map[string]int64{"cpudevsocket000": 4})
+		}
+		return testClaimWithResults(uid, []resourceapi.DeviceRequestAllocationResult{
+			{Driver: testDriverName, Pool: testNodeName, Device: "cpudev000"},
+			{Driver: testDriverName, Pool: testNodeName, Device: "cpudev001"},
+			{Driver: testDriverName, Pool: testNodeName, Device: "cpudev002"},
+			{Driver: testDriverName, Pool: testNodeName, Device: "cpudev003"},
+		})
+	}
+
+	for _, grouped := range []bool{false, true} {
+		mode := "individual"
+		if grouped {
+			mode = "grouped"
+		}
+
+		t.Run(mode+": rejects a claim that would exhaust the shared pool while shared containers exist", func(t *testing.T) {
+			driver := newDriver(grouped)
+			driver.podConfigStore.SetContainerState("shared-pod", store.NewContainerState("shared-ctr", "shared-uid"))
+
+			prepared, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claimForAllCPUs("claim-full", grouped)})
+			require.NoError(t, err)
+			result := prepared[types.UID("claim-full")]
+			require.ErrorContains(t, result.Err, "would exhaust the shared CPU pool")
+			_, ok := driver.cpuAllocationStore.GetResourceClaimAllocation("claim-full")
+			require.False(t, ok, "rejected claim must not be recorded")
+			require.False(t, driver.cpuAllocationStore.GetSharedCPUs().IsEmpty(), "rejected claim must not shrink the shared pool")
+		})
+
+		t.Run(mode+": allows a claim that would exhaust the shared pool when no shared containers exist", func(t *testing.T) {
+			driver := newDriver(grouped)
+
+			prepared, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claimForAllCPUs("claim-full", grouped)})
+			require.NoError(t, err)
+			result := prepared[types.UID("claim-full")]
+			require.NoError(t, result.Err)
+			_, ok := driver.cpuAllocationStore.GetResourceClaimAllocation("claim-full")
+			require.True(t, ok)
+			require.True(t, driver.cpuAllocationStore.GetSharedCPUs().IsEmpty())
+		})
+	}
+}
+
 func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) {
 	logger := testr.New(t)
 	claimUID := types.UID("claim-cdi-fails")
@@ -855,6 +923,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 				},
 			},
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+			podConfigStore:     store.NewPodConfig(),
 		}
 		if withExistingAllocation {
 			requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, existingCPUs)
@@ -876,6 +945,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 				deviceNameToNUMANodeID: map[string]int{},
 			},
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
+			podConfigStore:     store.NewPodConfig(),
 		}
 		if withExistingAllocation {
 			requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, existingCPUs)
@@ -1521,6 +1591,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			},
 			cpuAllocationStore: cpuStore,
 			cdiMgr:             cdiMgr,
+			podConfigStore:     store.NewPodConfig(),
 		}, cpuStore, cdiMgr
 	}
 	makeNUMADriver := func(logger logr.Logger) (*CPUDriver, *store.CPUAllocation, *mockCdiMgr) {
@@ -1539,6 +1610,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			},
 			cpuAllocationStore: cpuStore,
 			cdiMgr:             cdiMgr,
+			podConfigStore:     store.NewPodConfig(),
 		}, cpuStore, cdiMgr
 	}
 
@@ -1737,6 +1809,7 @@ func newDriverWithAllocatedClaim(t *testing.T, logger logr.Logger, claimUID type
 		cdiMgr:             mockCdiMgr,
 		cpuAllocationStore: cpuAllocationStore,
 		claimTracker:       claimTracker,
+		podConfigStore:     store.NewPodConfig(),
 	}, mockCdiMgr
 }
 
@@ -2135,6 +2208,7 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 	driver.topology.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
 	driver.topology.onlineCPUs = driver.topology.cpuTopology.CPUDetails.CPUs()
 	driver.cpuAllocationStore = store.NewCPUAllocation(driver.topology.cpuTopology, reservedCPUs)
+	driver.podConfigStore = store.NewPodConfig()
 	for claimUID, cpus := range initialAllocations {
 		requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, cpus)
 	}
