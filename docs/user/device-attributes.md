@@ -31,10 +31,10 @@ CPU group, `individual` one device per CPU.
 
 These compatibility attributes will be removed in a future version:
 
-| Attribute            | Type | Description                                                    |
-| -------------------- | ---- | -------------------------------------------------------------- |
-| `dra.cpu/numaNodeID` | int  | Driver-specific NUMA node attribute (NUMA grouping)            |
-| `dra.net/numaNode`   | int  | Cross-driver NUMA alignment attribute (NUMA grouping)          |
+| Attribute            | Type | Description                                           |
+| -------------------- | ---- | ----------------------------------------------------- |
+| `dra.cpu/numaNodeID` | int  | Driver-specific NUMA node attribute (NUMA grouping)   |
+| `dra.net/numaNode`   | int  | Cross-driver NUMA alignment attribute (NUMA grouping) |
 
 Grouped devices also expose the consumable capacity `dra.cpu/cpu` — the number of CPUs
 claimable from the group. With `groupBy: machine`, only `numCPUs`, `smtEnabled`, and — when
@@ -358,5 +358,38 @@ spec:
 `distinctAttribute` is gated by `DRAConsumableCapacity` — the same feature gate the default
 `grouped` mode uses, enabled by default from Kubernetes 1.36.
 
-A complete claim splitting CPUs across two *specific* NUMA nodes with selectors is in
+Similarly, for equal-sized slices you can use a single request with `count` > 1.
+This repeats the same per-result capacity request multiple times. By itself,
+`count` does not guarantee spreading, but combined with `distinctAttribute` it
+can force the scheduler to place those results on different devices:
+
+```yaml
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: numa-spread-cpus
+spec:
+  devices:
+    requests:
+    - name: cpus-multi
+      exactly:
+        deviceClassName: dra.cpu
+        count: 2
+        capacity:
+          requests:
+            dra.cpu/cpu: "8"
+    constraints:
+    - requests: ["cpus-multi"]
+      distinctAttribute: resource.kubernetes.io/numaNode
+```
+
+For a longer discussion of the trade-offs of using `count` +
+`distinctAttribute` for NUMA spreading, see
 [Feature Support](feature-support.md#distributing-cpus-across-numa-nodes).
+
+**NOTE**: An important point to stress is the role of the `distinctAttribute` constraint.
+In grouped mode, all the exposed devices support multiple allocations. Therefore,
+without the constraint, the scheduler can pick the same device multiple times
+to fulfil the allocation request, if that device has enough remaining capacity.
+In turn, the driver supports this request shape and will honor the request,
+because it is valid and legal.

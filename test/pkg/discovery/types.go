@@ -17,8 +17,12 @@ limitations under the License.
 package discovery
 
 import (
+	"maps"
+	"slices"
+
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/buildinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"k8s.io/utils/cpuset"
 )
 
 type DRACPUBuildinfo struct {
@@ -38,6 +42,35 @@ type DRACPURuntimeinfo struct {
 type DRACPUInfo struct {
 	Buildinfo DRACPUBuildinfo   `json:"buildinfo"`
 	CPUs      []cpuinfo.CPUInfo `json:"cpus"`
+}
+
+type DRACPUNUMAInfo struct {
+	SocketID   int
+	NUMANodeID int
+	CPUs       cpuset.CPUSet
+}
+
+func (ci DRACPUInfo) ByNUMANode() map[int]DRACPUNUMAInfo {
+	tmp := make(map[int]DRACPUNUMAInfo)
+	for _, cpu := range ci.CPUs {
+		// systems with 8192 or more socket would already
+		// long broken the system in multiple places.
+		// 8192 is a random "high enough" value
+		key := cpu.SocketID*8192 + cpu.NUMANodeID
+		tmp[key] = DRACPUNUMAInfo{
+			SocketID:   cpu.SocketID,
+			NUMANodeID: cpu.NUMANodeID,
+			CPUs:       cpu.NumaNodeCPUSet,
+		}
+	}
+	nid := 0 // user friendlier computed unique ID
+	ret := make(map[int]DRACPUNUMAInfo)
+	keys := slices.Sorted(maps.Keys(tmp))
+	for _, key := range keys {
+		ret[nid] = tmp[key]
+		nid++
+	}
+	return ret
 }
 
 type DRACPUTester struct {
