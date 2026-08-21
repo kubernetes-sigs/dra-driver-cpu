@@ -358,7 +358,6 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 	// periodically (every healthResendInterval) resend device health so
 	// the kubelet's lease on it does not expire (see WatchHealthStatus in
 	// health.go)
-	cp.health.wg.Add(1)
 	go cp.healthResendLoop(ctx)
 
 	return asyncErr, nil
@@ -366,8 +365,7 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 
 // Stop stops the CPUDriver.
 func (cp *CPUDriver) Stop() {
-	close(cp.health.stopCh)
-	cp.health.wg.Wait()
+	cp.health.Stop()
 	cp.nriPlugin.Stop()
 	cp.draPlugin.Stop()
 }
