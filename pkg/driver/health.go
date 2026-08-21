@@ -18,6 +18,7 @@ package driver
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -30,19 +31,26 @@ import (
 // WatchHealthStatus subscribers it is streamed to. mu protects devices,
 // clientsMu protects clients.
 type healthTracker struct {
-	mu        sync.RWMutex
-	devices   map[string]*deviceHealthEntry
-	clientsMu sync.RWMutex
-	clients   []chan kubeletplugin.DeviceHealthReport
-	stopCh    chan struct{}
-	wg        sync.WaitGroup
+	mu         sync.RWMutex
+	devices    map[string]*deviceHealthEntry
+	clientsMu  sync.RWMutex
+	clients    []chan kubeletplugin.DeviceHealthReport
+	stopCh     chan struct{}
+	resendDone chan struct{}
 }
 
 func newHealthTracker() healthTracker {
 	return healthTracker{
-		devices: make(map[string]*deviceHealthEntry),
-		stopCh:  make(chan struct{}),
+		devices:    make(map[string]*deviceHealthEntry),
+		stopCh:     make(chan struct{}),
+		resendDone: make(chan struct{}),
 	}
+}
+
+// Stop stops all health goroutines.
+func (h *healthTracker) Stop() {
+	close(h.stopCh)
+	<-h.resendDone
 }
 
 // healthResendInterval is how often the driver resends the full device
@@ -82,15 +90,14 @@ func (cp *CPUDriver) markDevicesHealth(logger logr.Logger, deviceNames []string,
 		}
 	}
 	if anyChanged {
-		cp.notifyHealthClients()
+		cp.health.notifyClients(cp.nodeName)
 	}
 }
 
 // buildHealthReport snapshots the health of every device this driver
-// manages. All devices are published under a single pool named after this
-// node (see PublishResources), so PoolName is always cp.nodeName.
-func (cp *CPUDriver) buildHealthReport() kubeletplugin.DeviceHealthReport {
-	h := &cp.health
+// manages. All devices are published under a single pool named nodeName
+// (see PublishResources).
+func (h *healthTracker) buildHealthReport(nodeName string) kubeletplugin.DeviceHealthReport {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -101,7 +108,7 @@ func (cp *CPUDriver) buildHealthReport() kubeletplugin.DeviceHealthReport {
 	devices := make([]kubeletplugin.DeviceHealth, 0, len(h.devices))
 	for name, entry := range h.devices {
 		devices = append(devices, kubeletplugin.DeviceHealth{
-			PoolName:           cp.nodeName,
+			PoolName:           nodeName,
 			DeviceName:         name,
 			Health:             entry.status,
 			LastUpdated:        time.Now(),
@@ -112,14 +119,13 @@ func (cp *CPUDriver) buildHealthReport() kubeletplugin.DeviceHealthReport {
 	return kubeletplugin.DeviceHealthReport{Devices: devices}
 }
 
-// notifyHealthClients pushes the current health snapshot to every active
+// notifyClients pushes the current health snapshot to every active
 // WatchHealthStatus subscriber. Sends are best-effort. A subscriber whose
 // channel is full will simply pick up the next periodic resend instead of
 // blocking the caller that triggered the change.
-func (cp *CPUDriver) notifyHealthClients() {
-	report := cp.buildHealthReport()
+func (h *healthTracker) notifyClients(nodeName string) {
+	report := h.buildHealthReport(nodeName)
 
-	h := &cp.health
 	h.clientsMu.RLock()
 	defer h.clientsMu.RUnlock()
 	for _, ch := range h.clients {
@@ -136,7 +142,7 @@ func (cp *CPUDriver) notifyHealthClients() {
 // deliberately does not resend on its own: a wedged driver should decay to
 // Unknown instead of being kept alive artificially.
 func (cp *CPUDriver) healthResendLoop(ctx context.Context) {
-	defer cp.health.wg.Done()
+	defer close(cp.health.resendDone)
 
 	ticker := time.NewTicker(healthResendInterval)
 	defer ticker.Stop()
@@ -148,7 +154,7 @@ func (cp *CPUDriver) healthResendLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			cp.notifyHealthClients()
+			cp.health.notifyClients(cp.nodeName)
 		}
 	}
 }
@@ -168,7 +174,7 @@ func (cp *CPUDriver) WatchHealthStatus(ctx context.Context, reports chan<- kubel
 	defer logger.Info("stopped watching device health updates")
 
 	// Buffered so a burst of markDevicesHealth calls doesn't block on a slow
-	// consumer. notifyHealthClients drops reports rather than blocking.
+	// consumer. notifyClients drops reports rather than blocking.
 	clientCh := make(chan kubeletplugin.DeviceHealthReport, healthClientBufferSize)
 	h := &cp.health
 	h.clientsMu.Lock()
@@ -178,11 +184,8 @@ func (cp *CPUDriver) WatchHealthStatus(ctx context.Context, reports chan<- kubel
 	defer func() {
 		h.clientsMu.Lock()
 		defer h.clientsMu.Unlock()
-		for i, ch := range h.clients {
-			if ch == clientCh {
-				h.clients = append(h.clients[:i], h.clients[i+1:]...)
-				break
-			}
+		if i := slices.Index(h.clients, clientCh); i != -1 {
+			h.clients = slices.Delete(h.clients, i, i+1)
 		}
 	}()
 
@@ -191,7 +194,7 @@ func (cp *CPUDriver) WatchHealthStatus(ctx context.Context, reports chan<- kubel
 		return nil
 	case <-h.stopCh:
 		return nil
-	case reports <- cp.buildHealthReport():
+	case reports <- h.buildHealthReport(cp.nodeName):
 	}
 
 	for {

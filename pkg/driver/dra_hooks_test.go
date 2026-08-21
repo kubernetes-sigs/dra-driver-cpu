@@ -899,12 +899,12 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 	}
 
 	testCases := []struct {
-		name               string
-		driver             *CPUDriver
-		claim              *resourceapi.ResourceClaim
-		expectAllocation   bool
-		expectedAllocation cpuset.CPUSet
-		expectedSharedCPUs cpuset.CPUSet
+		name                       string
+		driver                     *CPUDriver
+		claim                      *resourceapi.ResourceClaim
+		expectExistingAllocation   bool
+		expectedExistingAllocation cpuset.CPUSet
+		expectedSharedCPUs         cpuset.CPUSet
 	}{
 		{
 			// New claim: the reservation is removed again on failure so the
@@ -913,33 +913,31 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			name:               "individual mode new claim",
 			driver:             individualDriver(false),
 			claim:              individualClaim("cpudev2", "cpudev3"),
-			expectAllocation:   false,
 			expectedSharedCPUs: cpuset.New(0, 1, 2, 3),
 		},
 		{
 			// Existing claim: prepare reuses the already-committed allocation
 			// and never reserves/removes it, so it must remain untouched.
-			name:               "individual mode existing claim",
-			driver:             individualDriver(true),
-			claim:              individualClaim("cpudev0", "cpudev1"),
-			expectAllocation:   true,
-			expectedAllocation: existingCPUs,
-			expectedSharedCPUs: cpuset.New(2, 3),
+			name:                       "individual mode existing claim",
+			driver:                     individualDriver(true),
+			claim:                      individualClaim("cpudev0", "cpudev1"),
+			expectExistingAllocation:   true,
+			expectedExistingAllocation: existingCPUs,
+			expectedSharedCPUs:         cpuset.New(2, 3),
 		},
 		{
 			name:               "grouped mode new claim",
 			driver:             groupedDriver(false),
 			claim:              groupedClaim(),
-			expectAllocation:   false,
 			expectedSharedCPUs: cpuset.New(0, 1, 2, 3),
 		},
 		{
-			name:               "grouped mode existing claim",
-			driver:             groupedDriver(true),
-			claim:              groupedClaim(),
-			expectAllocation:   true,
-			expectedAllocation: existingCPUs,
-			expectedSharedCPUs: cpuset.New(2, 3),
+			name:                       "grouped mode existing claim",
+			driver:                     groupedDriver(true),
+			claim:                      groupedClaim(),
+			expectExistingAllocation:   true,
+			expectedExistingAllocation: existingCPUs,
+			expectedSharedCPUs:         cpuset.New(2, 3),
 		},
 	}
 
@@ -956,9 +954,9 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			require.Empty(t, mockCdiMgr.devices)
 
 			gotCPUs, ok := tc.driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
-			require.Equal(t, tc.expectAllocation, ok)
-			if tc.expectAllocation {
-				require.True(t, tc.expectedAllocation.Equals(gotCPUs), "claim cpus: got %s, want %s", gotCPUs, tc.expectedAllocation)
+			require.Equal(t, tc.expectExistingAllocation, ok)
+			if tc.expectExistingAllocation {
+				require.True(t, tc.expectedExistingAllocation.Equals(gotCPUs), "claim cpus: got %s, want %s", gotCPUs, tc.expectedExistingAllocation)
 			}
 			require.True(t, tc.expectedSharedCPUs.Equals(tc.driver.cpuAllocationStore.GetSharedCPUs()), "shared cpus: got %s, want %s", tc.driver.cpuAllocationStore.GetSharedCPUs(), tc.expectedSharedCPUs)
 		})

@@ -31,10 +31,10 @@ CPU group, `individual` one device per CPU.
 
 These compatibility attributes will be removed in a future version:
 
-| Attribute            | Type | Description                                                    |
-| -------------------- | ---- | -------------------------------------------------------------- |
-| `dra.cpu/numaNodeID` | int  | Driver-specific NUMA node attribute (NUMA grouping)            |
-| `dra.net/numaNode`   | int  | Cross-driver NUMA alignment attribute (NUMA grouping)          |
+| Attribute            | Type | Description                                           |
+| -------------------- | ---- | ----------------------------------------------------- |
+| `dra.cpu/numaNodeID` | int  | Driver-specific NUMA node attribute (NUMA grouping)   |
+| `dra.net/numaNode`   | int  | Cross-driver NUMA alignment attribute (NUMA grouping) |
 
 Grouped devices also expose the consumable capacity `dra.cpu/cpu` — the number of CPUs
 claimable from the group. With `groupBy: machine`, only `numCPUs`, `smtEnabled`, and — when

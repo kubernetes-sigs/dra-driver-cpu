@@ -40,64 +40,63 @@ func newHealthTestDriver(deviceNames ...string) *CPUDriver {
 	return cp
 }
 
-func TestMarkDevicesHealth(t *testing.T) {
+func TestMarkDevicesHealthUnknownDeviceIsIgnored(t *testing.T) {
 	logger := testr.New(t)
+	cp := newHealthTestDriver("cpudev0")
+	cp.markDevicesHealth(logger, []string{"does-not-exist"}, kubeletplugin.HealthStatusUnhealthy, "boom")
+	_, ok := cp.health.devices["does-not-exist"]
+	assert.False(t, ok, "unknown device must not be added to the health map")
+}
 
-	t.Run("unknown device is ignored", func(t *testing.T) {
-		cp := newHealthTestDriver("cpudev0")
-		cp.markDevicesHealth(logger, []string{"does-not-exist"}, kubeletplugin.HealthStatusUnhealthy, "boom")
-		_, ok := cp.health.devices["does-not-exist"]
-		assert.False(t, ok, "unknown device must not be added to the health map")
-	})
+func TestMarkDevicesHealthKnownDeviceIsUpdatedAndChangeIsReported(t *testing.T) {
+	logger := testr.New(t)
+	cp := newHealthTestDriver("cpudev0")
+	clientCh := make(chan kubeletplugin.DeviceHealthReport, 1)
+	cp.health.clientsMu.Lock()
+	cp.health.clients = append(cp.health.clients, clientCh)
+	cp.health.clientsMu.Unlock()
 
-	t.Run("known device is updated and change is reported", func(t *testing.T) {
-		cp := newHealthTestDriver("cpudev0")
-		clientCh := make(chan kubeletplugin.DeviceHealthReport, 1)
-		cp.health.clientsMu.Lock()
-		cp.health.clients = append(cp.health.clients, clientCh)
-		cp.health.clientsMu.Unlock()
+	cp.markDevicesHealth(logger, []string{"cpudev0"}, kubeletplugin.HealthStatusUnhealthy, "cdi write failed")
 
-		cp.markDevicesHealth(logger, []string{"cpudev0"}, kubeletplugin.HealthStatusUnhealthy, "cdi write failed")
+	entry := cp.health.devices["cpudev0"]
+	require.Equal(t, kubeletplugin.HealthStatusUnhealthy, entry.status)
+	require.Equal(t, "cdi write failed", entry.message)
 
-		entry := cp.health.devices["cpudev0"]
-		require.Equal(t, kubeletplugin.HealthStatusUnhealthy, entry.status)
-		require.Equal(t, "cdi write failed", entry.message)
+	select {
+	case report := <-clientCh:
+		require.Len(t, report.Devices, 1)
+		assert.Equal(t, "cpudev0", report.Devices[0].DeviceName)
+		assert.Equal(t, testNodeName, report.Devices[0].PoolName)
+		assert.Equal(t, kubeletplugin.HealthStatusUnhealthy, report.Devices[0].Health)
+		assert.Equal(t, "cdi write failed", report.Devices[0].Message)
+	default:
+		t.Fatal("expected a health report to be sent to the client channel")
+	}
+}
 
-		select {
-		case report := <-clientCh:
-			require.Len(t, report.Devices, 1)
-			assert.Equal(t, "cpudev0", report.Devices[0].DeviceName)
-			assert.Equal(t, testNodeName, report.Devices[0].PoolName)
-			assert.Equal(t, kubeletplugin.HealthStatusUnhealthy, report.Devices[0].Health)
-			assert.Equal(t, "cdi write failed", report.Devices[0].Message)
-		default:
-			t.Fatal("expected a health report to be sent to the client channel")
-		}
-	})
+func TestMarkDevicesHealthNoOpUpdateDoesNotNotifyClients(t *testing.T) {
+	logger := testr.New(t)
+	cp := newHealthTestDriver("cpudev0")
+	clientCh := make(chan kubeletplugin.DeviceHealthReport, 1)
+	cp.health.clientsMu.Lock()
+	cp.health.clients = append(cp.health.clients, clientCh)
+	cp.health.clientsMu.Unlock()
 
-	t.Run("no-op update does not notify clients", func(t *testing.T) {
-		cp := newHealthTestDriver("cpudev0")
-		clientCh := make(chan kubeletplugin.DeviceHealthReport, 1)
-		cp.health.clientsMu.Lock()
-		cp.health.clients = append(cp.health.clients, clientCh)
-		cp.health.clientsMu.Unlock()
+	// Same status and message as the initial state set by newHealthTestDriver.
+	cp.markDevicesHealth(logger, []string{"cpudev0"}, kubeletplugin.HealthStatusHealthy, "device initialized")
 
-		// Same status and message as the initial state set by newHealthTestDriver.
-		cp.markDevicesHealth(logger, []string{"cpudev0"}, kubeletplugin.HealthStatusHealthy, "device initialized")
-
-		select {
-		case <-clientCh:
-			t.Fatal("did not expect a health report for a no-op update")
-		default:
-		}
-	})
+	select {
+	case <-clientCh:
+		t.Fatal("did not expect a health report for a no-op update")
+	default:
+	}
 }
 
 func TestBuildHealthReport(t *testing.T) {
 	cp := newHealthTestDriver("cpudev0", "cpudev1")
 	cp.markDevicesHealth(testr.New(t), []string{"cpudev1"}, kubeletplugin.HealthStatusUnhealthy, "broken")
 
-	report := cp.buildHealthReport()
+	report := cp.health.buildHealthReport(cp.nodeName)
 	require.Len(t, report.Devices, 2)
 
 	byName := map[string]kubeletplugin.DeviceHealth{}
@@ -202,7 +201,6 @@ func TestHealthResendLoop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cp.health.wg.Add(1)
 	go cp.healthResendLoop(ctx)
 
 	select {
@@ -213,5 +211,5 @@ func TestHealthResendLoop(t *testing.T) {
 	}
 
 	cancel()
-	cp.health.wg.Wait()
+	<-cp.health.resendDone
 }
