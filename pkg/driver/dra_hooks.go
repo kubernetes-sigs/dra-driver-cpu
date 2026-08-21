@@ -104,7 +104,9 @@ func getCDIDeviceName(uid types.UID) string {
 }
 
 // reserveResourceClaimAllocation records a new claim allocation while applying
-// the shared-pool guard for currently running shared containers.
+// the shared-pool guard for currently running shared containers. A shared
+// container from the same pod may not have been created yet when this DRA hook
+// runs, so that case is detected later by the NRI CreateContainer check.
 func (cp *CPUDriver) reserveResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet) error {
 	hasSharedContainers := len(cp.podConfigStore.GetContainersWithSharedCPUs()) > 0
 	return cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claimUID, cpus, hasSharedContainers)
