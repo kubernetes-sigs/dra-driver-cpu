@@ -40,7 +40,7 @@ func newTestCPUAllocation(logger logr.Logger, allCPUs, reserved cpuset.CPUSet) *
 
 func requirePreparedAllocation(t testing.TB, logger logr.Logger, store *CPUAllocation, claimUID types.UID, cpus cpuset.CPUSet) {
 	t.Helper()
-	require.NoError(t, store.ReserveResourceClaimAllocation(logger, claimUID, cpus))
+	require.NoError(t, store.ReserveResourceClaimAllocation(logger, claimUID, cpus, false))
 }
 
 func TestCPUAllocationPreparedLifecycle(t *testing.T) {
@@ -50,9 +50,9 @@ func TestCPUAllocationPreparedLifecycle(t *testing.T) {
 	claimCPUs := cpuset.New(0, 1)
 	store := newTestCPUAllocation(logger, allCPUs, cpuset.New())
 
-	require.NoError(t, store.ReserveResourceClaimAllocation(logger, claimUID, claimCPUs))
+	require.NoError(t, store.ReserveResourceClaimAllocation(logger, claimUID, claimCPUs, false))
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
-	require.Error(t, store.ReserveResourceClaimAllocation(logger, "claim-2", claimCPUs))
+	require.Error(t, store.ReserveResourceClaimAllocation(logger, "claim-2", claimCPUs, false))
 
 	require.NoError(t, store.ValidateResourceClaimAllocations(map[types.UID]cpuset.CPUSet{claimUID: claimCPUs}))
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
@@ -175,8 +175,8 @@ func TestReserveResourceClaimAllocationRepeatedCalls(t *testing.T) {
 			store := newTestCPUAllocation(logger, allCPUs, cpuset.New())
 			claimUID := types.UID("claim-uid-1")
 
-			require.NoError(t, store.ReserveResourceClaimAllocation(logger, claimUID, tc.firstCPUs))
-			err := store.ReserveResourceClaimAllocation(logger, claimUID, tc.secondCPUs)
+			require.NoError(t, store.ReserveResourceClaimAllocation(logger, claimUID, tc.firstCPUs, false))
+			err := store.ReserveResourceClaimAllocation(logger, claimUID, tc.secondCPUs, false)
 			if tc.expectError {
 				require.Error(t, err)
 			} else {
@@ -187,6 +187,51 @@ func TestReserveResourceClaimAllocationRepeatedCalls(t *testing.T) {
 			require.True(t, ok)
 			require.True(t, tc.firstCPUs.Equals(gotCPUs), "claim cpus mismatch: got %s, want %s", gotCPUs, tc.firstCPUs)
 			require.True(t, allCPUs.Difference(tc.firstCPUs).Equals(store.GetSharedCPUs()))
+		})
+	}
+}
+
+func TestReserveResourceClaimAllocationSharedPoolGuard(t *testing.T) {
+	logger := testr.New(t)
+	allCPUs := cpuset.New(0, 1, 2, 3)
+
+	tests := []struct {
+		name                string
+		cpus                cpuset.CPUSet
+		hasSharedContainers bool
+		wantErr             bool
+	}{
+		{
+			name:                "rejects exhausting pool with shared containers",
+			cpus:                allCPUs,
+			hasSharedContainers: true,
+			wantErr:             true,
+		},
+		{
+			name:                "allows exhausting pool without shared containers",
+			cpus:                allCPUs,
+			hasSharedContainers: false,
+		},
+		{
+			name:                "allows reservation that leaves shared CPUs",
+			cpus:                cpuset.New(0, 1),
+			hasSharedContainers: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newTestCPUAllocation(logger, allCPUs, cpuset.New())
+			err := store.ReserveResourceClaimAllocation(logger, "claim", test.cpus, test.hasSharedContainers)
+			if test.wantErr {
+				require.ErrorContains(t, err, "would exhaust the shared CPU pool")
+				_, ok := store.GetResourceClaimAllocation("claim")
+				require.False(t, ok)
+				require.True(t, store.GetSharedCPUs().Equals(allCPUs))
+			} else {
+				require.NoError(t, err)
+				require.True(t, store.GetSharedCPUs().Equals(allCPUs.Difference(test.cpus)))
+			}
 		})
 	}
 }

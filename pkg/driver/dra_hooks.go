@@ -103,6 +103,15 @@ func getCDIDeviceName(uid types.UID) string {
 	return fmt.Sprintf("claim-%s", uid)
 }
 
+// reserveResourceClaimAllocation records a new claim allocation while applying
+// the shared-pool guard for currently running shared containers. A shared
+// container from the same pod may not have been created yet when this DRA hook
+// runs, so that case is detected later by the NRI CreateContainer check.
+func (cp *CPUDriver) reserveResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet) error {
+	hasSharedContainers := len(cp.podConfigStore.GetContainersWithSharedCPUs()) > 0
+	return cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claimUID, cpus, hasSharedContainers)
+}
+
 func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
 	logger.V(4).Info("preparing grouped resource claim")
 
@@ -194,7 +203,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 	}
 
 	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.
-	if err := cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claim.UID, cpuAssignment); err != nil {
+	if err := cp.reserveResourceClaimAllocation(logger, claim.UID, cpuAssignment); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
 	result := cp.prepareDevices(logger, claim, cpuAssignment)
@@ -256,7 +265,7 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 	}
 
 	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.
-	if err := cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claim.UID, claimCPUSet); err != nil {
+	if err := cp.reserveResourceClaimAllocation(logger, claim.UID, claimCPUSet); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
 	result := cp.prepareDevices(logger, claim, claimCPUSet)
