@@ -6,11 +6,28 @@ on:
       - 'deployment/helm/**'
       - 'internal/driverconfig/**'
       - 'tools/gen-driverconfig-schema/**'
+      - 'test/render/**'
+      - 'hack/ci/helm-render-check.sh'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
       - '.github/workflows/helm-lint.yaml'
 
 jobs:
   helm-lint:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        helm:
+          # What the Makefile installs when the machine has no helm, so this
+          # covers what a clean checkout gets.
+          - v3.20.1
+          # A named Helm 4 release, rather than whatever the action's default
+          # happens to be, so a helm release cannot change what CI proves on
+          # its own.
+          - v4.2.4
+    name: helm-lint (${{ matrix.helm }})
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -21,9 +38,14 @@ jobs:
 
       - name: Install Helm
         uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
+        with:
+          version: ${{ matrix.helm }}
 
       - name: Run Helm lint
         run: make helm-lint
+
+      - name: Check the kubelet root derives the chart mounts and driver flag
+        run: make helm-render-check
 
       - name: Check helm-docs is up to date
         run: make helm-docs-check

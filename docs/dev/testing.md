@@ -10,6 +10,24 @@ To run the node-local unit tests, run:
 make test-unit
 ```
 
+### Chart render tests
+
+To check what the Helm chart renders, without a cluster, run:
+
+```bash
+make helm-render-check
+```
+
+`hack/ci/helm-render-check.sh` renders each case and hands the DaemonSet to the
+validator in `test/render`. It needs Helm and the project's Go toolchain, but no
+cluster. The cluster-side counterpart is the `helm e2e` workflow, which installs
+the chart against both the default and a relocated kubelet root.
+
+With no cluster to ask, Helm renders against its own built-in Kubernetes version,
+which in some releases is below the chart's `kubeVersion` range and refuses the chart
+outright. The script therefore renders at the oldest stable release that range covers.
+Set `HELM_KUBE_VERSION` to render at a different one.
+
 ### E2E Tests
 
 To run the e2e tests against a custom-setup, special-purpose kind cluster, just run:
