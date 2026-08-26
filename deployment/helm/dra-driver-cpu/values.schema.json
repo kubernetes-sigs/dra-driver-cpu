@@ -118,7 +118,7 @@
       "type": "array"
     },
     "kubeletRootDir": {
-      "description": "Kubelet base directory (the kubelet's own `--root-dir`). Only set this if the kubelet does not use the default. The hostPath mounts and the driver flag both derive from this value, so they cannot come apart. See https://github.com/kubernetes-sigs/dra-driver-cpu/blob/main/docs/user/configuration.md for details",
+      "description": "Kubelet base directory (the kubelet's own `--root-dir`). Only set this if the kubelet does not use the default. The hostPath mounts and the driver flag both derive from this value, so they cannot come apart. Once cleaned it may not contain `$(` or `$$`, which the kubelet can reinterpret in a container's argument but never in `hostPath.path` or `volumeMount.mountPath`. See https://github.com/kubernetes-sigs/dra-driver-cpu/blob/main/docs/user/configuration.md for details",
       "type": "string",
       "pattern": "^/",
       "minLength": 1
