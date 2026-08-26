@@ -63,9 +63,19 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 			expectedAllocations: map[types.UID]cpuset.CPUSet{},
 		},
 		{
+			name:                "similar unreserved env prefix is ignored",
+			envs:                []string{fmt.Sprintf("%sFOO=%s", cdiEnvVarPrefix, "a-b")},
+			expectedAllocations: map[types.UID]cpuset.CPUSet{},
+		},
+		{
 			name:                  "malformed env - no equals",
 			envs:                  []string{fmt.Sprintf("%s_claim-uid-1", cdiEnvVarPrefix)},
 			expectedErrorContains: "malformed DRA env entry",
+		},
+		{
+			name:                  "malformed env - missing claim uid",
+			envs:                  []string{fmt.Sprintf("%s=%s", cdiEnvVarNamePrefix, "0-1")},
+			expectedErrorContains: "missing claim UID",
 		},
 		{
 			name:                  "malformed env - invalid cpuset",
