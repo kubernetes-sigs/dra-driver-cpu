@@ -290,55 +290,86 @@ func TestCPUAccumulatorFreeCores(t *testing.T) {
 		description   string
 		topo          *topology.CPUTopology
 		availableCPUs cpuset.CPUSet
-		expect        []int
+		expect        []topology.CoreKey
 	}{
 		{
 			"single socket HT, 4 cores free",
 			topoSingleSocketHT,
 			cpuset.New(0, 1, 2, 3, 4, 5, 6, 7),
-			[]int{0, 1, 2, 3},
+			[]topology.CoreKey{
+				{SocketID: 0, ClusterID: 0, CoreID: 0},
+				{SocketID: 0, ClusterID: 0, CoreID: 1},
+				{SocketID: 0, ClusterID: 0, CoreID: 2},
+				{SocketID: 0, ClusterID: 0, CoreID: 3},
+			},
 		},
 		{
 			"single socket HT, 3 cores free",
 			topoSingleSocketHT,
 			cpuset.New(0, 1, 2, 4, 5, 6),
-			[]int{0, 1, 2},
+			[]topology.CoreKey{
+				{SocketID: 0, ClusterID: 0, CoreID: 0},
+				{SocketID: 0, ClusterID: 0, CoreID: 1},
+				{SocketID: 0, ClusterID: 0, CoreID: 2},
+			},
 		},
 		{
 			"single socket HT, 3 cores free (1 partially consumed)",
 			topoSingleSocketHT,
 			cpuset.New(0, 1, 2, 3, 4, 5, 6),
-			[]int{0, 1, 2},
+			[]topology.CoreKey{
+				{SocketID: 0, ClusterID: 0, CoreID: 0},
+				{SocketID: 0, ClusterID: 0, CoreID: 1},
+				{SocketID: 0, ClusterID: 0, CoreID: 2},
+			},
 		},
 		{
 			"single socket HT, 0 cores free",
 			topoSingleSocketHT,
 			cpuset.New(),
-			[]int{},
+			[]topology.CoreKey{},
 		},
 		{
 			"single socket HT, 0 cores free (4 partially consumed)",
 			topoSingleSocketHT,
 			cpuset.New(0, 1, 2, 3),
-			[]int{},
+			[]topology.CoreKey{},
 		},
 		{
 			"dual socket HT, 6 cores free",
 			topoDualSocketHT,
 			cpuset.New(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
-			[]int{0, 2, 4, 1, 3, 5},
+			[]topology.CoreKey{
+				{SocketID: 0, ClusterID: 0, CoreID: 0},
+				{SocketID: 0, ClusterID: 0, CoreID: 2},
+				{SocketID: 0, ClusterID: 0, CoreID: 4},
+				{SocketID: 1, ClusterID: 0, CoreID: 1},
+				{SocketID: 1, ClusterID: 0, CoreID: 3},
+				{SocketID: 1, ClusterID: 0, CoreID: 5},
+			},
 		},
 		{
 			"dual socket HT, 5 cores free (1 consumed from socket 0)",
 			topoDualSocketHT,
 			cpuset.New(2, 1, 3, 4, 5, 7, 8, 9, 10, 11),
-			[]int{2, 4, 1, 3, 5},
+			[]topology.CoreKey{
+				{SocketID: 0, ClusterID: 0, CoreID: 2},
+				{SocketID: 0, ClusterID: 0, CoreID: 4},
+				{SocketID: 1, ClusterID: 0, CoreID: 1},
+				{SocketID: 1, ClusterID: 0, CoreID: 3},
+				{SocketID: 1, ClusterID: 0, CoreID: 5},
+			},
 		},
 		{
 			"dual socket HT, 4 cores free (1 consumed from each socket)",
 			topoDualSocketHT,
 			cpuset.New(2, 3, 4, 5, 8, 9, 10, 11),
-			[]int{2, 4, 3, 5},
+			[]topology.CoreKey{
+				{SocketID: 0, ClusterID: 0, CoreID: 2},
+				{SocketID: 0, ClusterID: 0, CoreID: 4},
+				{SocketID: 1, ClusterID: 0, CoreID: 3},
+				{SocketID: 1, ClusterID: 0, CoreID: 5},
+			},
 		},
 	}
 
