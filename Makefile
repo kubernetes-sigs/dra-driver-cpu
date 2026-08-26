@@ -27,10 +27,10 @@ GOLANGCI_LINT_VERSION ?= 2.12.2
 HELM_DOCS_VERSION ?= 1.14.2
 HELM_SCHEMA_VERSION ?= 2.3.1
 # Must be 1.37+: the kind cluster configs enable the DRANodeAllocatableResources
-# feature gate, which older releases do not recognize. The newest 1.37 release
-# (including pre-releases) is published in the official version marker:
-# https://dl.k8s.io/release/latest-1.37.txt
-KIND_K8S_VERSION ?= v1.37.0-rc.0
+# feature gate, which older releases do not recognize. The latest stable 1.37
+# release is published in the official version marker:
+# https://dl.k8s.io/release/stable-1.37.txt
+KIND_K8S_VERSION ?= v1.37.0
 GOPLS_VERSION ?= v0.22.0
 # paths
 YQ = $(OUT_DIR)/yq
