@@ -276,6 +276,7 @@ helm-schema: driverconfig-schema ## regenerate values.schema.json from values.ya
 	go run github.com/losisin/helm-values-schema-json/v2@v$(HELM_SCHEMA_VERSION) \
 		-f ${HELM_CHART}/values.yaml \
 		-o ${HELM_CHART}/values.schema.json \
+		--schema-root.additional-properties=false \
 		--use-helm-docs \
 		--bundle \
 		--bundle-root ${HELM_CHART} \

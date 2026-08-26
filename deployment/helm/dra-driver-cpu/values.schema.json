@@ -76,6 +76,14 @@
       "description": "Override the full release name",
       "type": "string"
     },
+    "global": {
+      "description": "Global values shared between all subcharts",
+      "$comment": "Added automatically by 'helm schema' to allow this chart to be used as a Helm dependency, as the `additionalProperties` setting would otherwise collide with Helm's special 'global' values key.",
+      "type": [
+        "object",
+        "null"
+      ]
+    },
     "healthzPath": {
       "description": "Path for liveness and readiness probes",
       "type": "string"
@@ -210,6 +218,7 @@
       }
     }
   },
+  "additionalProperties": false,
   "$defs": {
     "driverconfig.schema.json": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

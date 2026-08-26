@@ -141,6 +141,21 @@ hand exposes individual fields as explicit Helm values.
   single configuration mechanism. The driver logs the effective configuration at startup so you
   can verify which values are active.
 
+### Helm values validation and compatibility
+
+The chart rejects unknown top-level values, so a misspelled value name fails validation before
+anything is rendered rather than being ignored. Helm's reserved `global` table stays accepted,
+and values whose keys you pick, such as `podLabels` and `resources.limits`, are untouched.
+
+If a chart value is removed in a later release, an upgrade that carries the previous release's
+values forward can fail validation. Helm carries them when no new values are supplied at all,
+with `--reuse-values`, and with `--reset-then-reuse-values`. Validation runs before anything is
+rendered or applied, so the running release is untouched: drop the stale key and upgrade again,
+or pass `--reset-values` with the values you want in full.
+
+Values that only your own tooling reads belong outside the file you hand to Helm. They were
+never chart values, so they are rejected rather than ignored.
+
 ### Command-line flags
 
 **NOTE:** Command-line flags are kept mainly for backward compatibility. Prefer the
