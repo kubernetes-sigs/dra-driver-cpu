@@ -70,6 +70,12 @@ func TestCPUAccumulatorFreeSockets(t *testing.T) {
 			[]int{},
 		},
 		{
+			"asymmetric sockets, larger socket free",
+			topoAsymmetricSockets,
+			cpuset.New(2, 3, 4, 5),
+			[]int{1},
+		},
+		{
 			"dual socket, multi numa per socket, HT, 2 sockets free",
 			topoDualSocketMultiNumaPerSocketHT,
 			mustParseCPUSet(t, "0-79"),
@@ -128,6 +134,18 @@ func TestCPUAccumulatorFreeSockets(t *testing.T) {
 				t.Errorf("expected %v to equal %v", result, tc.expect)
 			}
 		})
+	}
+}
+
+func TestCPUAccumulatorFreeCoresWithRepeatedCoreIDs(t *testing.T) {
+	logger := klog.Background()
+	acc := newCPUAccumulator(logger, topoRepeatedCoreIDs, cpuset.New(0, 1, 2, 3), 2, CPUSortingStrategyPacked)
+
+	if got, want := acc.freeCores(), []topology.CoreKey{
+		{SocketID: 0, ClusterID: 0, CoreID: 0},
+		{SocketID: 1, ClusterID: 0, CoreID: 0},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("freeCores() = %v, want %v", got, want)
 	}
 }
 
@@ -797,6 +815,18 @@ func TestTakeByTopologyNUMAPacked(t *testing.T) {
 			10,
 			"",
 			mustParseCPUSet(t, "4-7,12-15,1,9"),
+		},
+		{
+			"take partial uncore from asymmetric SMT uncore",
+			topoAsymmetricUncoreSMT,
+			StaticPolicyOptions{PreferAlignByUncoreCacheOption: true},
+			mustParseCPUSet(t, "0-5"),
+			3,
+			"",
+			// This documents the current best-effort heuristic on asymmetric uncore
+			// topology; it is not asserting a stronger "stay within one uncore if
+			// possible" guarantee.
+			cpuset.New(0, 2, 5),
 		},
 	}...)
 
