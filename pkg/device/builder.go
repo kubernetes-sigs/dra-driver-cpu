@@ -136,7 +136,10 @@ func groupedCPUDeviceInfos(groupBy string, topo *cpuinfo.CPUTopology, onlineCPUs
 			})
 		}
 	case GROUP_BY_MACHINE:
-		allocatableCPUs := onlineCPUs.Difference(reservedCPUs)
+		// Use the topology-validated CPU set. GetCPUInfos filters online CPUs
+		// whose topology is incomplete, and the allocation store is built from
+		// the same CPUDetails map.
+		allocatableCPUs := topo.CPUDetails.CPUs().Difference(reservedCPUs)
 		devices = append(devices, groupedCPUDeviceInfo{
 			name: CPUDeviceMachineGrouped,
 			cpus: allocatableCPUs,
