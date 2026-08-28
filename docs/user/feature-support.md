@@ -67,29 +67,29 @@ metadata:
 spec:
   devices:
     requests:
-    - name: numa0-cpus
+    - name: cpus-spread-numa
       exactly:
         deviceClassName: dra.cpu
+        count: 2
         capacity:
           requests:
             dra.cpu/cpu: "10"
-        selectors:
-        - cel:
-            expression: device.attributes["resource.kubernetes.io"].numaNode == 0
-    - name: numa1-cpus
-      exactly:
-        deviceClassName: dra.cpu
-        capacity:
-          requests:
-            dra.cpu/cpu: "10"
-        selectors:
-        - cel:
-            expression: device.attributes["resource.kubernetes.io"].numaNode == 1
+    constraints:
+    - requests: ["cpus-spread-numa"]
+      distinctAttribute: resource.kubernetes.io/numaNode
 ```
 
-However, this is only a partial replacement of the corresponding CPU Manager option. The main problem of this approach is that it leaks assumptions about machine properties.
-We hardcode the NUMA split and, unlike the cpumanager feature, it won't automatically adapt if the same claim is handled by a 1-NUMA, 2-NUMA or 4-NUMA machine;
-the claim would need to be updated or recreated manually.
+However, this is only a partial replacement of the corresponding CPU Manager
+option. The main problem is that a single `count` > 1 request only works for
+equal-sized slices. In the above example, we artificially split the real
+20-CPU request into two 10-CPU results, and the math must be done manually.
+This also ties the spread to the machine topology: the same claim sent to a
+machine with 2 NUMA nodes would spread as intended, on a machine with 4 NUMA
+nodes it would still use only two NUMA nodes because `count: 2` asks for
+exactly two distinct devices, and on a machine with 1 NUMA node it would fail
+because there is no second NUMA node to choose. If you need 15 CPUs, this
+exact single-request pattern cannot express a 7+8 split; you would need
+multiple requests with different capacities.
 
 ## Exposing PCIe roots
 
