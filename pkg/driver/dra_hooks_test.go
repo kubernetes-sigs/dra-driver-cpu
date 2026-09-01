@@ -27,6 +27,8 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/testr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	devattr "github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
@@ -946,6 +948,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			},
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 			podConfigStore:     store.NewPodConfig(),
+			cpuAllocator:       cpuallocator.NewCPUManager(testDriverName, topo),
 		}
 		if withExistingAllocation {
 			requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, existingCPUs)
@@ -1042,12 +1045,17 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			},
 			SysFS: testSysFS(cpuInfos),
 		}
+		allocator := driverconfig.AllocatorCPUManager
+		if groupBy == devattr.GROUP_BY_MACHINE {
+			allocator = driverconfig.AllocatorExternal
+		}
 		conf := Config{
 			DriverName:       testDriverName,
 			NodeName:         testNodeName,
 			CPUDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
 			CPUDeviceGroupBy: groupBy,
 			ReservedCPUs:     reservedCPUs,
+			Allocator:        allocator,
 		}
 		driver, err := New(testr.New(t), prov, &conf)
 		require.NoError(t, err)
@@ -1588,6 +1596,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 				deviceNameToNUMANodeID: map[string]int{},
 			},
 			cpuAllocationStore: cpuStore,
+			cpuAllocator:       cpuallocator.NewCPUManager(testDriverName, topo),
 			cdiMgr:             cdiMgr,
 			podConfigStore:     store.NewPodConfig(),
 		}, cpuStore, cdiMgr
@@ -1607,6 +1616,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 				deviceNameToNUMANodeID: map[string]int{"cpudevnuma0": 0, "cpudevnuma1": 1},
 			},
 			cpuAllocationStore: cpuStore,
+			cpuAllocator:       cpuallocator.NewCPUManager(testDriverName, topo),
 			cdiMgr:             cdiMgr,
 			podConfigStore:     store.NewPodConfig(),
 		}, cpuStore, cdiMgr
@@ -2151,7 +2161,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 				}(),
 			},
 			expectedErrors: map[string]string{
-				"claim-1": "are already assigned to another device in this claim",
+				"claim-1": "opaque cpuset size 2 does not match the request total of 4 CPUs",
 			},
 		},
 	}
@@ -2163,7 +2173,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 				testReserved = tc.reservedCPUs
 			}
 			mockCdi := newMockCdiMgr()
-			driver := createCPUDriverForTest(t, devattr.GROUP_BY_MACHINE, cpuInfos, tc.initialAllocations, testReserved, mockCdi)
+			driver := createCPUDriverExternalAllocForTest(t, devattr.GROUP_BY_MACHINE, cpuInfos, tc.initialAllocations, testReserved, mockCdi)
 
 			prepared, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
 			require.NoError(t, err)
@@ -2192,7 +2202,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 	}
 }
 
-func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet, cdiMgr cdiManager) *CPUDriver {
+func createCPUDriverExternalAllocForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet, cdiMgr cdiManager) *CPUDriver {
 	t.Helper()
 	logger := testr.New(t)
 	driver := &CPUDriver{}
@@ -2205,8 +2215,10 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
 	driver.topology.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
 	driver.topology.onlineCPUs = driver.topology.cpuTopology.CPUDetails.CPUs()
+	driver.topology.reservedCPUs = reservedCPUs
 	driver.cpuAllocationStore = store.NewCPUAllocation(driver.topology.cpuTopology, reservedCPUs)
 	driver.podConfigStore = store.NewPodConfig()
+	driver.cpuAllocator = cpuallocator.NewExternal(testDriverName, driver.topology.onlineCPUs, reservedCPUs)
 	for claimUID, cpus := range initialAllocations {
 		requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, cpus)
 	}

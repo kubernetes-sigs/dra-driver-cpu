@@ -29,6 +29,8 @@ import (
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
@@ -75,6 +77,38 @@ type CPUInfoProvider interface {
 	GetCPUTopology(logger logr.Logger) (*cpuinfo.CPUTopology, error)
 }
 
+// CPUAllocator abstracts the behavior of a cpu allocator code. The caller MUST call
+// * Allocate - to get the optimal (according to the backend policy) set of the given size within the available set
+// * Validate - to ensure the optimal set returned by Allocate is consistent with in-flight and consolidated allocations
+// GetPreferredCPUs is optional and allows the users (or external scheduler) to specify which available CPUs should
+// be prioritized in the current allocation request.
+// The caller CAN call it, and if it does, it MUST call it first, before Allocate; the caller should then feed the
+// preferred CPUs to Allocate(). If the caller doesn't need or want to call GetPreferredCPUs, it must use an empty
+// CPU set where preferred CPUs are required.
+type CPUAllocator interface {
+	// GetPreferredCPUs retrieves the allocation hint for the current allocation cycle.
+	// An allocation hint is a CPU set that the allocator must honor: all CPUs allocated in this cycle must belong to
+	// that set, or the allocation fails; if there are more preferred CPUs than required, the allocator is free
+	// to pick any subset that fulfills the request. If there are less preferred CPUs than required, the allocator
+	// is free to pick extra CPUs as it sees fit.
+	// The preferred CPU set is per-request. Should the allocation result split across different results (e.g. count > 1),
+	// The allocator must ensure that each allocation result is a non-overlapping subset of the preferred set.
+	// The allocator can reject any hint entirely by design. If the allocator rejects hint entirely, it must
+	// return cpuallocator.ErrUnsupportedPreferredCPUs.
+	// If the allocator fails to fetch a hint, or detects an illegal hint, it must return a different custom error.
+	GetPreferredCPUs(logger logr.Logger, allocation *resourceapi.AllocationResult, alloc resourceapi.DeviceRequestAllocationResult) (cpuset.CPUSet, error)
+	// Allocate reserves <count> CPUs for the claim from the intersection of preferredCPUs and availableCPUs.
+	// The allocator can pick CPUs from the provided set according to its own implementation, the result of each Allocate
+	// call must be idempotent (calls with the same parameters must yield the same result).
+	// if preferredCPUs is empty, the allocator is free to pick CPUs from availableCPUs according to its implementation.
+	Allocate(logger logr.Logger, availableCPUs, preferredCPUs cpuset.CPUSet, count int) (cpuset.CPUSet, error)
+	// Validate verifies performed allocation (cpus) is consistent with all the other active
+	// claims already prepared on this node (preparedCPUs) and with the other allocations
+	// performed in the same batch (assignedCPUs, claim asking for two or more allocations).
+	// Returns error detailing the inconsistency, nil if the allocation is correct.
+	Validate(cpus, assignedCPUs, preparedCPUs cpuset.CPUSet) error
+}
+
 // CPUDriver is the structure that holds all the driver runtime information.
 type CPUDriver struct {
 	driverName              string
@@ -93,8 +127,8 @@ type CPUDriver struct {
 	devicesPerResourceSlice int
 	metrics                 cpumetrics.Recorder
 	health                  healthTracker
-
-	kubeletRootDir string
+	kubeletRootDir          string
+	cpuAllocator            CPUAllocator
 }
 
 // deviceHealthEntry is the last known health of a single device.
@@ -143,6 +177,7 @@ type Config struct {
 	ReservedCPUs     cpuset.CPUSet
 	CPUDeviceMode    string
 	CPUDeviceGroupBy string
+	Allocator        string
 	ExposePCIeRoots  bool
 	Metrics          cpumetrics.Recorder
 	// KubeletRootDir is the kubelet root directory, from which the registrar
@@ -219,6 +254,14 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.topology.cpuTopology, config.ReservedCPUs)
 	plugin.refreshAllocationMetrics()
 	plugin.podConfigStore = store.NewPodConfig()
+
+	logger.Info("creating CPU allocator", "method", config.Allocator)
+	switch config.Allocator {
+	case driverconfig.AllocatorExternal:
+		plugin.cpuAllocator = cpuallocator.NewExternal(config.DriverName, plugin.topology.onlineCPUs, config.ReservedCPUs)
+	default:
+		plugin.cpuAllocator = cpuallocator.NewCPUManager(config.DriverName, topo)
+	}
 
 	var devices []resourceapi.Device
 
