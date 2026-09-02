@@ -65,14 +65,6 @@ type AllocationState struct {
 	ActiveResourceClaims int
 }
 
-// Recorder records driver metrics.
-type Recorder interface {
-	SetAllocationState(AllocationState)
-	RecordPrepare(result Result, duration time.Duration)
-	RecordUnprepare(result Result)
-	RecordClaimAllocatedCPUs(cpus int)
-}
-
 // Metrics owns all custom Prometheus collectors for the CPU driver.
 type Metrics struct {
 	allocatedCPUs        prometheus.Gauge
@@ -260,7 +252,7 @@ func (m *Metrics) RecordClaimAllocatedCPUs(cpus int) {
 type noopRecorder struct{}
 
 // Noop returns a recorder that discards all metric observations.
-func Noop() Recorder {
+func Noop() noopRecorder {
 	return noopRecorder{}
 }
 

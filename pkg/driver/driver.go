@@ -91,7 +91,7 @@ type CPUDriver struct {
 	claimTracker            *store.ClaimTracker
 	pcieRootMapper          *store.PCIeRootMapper
 	devicesPerResourceSlice int
-	metrics                 cpumetrics.Recorder
+	metrics                 Recorder
 	health                  healthTracker
 
 	kubeletRootDir string
@@ -144,7 +144,7 @@ type Config struct {
 	CPUDeviceMode    string
 	CPUDeviceGroupBy string
 	ExposePCIeRoots  bool
-	Metrics          cpumetrics.Recorder
+	Metrics          Recorder
 	// KubeletRootDir is the kubelet root directory, from which the registrar
 	// and plugin data directories are derived. Required and absolute:
 	// driverconfig.Resolve refuses an empty or relative value, and New takes it as
