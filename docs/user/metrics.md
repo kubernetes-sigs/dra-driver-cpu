@@ -13,16 +13,25 @@ dracpu introspect metrics
 
 The command prints JSON metadata for custom `dra_cpu_*` metrics only. It does not include default Go runtime, process, or Prometheus client metrics.
 
-| Metric                                     | Type      | Labels   | Description                                                                                |
-| ------------------------------------------ | --------- | -------- | ------------------------------------------------------------------------------------------ |
-| `dra_cpu_allocated_cpus`                   | Gauge     | none     | CPUs currently allocated to prepared resource claims.                                      |
-| `dra_cpu_available_cpus`                   | Gauge     | none     | CPUs still available for allocation after reserved and active claim CPUs are excluded.     |
-| `dra_cpu_reserved_cpus`                    | Gauge     | none     | CPUs excluded from DRA management by driver configuration.                                 |
-| `dra_cpu_resource_claims_active`           | Gauge     | none     | Resource claims currently recorded as active by the allocation store.                      |
-| `dra_cpu_prepare_claims_total`             | Counter   | `result` | Per-claim `PrepareResourceClaims` results. `result` is `success`, `error`, or `unknown`.   |
-| `dra_cpu_unprepare_claims_total`           | Counter   | `result` | Per-claim `UnprepareResourceClaims` results. `result` is `success`, `error`, or `unknown`. |
-| `dra_cpu_prepare_claim_duration_seconds`   | Histogram | none     | Per-claim prepare latency in seconds.                                                      |
-| `dra_cpu_unprepare_claim_duration_seconds` | Histogram | none     | Per-claim unprepare latency in seconds.                                                    |
-| `dra_cpu_claim_allocated_cpus`             | Histogram | none     | CPUs allocated for each newly successful claim allocation.                                 |
+| Metric                                          | Type      | Labels                          | Description                                                                                                                                    |
+| ----------------------------------------------- | --------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dra_cpu_allocated_cpus`                        | Gauge     | none                            | CPUs currently allocated to prepared resource claims.                                                                                          |
+| `dra_cpu_available_cpus`                        | Gauge     | none                            | CPUs still available for allocation after reserved and active claim CPUs are excluded.                                                         |
+| `dra_cpu_reserved_cpus`                         | Gauge     | none                            | CPUs excluded from DRA management by driver configuration.                                                                                     |
+| `dra_cpu_resource_claims_active`                | Gauge     | none                            | Resource claims currently recorded as active by the allocation store.                                                                          |
+| `dra_cpu_prepare_claims_total`                  | Counter   | `result`                        | Per-claim `PrepareResourceClaims` results. `result` is `success`, `error`, or `unknown`.                                                       |
+| `dra_cpu_unprepare_claims_total`                | Counter   | `result`                        | Per-claim `UnprepareResourceClaims` results. `result` is `success`, `error`, or `unknown`.                                                     |
+| `dra_cpu_prepare_claim_duration_seconds`        | Histogram | none                            | Per-claim prepare latency in seconds.                                                                                                          |
+| `dra_cpu_unprepare_claim_duration_seconds`      | Histogram | none                            | Per-claim unprepare latency in seconds.                                                                                                        |
+| `dra_cpu_claim_allocated_cpus`                  | Histogram | none                            | CPUs allocated for each newly successful claim allocation.                                                                                     |
+| `dra_cpu_nri_synchronize_duration_seconds`      | Histogram | `result`                        | Duration of the NRI `Synchronize` callback in seconds. `result` is `success` or `error`.                                                       |
+| `dra_cpu_nri_create_container_duration_seconds` | Histogram | `result`, `cpu_allocation_mode` | Duration of the NRI `CreateContainer` callback in seconds. `result` is `success` or `error`; `cpu_allocation_mode` is `shared` or `exclusive`. |
+| `dra_cpu_nri_stop_container_duration_seconds`   | Histogram | `result`, `cpu_allocation_mode` | Duration of the NRI `StopContainer` callback in seconds. `result` is `success` or `error`; `cpu_allocation_mode` is `shared` or `exclusive`.   |
+| `dra_cpu_nri_remove_container_duration_seconds` | Histogram | `result`, `cpu_allocation_mode` | Duration of the NRI `RemoveContainer` callback in seconds. `result` is `success` or `error`; `cpu_allocation_mode` is `shared` or `exclusive`. |
 
-The custom metrics intentionally avoid labels for namespace, pod, claim, device, node, socket, NUMA node, group mode, and error reason. Those labels would either be high-cardinality or need more API design before becoming part of the driver's metric surface. Node identity should come from scrape target labels.
+The custom metrics intentionally avoid labels for namespace, pod, claim, device, node, socket, NUMA node, group mode, and error reason. Those labels would either be
+high-cardinality or need more API design before becoming part of the driver's metric surface. Node identity should come from scrape target labels.
+
+The NRI callback histograms use bucket boundaries tailored to the NRI plugin request timeout.
+This serves both performance and reliability concerns, because the runtime close the plugin connection if a callback does not return within the configured
+request timeout (2 seconds by default).

@@ -27,6 +27,10 @@ type Recorder interface {
 	RecordPrepare(result cpumetrics.Result, duration time.Duration)
 	RecordUnprepare(result cpumetrics.Result, duration time.Duration)
 	RecordClaimAllocatedCPUs(cpus int)
+	RecordNRISynchronize(err error, elapsed time.Duration)
+	RecordNRICreateContainer(err error, claimCount int, elapsed time.Duration)
+	RecordNRIStopContainer(err error, claimCount int, elapsed time.Duration)
+	RecordNRIRemoveContainer(err error, claimCount int, elapsed time.Duration)
 }
 
 func (cp *CPUDriver) refreshAllocationMetrics() {

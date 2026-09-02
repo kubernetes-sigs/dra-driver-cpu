@@ -30,7 +30,7 @@ import (
 
 func TestDescriptors(t *testing.T) {
 	descriptors := Descriptors()
-	require.Len(t, descriptors, 9)
+	require.Len(t, descriptors, 13)
 
 	names := make([]string, 0, len(descriptors))
 	for _, desc := range descriptors {
@@ -50,6 +50,10 @@ func TestDescriptors(t *testing.T) {
 		"dra_cpu_prepare_claim_duration_seconds",
 		"dra_cpu_unprepare_claim_duration_seconds",
 		"dra_cpu_claim_allocated_cpus",
+		"dra_cpu_nri_synchronize_duration_seconds",
+		"dra_cpu_nri_create_container_duration_seconds",
+		"dra_cpu_nri_stop_container_duration_seconds",
+		"dra_cpu_nri_remove_container_duration_seconds",
 	}, names)
 	require.Equal(t, []string{"result"}, descriptors[4].Labels)
 	require.Equal(t, []string{"result"}, descriptors[5].Labels)
@@ -82,6 +86,10 @@ func TestNewRegistersExpectedMetricFamilies(t *testing.T) {
 		"dra_cpu_allocated_cpus",
 		"dra_cpu_available_cpus",
 		"dra_cpu_claim_allocated_cpus",
+		"dra_cpu_nri_create_container_duration_seconds",
+		"dra_cpu_nri_remove_container_duration_seconds",
+		"dra_cpu_nri_stop_container_duration_seconds",
+		"dra_cpu_nri_synchronize_duration_seconds",
 		"dra_cpu_prepare_claim_duration_seconds",
 		"dra_cpu_prepare_claims_total",
 		"dra_cpu_reserved_cpus",

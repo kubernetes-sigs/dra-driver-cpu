@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/go-logr/logr"
@@ -30,12 +31,14 @@ import (
 )
 
 // Synchronize is called by the NRI to synchronize the state of the driver during bootstrap.
-func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, containers []*api.Container) ([]*api.ContainerUpdate, error) {
+func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, containers []*api.Container) (rupdates []*api.ContainerUpdate, rerr error) {
+	startTime := time.Now()
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen))
-
 	// this happens once at startup and it's critical enough that we always want to see it.
 	logger.Info("begin: synchronize state with the runtime", "numPods", len(pods), "numContainers", len(containers))
 	defer logger.Info("end: synchronize state with the runtime", "numPods", len(pods), "numContainers", len(containers))
+
+	defer func() { cp.metrics.RecordNRISynchronize(rerr, time.Since(startTime)) }()
 
 	cpuAllocationStore := store.NewCPUAllocation(cp.topology.cpuTopology, cp.topology.reservedCPUs)
 	podConfigStore := store.NewPodConfig()
@@ -114,6 +117,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				containerUpdates = append(containerUpdates, guaranteedUpdate)
 			}
 			podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
+			cLogger.V(6).Info("set container state", "claims", len(claimUIDs))
 		}
 	}
 
@@ -130,6 +134,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 		return nil, err
 	}
 	containerUpdates = append(containerUpdates, sharedContainerUpdates...)
+	logger.V(6).Info("synchronization complete", "updatesCount", len(containerUpdates))
 	return containerUpdates, nil
 }
 
@@ -209,7 +214,9 @@ func (cp *CPUDriver) getSharedContainerUpdates(logger logr.Logger, excludeID typ
 }
 
 // CreateContainer handles container creation requests from the NRI.
-func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
+func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) (radjust *api.ContainerAdjustment, rupdates []*api.ContainerUpdate, rerr error) {
+	startTime := time.Now()
+
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen), "pod", ctxlog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
 	logger.V(2).Info("begin: CreateContainer")
 	defer logger.V(2).Info("end: CreateContainer")
@@ -217,16 +224,19 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 	adjust := &api.ContainerAdjustment{}
 	var updates []*api.ContainerUpdate
 
+	claimCount := -1
 	claimAllocations, err := parseDRAEnvToClaimAllocations(logger, ctr.Env)
+	defer func() { cp.metrics.RecordNRICreateContainer(rerr, claimCount, time.Since(startTime)) }()
 	if err != nil {
 		logger.Error(err, "error parsing DRA env for container")
 		return nil, nil, err
 	}
+	claimCount = len(claimAllocations)
 
 	containerId := types.UID(ctr.GetId())
 	podUID := types.UID(pod.GetUid())
 
-	if len(claimAllocations) == 0 {
+	if claimCount == 0 {
 		// This is a shared container.
 		sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
 		if sharedCPUs.IsEmpty() && !cp.cpuAllocationStore.GetPreparedCPUs().IsEmpty() {
@@ -285,27 +295,34 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 //     allocation and owner remain unchanged so a restarted container reuses the same CPUs.
 //   - UnprepareResourceClaims (DRA) is the authoritative release point for the allocation and owner.
 //   - Synchronize (NRI, on restart) rebuilds the stores from the running containers' CDI env.
-func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) ([]*api.ContainerUpdate, error) {
+func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) (rupdates []*api.ContainerUpdate, rerr error) {
+	startTime := time.Now()
+
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen), "pod", ctxlog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
 	logger.V(2).Info("begin: StopContainer")
 	defer logger.V(2).Info("end: StopContainer")
 
 	updates := []*api.ContainerUpdate{}
-	_, removed := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
+	claimUIDs, removed := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
+	defer func() { cp.metrics.RecordNRIStopContainer(rerr, len(claimUIDs), time.Since(startTime)) }()
 	if !removed {
 		logger.V(2).Info("ignoring stale or unknown StopContainer event")
 		return updates, nil
 	}
+
 	return updates, nil
 }
 
 // RemoveContainer handles container removal requests from the NRI.
-func (cp *CPUDriver) RemoveContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) error {
+func (cp *CPUDriver) RemoveContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) (rerr error) {
+	startTime := time.Now()
+
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen), "pod", ctxlog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
 	logger.V(2).Info("begin: RemoveContainer")
 	defer logger.V(2).Info("end: RemoveContainer")
 
 	claimUIDs, removed := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
+	defer func() { cp.metrics.RecordNRIRemoveContainer(rerr, len(claimUIDs), time.Since(startTime)) }()
 	if !removed {
 		logger.V(2).Info("ignoring stale or unknown RemoveContainer event")
 		return nil
