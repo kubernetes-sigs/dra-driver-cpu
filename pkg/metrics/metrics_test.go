@@ -30,7 +30,7 @@ import (
 
 func TestDescriptors(t *testing.T) {
 	descriptors := Descriptors()
-	require.Len(t, descriptors, 8)
+	require.Len(t, descriptors, 9)
 
 	names := make([]string, 0, len(descriptors))
 	for _, desc := range descriptors {
@@ -48,6 +48,7 @@ func TestDescriptors(t *testing.T) {
 		"dra_cpu_prepare_claims_total",
 		"dra_cpu_unprepare_claims_total",
 		"dra_cpu_prepare_claim_duration_seconds",
+		"dra_cpu_unprepare_claim_duration_seconds",
 		"dra_cpu_claim_allocated_cpus",
 	}, names)
 	require.Equal(t, []string{"result"}, descriptors[4].Labels)
@@ -85,6 +86,7 @@ func TestNewRegistersExpectedMetricFamilies(t *testing.T) {
 		"dra_cpu_prepare_claims_total",
 		"dra_cpu_reserved_cpus",
 		"dra_cpu_resource_claims_active",
+		"dra_cpu_unprepare_claim_duration_seconds",
 		"dra_cpu_unprepare_claims_total",
 	}, names)
 }
@@ -101,7 +103,7 @@ func TestMetricsRecordsCollectors(t *testing.T) {
 	})
 	m.RecordPrepare(ResultSuccess, 150*time.Millisecond)
 	m.RecordPrepare(ResultError, 250*time.Millisecond)
-	m.RecordUnprepare(ResultSuccess)
+	m.RecordUnprepare(ResultSuccess, 100*time.Millisecond)
 	m.RecordClaimAllocatedCPUs(2)
 
 	require.InDelta(t, 2, testutil.ToFloat64(m.allocatedCPUs), 0.01)
@@ -116,6 +118,7 @@ func TestMetricsRecordsCollectors(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, families)
 	require.Equal(t, 1, testutil.CollectAndCount(m.prepareClaimDuration))
+	require.Equal(t, 1, testutil.CollectAndCount(m.unprepareClaimDuration))
 	require.Equal(t, 1, testutil.CollectAndCount(m.claimAllocatedCPUs))
 }
 
@@ -125,8 +128,8 @@ func TestDescriptorsMatchRegisteredCollectors(t *testing.T) {
 	m.SetAllocationState(AllocationState{})
 	m.RecordPrepare(ResultSuccess, time.Second)
 	m.RecordPrepare(ResultError, time.Second)
-	m.RecordUnprepare(ResultSuccess)
-	m.RecordUnprepare(ResultError)
+	m.RecordUnprepare(ResultSuccess, time.Second)
+	m.RecordUnprepare(ResultError, time.Second)
 	m.RecordClaimAllocatedCPUs(1)
 
 	families, err := reg.Gather()
@@ -148,7 +151,7 @@ func TestMetricsRejectsUnboundedResultLabels(t *testing.T) {
 	m := New(reg)
 
 	m.RecordPrepare(Result("timeout"), time.Second)
-	m.RecordUnprepare(Result("permission-denied"))
+	m.RecordUnprepare(Result("permission-denied"), time.Second)
 
 	require.InDelta(t, 1, testutil.ToFloat64(m.prepareClaims.WithLabelValues(ResultUnknown.String())), 0.01)
 	require.InDelta(t, 1, testutil.ToFloat64(m.unprepareClaims.WithLabelValues(ResultUnknown.String())), 0.01)
@@ -162,7 +165,7 @@ func TestNoopRecorder(t *testing.T) {
 	require.NotPanics(t, func() {
 		recorder.SetAllocationState(AllocationState{})
 		recorder.RecordPrepare(ResultSuccess, time.Second)
-		recorder.RecordUnprepare(ResultError)
+		recorder.RecordUnprepare(ResultError, time.Second)
 		recorder.RecordClaimAllocatedCPUs(4)
 	})
 }

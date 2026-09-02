@@ -216,4 +216,5 @@ func TestMetricsUnprepareResults(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, unprepared["claim-error"])
 	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_unprepare_claims_total", map[string]string{"result": cpumetrics.ResultError.String()}))
+	require.Equal(t, float64(2), metricValue(t, reg, "dra_cpu_unprepare_claim_duration_seconds", nil))
 }

@@ -71,10 +71,11 @@ type Metrics struct {
 	availableCPUs        prometheus.Gauge
 	reservedCPUs         prometheus.Gauge
 	activeResourceClaims prometheus.Gauge
-	prepareClaims        *prometheus.CounterVec
-	unprepareClaims      *prometheus.CounterVec
-	prepareClaimDuration prometheus.Histogram
-	claimAllocatedCPUs   prometheus.Histogram
+	prepareClaims          *prometheus.CounterVec
+	unprepareClaims        *prometheus.CounterVec
+	prepareClaimDuration   prometheus.Histogram
+	unprepareClaimDuration prometheus.Histogram
+	claimAllocatedCPUs     prometheus.Histogram
 }
 
 type metricKind string
@@ -132,6 +133,12 @@ var (
 		help:    "Duration of per-claim prepare operations in seconds.",
 		buckets: prometheus.DefBuckets,
 	}
+	unprepareClaimDurationSpec = metricSpec{
+		name:    "dra_cpu_unprepare_claim_duration_seconds",
+		kind:    metricHistogram,
+		help:    "Duration of per-claim unprepare operations in seconds.",
+		buckets: prometheus.DefBuckets,
+	}
 	claimAllocatedCPUsSpec = metricSpec{
 		name:    "dra_cpu_claim_allocated_cpus",
 		kind:    metricHistogram,
@@ -148,6 +155,7 @@ var metricSpecs = []metricSpec{
 	prepareClaimsSpec,
 	unprepareClaimsSpec,
 	prepareClaimDurationSpec,
+	unprepareClaimDurationSpec,
 	claimAllocatedCPUsSpec,
 }
 
@@ -180,14 +188,15 @@ func New(reg prometheus.Registerer) *Metrics {
 	}
 
 	m := &Metrics{
-		allocatedCPUs:        newGauge(allocatedCPUsSpec),
-		availableCPUs:        newGauge(availableCPUsSpec),
-		reservedCPUs:         newGauge(reservedCPUsSpec),
-		activeResourceClaims: newGauge(activeResourceClaimsSpec),
-		prepareClaims:        newCounterVec(prepareClaimsSpec),
-		unprepareClaims:      newCounterVec(unprepareClaimsSpec),
-		prepareClaimDuration: newHistogram(prepareClaimDurationSpec),
-		claimAllocatedCPUs:   newHistogram(claimAllocatedCPUsSpec),
+		allocatedCPUs:          newGauge(allocatedCPUsSpec),
+		availableCPUs:          newGauge(availableCPUsSpec),
+		reservedCPUs:           newGauge(reservedCPUsSpec),
+		activeResourceClaims:   newGauge(activeResourceClaimsSpec),
+		prepareClaims:          newCounterVec(prepareClaimsSpec),
+		unprepareClaims:        newCounterVec(unprepareClaimsSpec),
+		prepareClaimDuration:   newHistogram(prepareClaimDurationSpec),
+		unprepareClaimDuration: newHistogram(unprepareClaimDurationSpec),
+		claimAllocatedCPUs:     newHistogram(claimAllocatedCPUsSpec),
 	}
 
 	reg.MustRegister(
@@ -198,6 +207,7 @@ func New(reg prometheus.Registerer) *Metrics {
 		m.prepareClaims,
 		m.unprepareClaims,
 		m.prepareClaimDuration,
+		m.unprepareClaimDuration,
 		m.claimAllocatedCPUs,
 	)
 	for _, result := range []Result{ResultSuccess, ResultError, ResultUnknown} {
@@ -241,8 +251,9 @@ func (m *Metrics) RecordPrepare(result Result, duration time.Duration) {
 	m.prepareClaimDuration.Observe(duration.Seconds())
 }
 
-func (m *Metrics) RecordUnprepare(result Result) {
+func (m *Metrics) RecordUnprepare(result Result, duration time.Duration) {
 	m.unprepareClaims.WithLabelValues(result.String()).Inc()
+	m.unprepareClaimDuration.Observe(duration.Seconds())
 }
 
 func (m *Metrics) RecordClaimAllocatedCPUs(cpus int) {
@@ -256,7 +267,7 @@ func Noop() noopRecorder {
 	return noopRecorder{}
 }
 
-func (noopRecorder) SetAllocationState(AllocationState)  {}
-func (noopRecorder) RecordPrepare(Result, time.Duration) {}
-func (noopRecorder) RecordUnprepare(Result)              {}
-func (noopRecorder) RecordClaimAllocatedCPUs(int)        {}
+func (noopRecorder) SetAllocationState(AllocationState)    {}
+func (noopRecorder) RecordPrepare(Result, time.Duration)   {}
+func (noopRecorder) RecordUnprepare(Result, time.Duration) {}
+func (noopRecorder) RecordClaimAllocatedCPUs(int)          {}

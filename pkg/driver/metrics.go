@@ -25,7 +25,7 @@ import (
 type Recorder interface {
 	SetAllocationState(cpumetrics.AllocationState)
 	RecordPrepare(result cpumetrics.Result, duration time.Duration)
-	RecordUnprepare(result cpumetrics.Result)
+	RecordUnprepare(result cpumetrics.Result, duration time.Duration)
 	RecordClaimAllocatedCPUs(cpus int)
 }
 
