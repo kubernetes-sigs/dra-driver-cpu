@@ -342,13 +342,14 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 		// note kubeletplugin.NamespacedObject doesn't implement KMetadata
 		cLogger := logger.WithValues("claim", claim.String(), "claimUID", claim.UID)
 		cLogger.V(2).Info("unpreparing resource claim")
+		start := time.Now()
 		err := cp.unprepareResourceClaim(cLogger, claim)
 		result[claim.UID] = err
 		if err != nil {
 			cLogger.Error(err, "error unpreparing resources for claim")
-			cp.metrics.RecordUnprepare(cpumetrics.ResultError)
+			cp.metrics.RecordUnprepare(cpumetrics.ResultError, time.Since(start))
 		} else {
-			cp.metrics.RecordUnprepare(cpumetrics.ResultSuccess)
+			cp.metrics.RecordUnprepare(cpumetrics.ResultSuccess, time.Since(start))
 			cp.refreshAllocationMetrics()
 		}
 	}
