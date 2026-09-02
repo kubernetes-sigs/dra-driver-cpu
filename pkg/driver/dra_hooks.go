@@ -94,7 +94,7 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 		if result[claim.UID].Err != nil {
 			prepareResult = cpumetrics.ResultError
 		}
-		cp.metricsRecorder().RecordPrepare(prepareResult, time.Since(start))
+		cp.metrics.RecordPrepare(prepareResult, time.Since(start))
 	}
 	return result, nil
 }
@@ -211,7 +211,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claim.UID)
 		return result
 	}
-	cp.metricsRecorder().RecordClaimAllocatedCPUs(cpuAssignment.Size())
+	cp.metrics.RecordClaimAllocatedCPUs(cpuAssignment.Size())
 	cp.refreshAllocationMetrics()
 	return result
 }
@@ -273,7 +273,7 @@ func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi
 		cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claim.UID)
 		return result
 	}
-	cp.metricsRecorder().RecordClaimAllocatedCPUs(claimCPUSet.Size())
+	cp.metrics.RecordClaimAllocatedCPUs(claimCPUSet.Size())
 	cp.refreshAllocationMetrics()
 	return result
 }
@@ -346,33 +346,13 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 		result[claim.UID] = err
 		if err != nil {
 			cLogger.Error(err, "error unpreparing resources for claim")
-			cp.metricsRecorder().RecordUnprepare(cpumetrics.ResultError)
+			cp.metrics.RecordUnprepare(cpumetrics.ResultError)
 		} else {
-			cp.metricsRecorder().RecordUnprepare(cpumetrics.ResultSuccess)
+			cp.metrics.RecordUnprepare(cpumetrics.ResultSuccess)
 			cp.refreshAllocationMetrics()
 		}
 	}
 	return result, nil
-}
-
-func (cp *CPUDriver) metricsRecorder() cpumetrics.Recorder {
-	if cp.metrics == nil {
-		return cpumetrics.Noop()
-	}
-	return cp.metrics
-}
-
-func (cp *CPUDriver) refreshAllocationMetrics() {
-	if cp.cpuAllocationStore == nil {
-		return
-	}
-	snapshot := cp.cpuAllocationStore.Snapshot()
-	cp.metricsRecorder().SetAllocationState(cpumetrics.AllocationState{
-		AllocatedCPUs:        snapshot.AllocatedCPUs,
-		AvailableCPUs:        snapshot.AvailableCPUs,
-		ReservedCPUs:         snapshot.ReservedCPUs,
-		ActiveResourceClaims: snapshot.ActiveResourceClaims,
-	})
 }
 
 func (cp *CPUDriver) unprepareResourceClaim(logger logr.Logger, claim kubeletplugin.NamespacedObject) error {
