@@ -298,6 +298,7 @@ func TestCreateContainer(t *testing.T) {
 				podConfigStore:     tc.podConfigStore,
 				cpuAllocationStore: tc.cpuAllocationStore,
 				claimTracker:       tc.claimTracker,
+				metrics:            cpumetrics.Noop(),
 			}
 			adjust, updates, err := driver.CreateContainer(context.Background(), pod, tc.container)
 			if tc.expectedErrorContains != "" {
@@ -344,6 +345,7 @@ func TestStopContainer(t *testing.T) {
 					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
 					topology:           deviceTopology{cpuTopology: topo},
+					metrics:            cpumetrics.Noop(),
 				}
 				claimUID := types.UID("claim-uid-1")
 				requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, cpuset.New(0, 1))
@@ -360,6 +362,7 @@ func TestStopContainer(t *testing.T) {
 					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
 					topology:           deviceTopology{cpuTopology: topo},
+					metrics:            cpumetrics.Noop(),
 				}
 				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id)))
 				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
@@ -396,6 +399,7 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 		cpuAllocationStore: cpuStore,
 		claimTracker:       store.NewClaimTracker(),
 		topology:           deviceTopology{cpuTopology: topo},
+		metrics:            cpumetrics.Noop(),
 	}
 	driver.podConfigStore.SetContainerState("shared-pod", store.NewContainerState("shared", "shared-container"))
 
@@ -474,6 +478,7 @@ func TestGuaranteedContainerRestartNotBlockedByEmptySharedPool(t *testing.T) {
 		cpuAllocationStore: cpuStore,
 		claimTracker:       claimTracker,
 		topology:           deviceTopology{cpuTopology: topo},
+		metrics:            cpumetrics.Noop(),
 	}
 	driver.podConfigStore.SetContainerState("shared-pod", store.NewContainerState("shared", "shared-container"))
 	container := &api.Container{
