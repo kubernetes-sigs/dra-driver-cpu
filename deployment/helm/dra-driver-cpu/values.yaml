@@ -93,7 +93,9 @@ healthzPort: 8080 # @schema type:integer;minimum:1;maximum:65535
 
 # -- Kubelet base directory (the kubelet's own `--root-dir`). Only set this if
 # the kubelet does not use the default. The hostPath mounts and the driver flag
-# both derive from this value, so they cannot come apart. See
+# both derive from this value, so they cannot come apart. Once cleaned it may not
+# contain `$(` or `$$`, which the kubelet can reinterpret in a container's
+# argument but never in `hostPath.path` or `volumeMount.mountPath`. See
 # https://github.com/kubernetes-sigs/dra-driver-cpu/blob/main/docs/user/configuration.md
 # for details
 kubeletRootDir: /var/lib/kubelet # @schema type:string;minLength:1;pattern:^/

@@ -215,6 +215,22 @@ kubeletRootDir: /mnt/data/kubelet
 
 That one value becomes the driver's `--kubelet-root-dir` and both hostPath mounts.
 
+After path cleaning, the value may not contain `$(` or `$$`. The kubelet can
+reinterpret those in a container's argument, rewriting `$$` to a single `$` and
+substituting `$(VAR)` where that variable is defined, while `hostPath.path` and
+`volumeMount.mountPath` are taken as written. A root still carrying one after cleaning
+can therefore reach the driver as one directory and the volumes as another.
+
+Only those two sequences are refused, not the character. A lone `$`, as in
+`/var/lib/$kubelet`, is left alone by the kubelet and names the same directory
+everywhere, so it is accepted.
+
+Cleaning comes first because that is the value the chart renders, so a sequence in a
+segment the cleaning removes is not refused: `/var/lib/$(IGNORED)/../kubelet` cleans to
+`/var/lib/kubelet` and is accepted. The chart does refuse both sequences outright rather
+than only the ones the kubelet would act on: an unresolvable `$(VAR)` is left alone, and
+the chart does not predict which variables a Pod will have.
+
 Leaving `kubeletRootDir` out, or setting it to YAML `null`, selects `/var/lib/kubelet`. Helm
 drops a null key while coalescing values, so by the time the chart is rendered it looks the
 same as a release installed before this value existed, and both have to mean the standard
