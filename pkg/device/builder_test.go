@@ -136,3 +136,22 @@ func TestDeviceBuilderNodeAllocatableResourceMapping(t *testing.T) {
 		})
 	}
 }
+
+func TestMachineGroupedUsesTopologyValidatedCPUs(t *testing.T) {
+	topo := fakeTopology()
+	// CPU 4 is online but was omitted from CPUDetails because topology
+	// discovery could not validate it.
+	online := cpuset.New(0, 1, 2, 3, 4)
+
+	devices, _ := device.BuildGrouped(
+		logr.Discard(), device.GROUP_BY_MACHINE, topo, online, cpuset.New(),
+		store.NewPCIeRootMapper(), false,
+	)
+	require.Len(t, devices, 1)
+
+	capacity := devices[0].Capacity[resourceapi.QualifiedName(device.CPUResourceQualifiedName)]
+	require.Equal(t, int64(4), capacity.Value.Value())
+	numCPUs := devices[0].Attributes[device.AttributeNumCPUs]
+	require.NotNil(t, numCPUs.IntValue)
+	require.Equal(t, int64(4), *numCPUs.IntValue)
+}
