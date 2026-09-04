@@ -24,6 +24,7 @@ import (
 	"github.com/containerd/nri/pkg/api"
 	"github.com/go-logr/logr/testr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
@@ -297,6 +298,7 @@ func TestCreateContainer(t *testing.T) {
 				podConfigStore:     tc.podConfigStore,
 				cpuAllocationStore: tc.cpuAllocationStore,
 				claimTracker:       tc.claimTracker,
+				metrics:            cpumetrics.Noop(),
 			}
 			adjust, updates, err := driver.CreateContainer(context.Background(), pod, tc.container)
 			if tc.expectedErrorContains != "" {
@@ -343,6 +345,7 @@ func TestStopContainer(t *testing.T) {
 					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
 					topology:           deviceTopology{cpuTopology: topo},
+					metrics:            cpumetrics.Noop(),
 				}
 				claimUID := types.UID("claim-uid-1")
 				requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, cpuset.New(0, 1))
@@ -359,6 +362,7 @@ func TestStopContainer(t *testing.T) {
 					cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 					claimTracker:       store.NewClaimTracker(),
 					topology:           deviceTopology{cpuTopology: topo},
+					metrics:            cpumetrics.Noop(),
 				}
 				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id)))
 				driver.podConfigStore.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
@@ -395,6 +399,7 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 		cpuAllocationStore: cpuStore,
 		claimTracker:       store.NewClaimTracker(),
 		topology:           deviceTopology{cpuTopology: topo},
+		metrics:            cpumetrics.Noop(),
 	}
 	driver.podConfigStore.SetContainerState("shared-pod", store.NewContainerState("shared", "shared-container"))
 
@@ -473,6 +478,7 @@ func TestGuaranteedContainerRestartNotBlockedByEmptySharedPool(t *testing.T) {
 		cpuAllocationStore: cpuStore,
 		claimTracker:       claimTracker,
 		topology:           deviceTopology{cpuTopology: topo},
+		metrics:            cpumetrics.Noop(),
 	}
 	driver.podConfigStore.SetContainerState("shared-pod", store.NewContainerState("shared", "shared-container"))
 	container := &api.Container{
@@ -523,6 +529,7 @@ func TestNRISynchronize(t *testing.T) {
 					claimTracker:       store.NewClaimTracker(),
 					cdiMgr:             newMockCdiMgr(),
 					topology:           deviceTopology{cpuTopology: topo},
+					metrics:            cpumetrics.Noop(),
 				}
 				driver.podConfigStore.SetContainerState(types.UID(pod1.Uid), store.NewContainerState("stale-ctr", "stale-id", types.UID("stale-claim")))
 				return driver
@@ -541,6 +548,7 @@ func TestNRISynchronize(t *testing.T) {
 					"claim-A": cpuset.New(0, 1),
 				}),
 				topology: deviceTopology{cpuTopology: topo},
+				metrics:  cpumetrics.Noop(),
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
 			runtimeCtrs: []*api.Container{
@@ -572,6 +580,7 @@ func TestNRISynchronize(t *testing.T) {
 				claimTracker:       store.NewClaimTracker(),
 				cdiMgr:             newMockCdiMgr(),
 				topology:           deviceTopology{cpuTopology: topo},
+				metrics:            cpumetrics.Noop(),
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
 			runtimeCtrs: []*api.Container{
@@ -599,6 +608,7 @@ func TestNRISynchronize(t *testing.T) {
 					"claim-full": allCPUs,
 				}),
 				topology: deviceTopology{cpuTopology: topo},
+				metrics:  cpumetrics.Noop(),
 			},
 			runtimePods: []*api.PodSandbox{pod1},
 			runtimeCtrs: []*api.Container{
@@ -619,6 +629,7 @@ func TestNRISynchronize(t *testing.T) {
 					"claim-B": cpuset.New(2, 3),
 				}),
 				topology: deviceTopology{cpuTopology: topo},
+				metrics:  cpumetrics.Noop(),
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
 			runtimeCtrs: []*api.Container{
@@ -648,6 +659,7 @@ func TestNRISynchronize(t *testing.T) {
 					"claim-B": cpuset.New(2, 3),
 				}),
 				topology: deviceTopology{cpuTopology: topo},
+				metrics:  cpumetrics.Noop(),
 			},
 			runtimePods: []*api.PodSandbox{pod1},
 			runtimeCtrs: []*api.Container{
@@ -671,6 +683,7 @@ func TestNRISynchronize(t *testing.T) {
 					"claim-A": cpuset.New(0, 1),
 				}),
 				topology: deviceTopology{cpuTopology: topo},
+				metrics:  cpumetrics.Noop(),
 			},
 			runtimePods: []*api.PodSandbox{pod1},
 			runtimeCtrs: []*api.Container{
@@ -699,6 +712,7 @@ func TestNRISynchronize(t *testing.T) {
 					claimTracker:       store.NewClaimTracker(),
 					cdiMgr:             cdiMgr,
 					topology:           deviceTopology{cpuTopology: topo},
+					metrics:            cpumetrics.Noop(),
 				}
 			}(),
 			runtimePods: []*api.PodSandbox{pod1},
@@ -723,6 +737,7 @@ func TestNRISynchronize(t *testing.T) {
 					"claim-B": cpuset.New(2, 3),
 				}),
 				topology: deviceTopology{cpuTopology: topo},
+				metrics:  cpumetrics.Noop(),
 			},
 			runtimePods: []*api.PodSandbox{pod1, pod2},
 			runtimeCtrs: []*api.Container{
@@ -751,6 +766,7 @@ func TestNRISynchronize(t *testing.T) {
 					"claim-A": cpuset.New(2, 3),
 				}),
 				topology: deviceTopology{cpuTopology: topo},
+				metrics:  cpumetrics.Noop(),
 			},
 			runtimePods: []*api.PodSandbox{pod1},
 			runtimeCtrs: []*api.Container{
@@ -809,6 +825,7 @@ func TestStopContainerKeepsClaimOutOfSharedPoolUntilUnprepare(t *testing.T) {
 		cpuAllocationStore: cpuAllocationStore,
 		claimTracker:       store.NewClaimTracker(),
 		topology:           deviceTopology{cpuTopology: topo},
+		metrics:            cpumetrics.Noop(),
 	}
 	driver.cdiMgr.(*mockCdiMgr).devices[getCDIDeviceName(claimUID)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, claimedCPUs.String())
 	_, err := driver.claimTracker.SetOwner(logger, types.UID(guaranteedPod.Uid), guaranteedCtr.Name, claimUID)

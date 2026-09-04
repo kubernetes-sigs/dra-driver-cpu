@@ -29,6 +29,7 @@ import (
 	"github.com/go-logr/logr/testr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	devattr "github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -924,6 +925,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			},
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 			podConfigStore:     store.NewPodConfig(),
+			metrics:            cpumetrics.Noop(),
 		}
 		if withExistingAllocation {
 			requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, existingCPUs)
@@ -946,6 +948,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			},
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 			podConfigStore:     store.NewPodConfig(),
+			metrics:            cpumetrics.Noop(),
 		}
 		if withExistingAllocation {
 			requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, existingCPUs)
@@ -1590,6 +1593,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			cpuAllocationStore: cpuStore,
 			cdiMgr:             cdiMgr,
 			podConfigStore:     store.NewPodConfig(),
+			metrics:            cpumetrics.Noop(),
 		}, cpuStore, cdiMgr
 	}
 	makeNUMADriver := func(logger logr.Logger) (*CPUDriver, *store.CPUAllocation, *mockCdiMgr) {
@@ -1609,6 +1613,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			cpuAllocationStore: cpuStore,
 			cdiMgr:             cdiMgr,
 			podConfigStore:     store.NewPodConfig(),
+			metrics:            cpumetrics.Noop(),
 		}, cpuStore, cdiMgr
 	}
 
@@ -1808,6 +1813,7 @@ func newDriverWithAllocatedClaim(t *testing.T, logger logr.Logger, claimUID type
 		cpuAllocationStore: cpuAllocationStore,
 		claimTracker:       claimTracker,
 		podConfigStore:     store.NewPodConfig(),
+		metrics:            cpumetrics.Noop(),
 	}, mockCdiMgr
 }
 
@@ -2196,6 +2202,7 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 	t.Helper()
 	logger := testr.New(t)
 	driver := &CPUDriver{}
+	driver.metrics = cpumetrics.Noop()
 	driver.cdiMgr = cdiMgr
 	driver.driverName = testDriverName
 	driver.cpuDeviceMode = devattr.CPU_DEVICE_MODE_GROUPED

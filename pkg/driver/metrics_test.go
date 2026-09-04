@@ -67,6 +67,44 @@ func newMetricsTestDriver(t *testing.T) (*CPUDriver, *prometheus.Registry) {
 	return driver, reg
 }
 
+type workload struct {
+	claims []*resourceapi.ResourceClaim
+	pod    *api.PodSandbox
+	ctrs   []*api.Container
+}
+
+// keep these physically close to newMetricsTestDeiver because of the hidden
+// dependency on the machine topology we use to define the minimal test workloads.
+var minimalWorkloads = []workload{
+	{
+		claims: []*resourceapi.ResourceClaim{
+			individualMetricsClaim(types.UID("app-0"), "cpudev1"),
+		},
+		pod: &api.PodSandbox{Id: "sandbox-0", Uid: "pod-uid-0", Name: "pod-0"},
+		ctrs: []*api.Container{
+			{
+				Id: "container-0", PodSandboxId: "sandbox-0", Name: "app",
+				Env: []string{fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, "app-0", "1")},
+			},
+		},
+	},
+	{
+		claims: []*resourceapi.ResourceClaim{
+			individualMetricsClaim(types.UID("app-1"), "cpudev2", "cpudev3"),
+		},
+		pod: &api.PodSandbox{Id: "sandbox-1", Uid: "pod-uid-1", Name: "pod-1"},
+		ctrs: []*api.Container{
+			{
+				Id: "container-1", PodSandboxId: "sandbox-1", Name: "app-1",
+				Env: []string{fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, "app-1", "2,3")},
+			},
+			{
+				Id: "sidecar-1", PodSandboxId: "sandbox-1", Name: "sidecar-1",
+			},
+		},
+	},
+}
+
 func individualMetricsClaim(uid types.UID, devices ...string) *resourceapi.ResourceClaim {
 	results := make([]resourceapi.DeviceRequestAllocationResult, 0, len(devices))
 	for _, device := range devices {
@@ -216,4 +254,198 @@ func TestMetricsUnprepareResults(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, unprepared["claim-error"])
 	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_unprepare_claims_total", map[string]string{"result": cpumetrics.ResultError.String()}))
+	require.Equal(t, float64(2), metricValue(t, reg, "dra_cpu_unprepare_claim_duration_seconds", nil))
+}
+
+func TestMetricsNRISynchronizeSuccess(t *testing.T) {
+	driver, reg := newMetricsTestDriver(t)
+	driver.cdiMgr = newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+		"app-0": cpuset.New(1),
+		"app-1": cpuset.New(2, 3),
+	})
+
+	pods := []*api.PodSandbox{
+		{Id: "sandbox-0", Uid: "pod-uid-0", Name: "pod-0"},
+		{Id: "sandbox-1", Uid: "pod-uid-1", Name: "pod-1"},
+	}
+	containers := []*api.Container{
+		{
+			Id: "container-0", PodSandboxId: "sandbox-0", Name: "app",
+			Env: []string{fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, "app-0", "1")},
+		},
+		{
+			Id: "container-1", PodSandboxId: "sandbox-1", Name: "app-1",
+			Env: []string{fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, "app-1", "2,3")},
+		},
+		{
+			Id: "sidecar-1", PodSandboxId: "sandbox-1", Name: "sidecar-1",
+		},
+	}
+	_, err := driver.Synchronize(context.Background(), pods, containers)
+	require.NoError(t, err)
+	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_nri_synchronize_duration_seconds", map[string]string{"result": cpumetrics.ResultSuccess.String()}))
+	require.Equal(t, float64(0), metricValue(t, reg, "dra_cpu_nri_synchronize_duration_seconds", map[string]string{"result": cpumetrics.ResultError.String()}))
+}
+
+func TestMetricsNRISynchronizeFailure(t *testing.T) {
+	driver, reg := newMetricsTestDriver(t)
+	// intentionally exhausting the shared pool CPUs is both the simplest and
+	// a realistic scenario to trigger and verify a Synchronize failure.
+	driver.cdiMgr = newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
+		"app-0": cpuset.New(0, 1),
+		"app-1": cpuset.New(2, 3),
+	})
+
+	pods := []*api.PodSandbox{
+		{Id: "sandbox-0", Uid: "pod-uid-0", Name: "pod-0"},
+		{Id: "sandbox-1", Uid: "pod-uid-1", Name: "pod-1"},
+	}
+	containers := []*api.Container{
+		{
+			Id: "container-0", PodSandboxId: "sandbox-0", Name: "app",
+			Env: []string{fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, "app-0", "0,1")},
+		},
+		{
+			Id: "container-1", PodSandboxId: "sandbox-1", Name: "app-1",
+			Env: []string{fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, "app-1", "2,3")},
+		},
+		{
+			Id: "sidecar-1", PodSandboxId: "sandbox-1", Name: "sidecar-1",
+		},
+	}
+	_, err := driver.Synchronize(context.Background(), pods, containers)
+	require.Error(t, err)
+	require.Equal(t, float64(0), metricValue(t, reg, "dra_cpu_nri_synchronize_duration_seconds", map[string]string{"result": cpumetrics.ResultSuccess.String()}))
+	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_nri_synchronize_duration_seconds", map[string]string{"result": cpumetrics.ResultError.String()}))
+}
+
+func TestMetricsNRICreateContainerSuccess(t *testing.T) {
+	driver, reg := newMetricsTestDriver(t)
+
+	for _, workload := range minimalWorkloads {
+		_, err := driver.PrepareResourceClaims(context.Background(), workload.claims)
+		require.NoError(t, err)
+
+		for _, ctr := range workload.ctrs {
+			_, _, err := driver.CreateContainer(context.Background(), workload.pod, ctr)
+			require.NoError(t, err)
+		}
+	}
+	for _, alloc := range []cpumetrics.CPUAllocation{cpumetrics.CPUAllocationExclusive, cpumetrics.CPUAllocationShared} {
+		labels := map[string]string{
+			"result":              cpumetrics.ResultError.String(),
+			"cpu_allocation_mode": alloc.String(),
+		}
+		require.Equal(t, float64(0), metricValue(t, reg, "dra_cpu_nri_create_container_duration_seconds", labels))
+	}
+	require.Equal(t, float64(2), metricValue(t, reg, "dra_cpu_nri_create_container_duration_seconds", map[string]string{
+		"result":              cpumetrics.ResultSuccess.String(),
+		"cpu_allocation_mode": cpumetrics.CPUAllocationExclusive.String(),
+	}))
+	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_nri_create_container_duration_seconds", map[string]string{
+		"result":              cpumetrics.ResultSuccess.String(),
+		"cpu_allocation_mode": cpumetrics.CPUAllocationShared.String(),
+	}))
+}
+
+func TestMetricsNRICreateContainerFailure(t *testing.T) {
+	// one of the simplest failure model is intentionally skip to prepare claims
+	driver, reg := newMetricsTestDriver(t)
+
+	for _, workload := range minimalWorkloads {
+		for _, ctr := range workload.ctrs {
+			_, _, err := driver.CreateContainer(context.Background(), workload.pod, ctr)
+			if len(ctr.Env) > 0 { // crude proxy for "expects exclusive CPUs"
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		}
+	}
+	require.Equal(t, float64(0), metricValue(t, reg, "dra_cpu_nri_create_container_duration_seconds", map[string]string{
+		"result":              cpumetrics.ResultSuccess.String(),
+		"cpu_allocation_mode": cpumetrics.CPUAllocationExclusive.String(),
+	}))
+	require.Equal(t, float64(2), metricValue(t, reg, "dra_cpu_nri_create_container_duration_seconds", map[string]string{
+		"result":              cpumetrics.ResultError.String(),
+		"cpu_allocation_mode": cpumetrics.CPUAllocationExclusive.String(),
+	}))
+	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_nri_create_container_duration_seconds", map[string]string{
+		"result":              cpumetrics.ResultSuccess.String(),
+		"cpu_allocation_mode": cpumetrics.CPUAllocationShared.String(),
+	}))
+	require.Equal(t, float64(0), metricValue(t, reg, "dra_cpu_nri_create_container_duration_seconds", map[string]string{
+		"result":              cpumetrics.ResultError.String(),
+		"cpu_allocation_mode": cpumetrics.CPUAllocationShared.String(),
+	}))
+}
+
+func TestMetricsNRIStopContainer(t *testing.T) {
+	// we abuse the fact StopContainer can't fail (nor it should, in the current code shape)
+	driver, reg := newMetricsTestDriver(t)
+
+	for _, workload := range minimalWorkloads {
+		_, err := driver.PrepareResourceClaims(context.Background(), workload.claims)
+		require.NoError(t, err)
+
+		for _, ctr := range workload.ctrs {
+			// necessary prep to make sure the accounting is correct
+			_, _, err := driver.CreateContainer(context.Background(), workload.pod, ctr)
+			require.NoError(t, err)
+
+			_, err = driver.StopContainer(context.Background(), workload.pod, ctr)
+			require.NoError(t, err)
+		}
+	}
+	require.Equal(t, float64(2), metricValue(t, reg, "dra_cpu_nri_stop_container_duration_seconds", map[string]string{
+		"result":              cpumetrics.ResultSuccess.String(),
+		"cpu_allocation_mode": cpumetrics.CPUAllocationExclusive.String(),
+	}))
+	require.Equal(t, float64(0), metricValue(t, reg, "dra_cpu_nri_stop_container_duration_seconds", map[string]string{
+		"result":              cpumetrics.ResultError.String(),
+		"cpu_allocation_mode": cpumetrics.CPUAllocationExclusive.String(),
+	}))
+	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_nri_stop_container_duration_seconds", map[string]string{
+		"result":              cpumetrics.ResultSuccess.String(),
+		"cpu_allocation_mode": cpumetrics.CPUAllocationShared.String(),
+	}))
+	require.Equal(t, float64(0), metricValue(t, reg, "dra_cpu_nri_stop_container_duration_seconds", map[string]string{
+		"result":              cpumetrics.ResultError.String(),
+		"cpu_allocation_mode": cpumetrics.CPUAllocationShared.String(),
+	}))
+}
+
+func TestMetricsNRIRemoveContainer(t *testing.T) {
+	// we abuse the fact RemoveContainer can't fail (nor it should, in the current code shape)
+	driver, reg := newMetricsTestDriver(t)
+
+	for _, workload := range minimalWorkloads {
+		_, err := driver.PrepareResourceClaims(context.Background(), workload.claims)
+		require.NoError(t, err)
+
+		for _, ctr := range workload.ctrs {
+			// necessary prep to make sure the accounting is correct
+			_, _, err := driver.CreateContainer(context.Background(), workload.pod, ctr)
+			require.NoError(t, err)
+
+			err = driver.RemoveContainer(context.Background(), workload.pod, ctr)
+			require.NoError(t, err)
+		}
+	}
+	require.Equal(t, float64(2), metricValue(t, reg, "dra_cpu_nri_remove_container_duration_seconds", map[string]string{
+		"result":              cpumetrics.ResultSuccess.String(),
+		"cpu_allocation_mode": cpumetrics.CPUAllocationExclusive.String(),
+	}))
+	require.Equal(t, float64(0), metricValue(t, reg, "dra_cpu_nri_remove_container_duration_seconds", map[string]string{
+		"result":              cpumetrics.ResultError.String(),
+		"cpu_allocation_mode": cpumetrics.CPUAllocationExclusive.String(),
+	}))
+	require.Equal(t, float64(1), metricValue(t, reg, "dra_cpu_nri_remove_container_duration_seconds", map[string]string{
+		"result":              cpumetrics.ResultSuccess.String(),
+		"cpu_allocation_mode": cpumetrics.CPUAllocationShared.String(),
+	}))
+	require.Equal(t, float64(0), metricValue(t, reg, "dra_cpu_nri_remove_container_duration_seconds", map[string]string{
+		"result":              cpumetrics.ResultError.String(),
+		"cpu_allocation_mode": cpumetrics.CPUAllocationShared.String(),
+	}))
 }
