@@ -243,12 +243,12 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	plugin.refreshAllocationMetrics()
 	plugin.podConfigStore = store.NewPodConfig()
 
-	exposeCPUSet := false
+	exposeExtAttrs := false
 	logger.Info("creating CPU allocator", "method", config.Allocator)
 	switch config.Allocator {
 	case driverconfig.AllocatorExternal:
 		plugin.cpuAllocator = cpuallocator.NewExternal(config.DriverName, managedCPUs, config.ReservedCPUs)
-		exposeCPUSet = true
+		exposeExtAttrs = true
 	default:
 		plugin.cpuAllocator = cpuallocator.NewCPUManager(config.DriverName, topo)
 	}
@@ -258,7 +258,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		Layout:                                device.FindLayout(plugin.cpuDeviceMode, plugin.cpuDeviceGroupBy),
 		PCIeRootMapper:                        plugin.pcieRootMapper,
 		PublishNodeAllocatableResourceMapping: config.PublishNodeAllocatableResourceMapping,
-		ExposeCPUSet:                          exposeCPUSet,
+		ExposeExtAttrs:                        exposeExtAttrs,
 	})
 	if err != nil {
 		return nil, err

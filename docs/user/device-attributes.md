@@ -15,6 +15,11 @@ Which attributes a device carries depends on the driver's device mode
 (`cpuDeviceMode` in [Configuration](configuration.md)): `grouped` exposes one device per
 CPU group, `individual` one device per CPU.
 
+> [!IMPORTANT]
+> SMT reporting currently supports only systems without SMT and systems with two logical
+> CPUs per physical core. Do not rely on `dra.cpu/smtLevel` or `dra.cpu/smtMap` on
+> systems which do not meet this constraint.
+
 ### Grouped mode (default)
 
 #### Currently supported attributes
