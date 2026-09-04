@@ -111,8 +111,10 @@ type BuildInput struct {
 	// PublishNodeAllocatableResourceMapping enables node allocatable resource
 	// mappings on the generated devices.
 	PublishNodeAllocatableResourceMapping bool
-	// Expose the cpuset pertaining to a grouped device as attribute
-	ExposeCPUSet bool
+	// Expose attributes intended for consumption of an external allocator:
+	// - cpuset pertaining to a grouped device as attribute
+	// - smt sibling maapping
+	ExposeExtAttrs bool
 }
 
 type BuildResult struct {
@@ -157,7 +159,7 @@ func Build(input BuildInput) (BuildResult, error) {
 			res.Mapping.NameToNUMANodeID[dev.name] = dev.numaNodeID
 		}
 	}
-	res.Devices, err = createGroupedCPUDeviceSlices(input.Layout, deviceInfos, input.PCIeRootMapper, input.Inventory.CPUTopology.SMTEnabled, input.PublishNodeAllocatableResourceMapping, input.ExposeCPUSet)
+	res.Devices, err = createGroupedCPUDeviceSlices(input.Layout, deviceInfos, input.PCIeRootMapper, input.Inventory.CPUTopology, input.PublishNodeAllocatableResourceMapping, input.ExposeExtAttrs)
 	if err != nil {
 		return BuildResult{}, err
 	}
@@ -315,7 +317,7 @@ func cpuDeviceInfos(machine Inventory) []cpuDeviceInfo {
 }
 
 // createGroupedCPUDeviceSlices creates Device objects based on the CPU topology, grouped by a specific criteria.
-func createGroupedCPUDeviceSlices(layout Layout, deviceInfos []groupedCPUDeviceInfo, pcieRootMapper *store.PCIeRootMapper, smtEnabled bool, nodeAllocatableResources, exposeCPUSet bool) ([]resourceapi.Device, error) {
+func createGroupedCPUDeviceSlices(layout Layout, deviceInfos []groupedCPUDeviceInfo, pcieRootMapper *store.PCIeRootMapper, topo *cpuinfo.CPUTopology, nodeAllocatableResources, exposeExtAttrs bool) ([]resourceapi.Device, error) {
 	var devices []resourceapi.Device
 
 	for _, deviceInfo := range deviceInfos {
@@ -329,13 +331,16 @@ func createGroupedCPUDeviceSlices(layout Layout, deviceInfos []groupedCPUDeviceI
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 				AttributeSocketID:   {IntValue: new(int64(deviceInfo.socketID))},
 				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
-				AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
+				AttributeSMTEnabled: {BoolValue: new(topo.SMTEnabled)},
 			}
 			if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...); err != nil {
 				return nil, err
 			}
-			if exposeCPUSet {
+			if exposeExtAttrs {
 				if err := addCPUIDsAttribute(deviceAttrs, deviceInfo.cpus); err != nil {
+					return nil, err
+				}
+				if err := addSMTLayoutAttribute(deviceAttrs, topo); err != nil {
 					return nil, err
 				}
 			}
@@ -353,15 +358,18 @@ func createGroupedCPUDeviceSlices(layout Layout, deviceInfos []groupedCPUDeviceI
 				deviceattribute.StandardDeviceAttributeNUMANode: {IntValue: new(int64(deviceInfo.numaNodeID))},
 				// Driver-specific/non-standard attributes next
 				AttributeSocketID:   {IntValue: new(int64(deviceInfo.socketID))},
-				AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
+				AttributeSMTEnabled: {BoolValue: new(topo.SMTEnabled)},
 				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
 			}
 			addCompatibilityAttributes(deviceAttrs, int64(deviceInfo.numaNodeID))
 			if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...); err != nil {
 				return nil, err
 			}
-			if exposeCPUSet {
+			if exposeExtAttrs {
 				if err := addCPUIDsAttribute(deviceAttrs, deviceInfo.cpus); err != nil {
+					return nil, err
+				}
+				if err := addSMTLayoutAttribute(deviceAttrs, topo); err != nil {
 					return nil, err
 				}
 			}
@@ -375,7 +383,7 @@ func createGroupedCPUDeviceSlices(layout Layout, deviceInfos []groupedCPUDeviceI
 			})
 		case LayoutMachine:
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
+				AttributeSMTEnabled: {BoolValue: new(topo.SMTEnabled)},
 				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
 			}
 			if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...); err != nil {
@@ -457,5 +465,17 @@ func addCPUIDsAttribute(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAt
 		return fmt.Errorf("cpus %q cannot be represented within the limit of DRA max value length=%d", cpus.String(), resourceapi.DeviceAttributeMaxValueLength)
 	}
 	attrs[AttributeCPUIDs] = resourceapi.DeviceAttribute{StringValue: &cpuIDs}
+	return nil
+}
+
+func addSMTLayoutAttribute(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, topo *cpuinfo.CPUTopology) error {
+	smtLayout := FormatSMTLayout(topo)
+	if len(smtLayout) == 0 {
+		return fmt.Errorf("SMT layout unexpectedly empty")
+	}
+	if len(smtLayout) > resourceapi.DeviceAttributeMaxValueLength {
+		return fmt.Errorf("SMT layout %q cannot be represented within the limit of DRA max value length=%d", smtLayout, resourceapi.DeviceAttributeMaxValueLength)
+	}
+	attrs[AttributeSMTLayout] = resourceapi.DeviceAttribute{StringValue: new(smtLayout)}
 	return nil
 }

@@ -15,6 +15,10 @@ Which attributes a device carries depends on the driver's device mode
 (`cpuDeviceMode` in [Configuration](configuration.md)): `grouped` exposes one device per
 CPU group, `individual` one device per CPU.
 
+> [!IMPORTANT]
+> The driver supports only cores with one or two logical CPUs. It refuses to start when
+> a managed CPU belongs to a core with three or more logical CPUs.
+
 ### Grouped mode (default)
 
 #### Currently supported attributes
@@ -26,6 +30,17 @@ CPU group, `individual` one device per CPU.
 | `dra.cpu/numCPUs`                 | int     | CPUs available in the group                                                                                    |
 | `dra.cpu/smtEnabled`              | bool    | Whether SMT/hyper-threading is enabled on the node                                                             |
 | `resource.kubernetes.io/pcieRoot` | strings | PCIe roots local to the group's CPUs; needs `--expose-pcie-roots` and the `DRAListTypeAttributes` feature gate |
+
+#### External allocator attributes
+
+With the external allocator in grouped mode, the driver also publishes:
+
+| Attribute           | Type   | Description                                                                                         |
+| ------------------- | ------ | --------------------------------------------------------------------------------------------------- |
+| `dra.cpu/cpuIDs`    | string | Linux cpuset representation of the allocatable logical CPUs in the group                            |
+| `dra.cpu/smtLayout` | string | Node-wide logical-CPU sibling layout; intersect it with `dra.cpu/cpuIDs` for the group’s SMT layout |
+
+See [SMT layout encoding](../dev/smt-layout.md) for the `dra.cpu/smtLayout` format.
 
 #### Legacy attributes (deprecated)
 

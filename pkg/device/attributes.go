@@ -49,6 +49,7 @@ const (
 	// claim from a grouped device's capacity.
 	AttributeAllocatedNumCPUs resourceapi.QualifiedName = "dra.cpu/allocatedNumCPUs"
 	AttributeCPUIDs           resourceapi.QualifiedName = "dra.cpu/cpuIDs"
+	AttributeSMTLayout        resourceapi.QualifiedName = "dra.cpu/smtLayout"
 )
 
 // addCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other

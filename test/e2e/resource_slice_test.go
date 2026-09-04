@@ -19,6 +19,7 @@ package e2e
 import (
 	"context"
 
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	"github.com/onsi/ginkgo/v2"
@@ -35,6 +36,7 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 		fxt                    *fixture.Fixture
 		cpuDeviceMode          string
 		groupBy                string
+		allocator              string
 		slices                 []resourcev1.ResourceSlice
 		nodeAllocatableMapping bool
 	)
@@ -53,8 +55,9 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot read dracpu driver config values")
 		cpuDeviceMode = cfgValues.CPUDeviceMode
 		groupBy = cfgValues.GroupBy
+		allocator = cfgValues.Allocator
 		nodeAllocatableMapping = cfgValues.PublishNodeAllocatableResourceMapping
-		fxt.Log.Info("daemonset configuration", "cpuDeviceMode", cpuDeviceMode, "groupBy", groupBy, "nodeAllocatableMapping", nodeAllocatableMapping)
+		fxt.Log.Info("daemonset configuration", "cpuDeviceMode", cpuDeviceMode, "groupBy", groupBy, "allocator", allocator, "nodeAllocatableMapping", nodeAllocatableMapping)
 
 		ginkgo.By("listing ResourceSlices for driver " + driverName)
 		sliceList, err := fxt.K8SClientset.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{
@@ -134,6 +137,33 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 					gomega.Expect(check.checker(attr)).To(gomega.BeTrue(),
 						"device %q in slice %q attribute %s has wrong type", dev.Name, slice.Name, check.name)
 				}
+			}
+		}
+	})
+
+	ginkgo.It("should publish SMT layouts only for grouped external allocation", func() {
+		expectSMTLayout := cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED && allocator == driverconfig.AllocatorExternal
+
+		for _, slice := range slices {
+			for _, dev := range slice.Spec.Devices {
+				attr, ok := dev.Attributes[device.AttributeSMTLayout]
+				if !expectSMTLayout {
+					gomega.Expect(ok).To(gomega.BeFalse(),
+						"device %q in slice %q must not have an SMT layout", dev.Name, slice.Name)
+					continue
+				}
+				gomega.Expect(ok).To(gomega.BeTrue(),
+					"device %q in slice %q missing SMT layout", dev.Name, slice.Name)
+				gomega.Expect(attr.StringValue).ToNot(gomega.BeNil(),
+					"device %q in slice %q SMT layout has wrong type", dev.Name, slice.Name)
+				gomega.Expect(*attr.StringValue).ToNot(gomega.BeEmpty(),
+					"device %q in slice %q has an empty SMT layout", dev.Name, slice.Name)
+
+				siblings, err := device.DecodeSMTLayout(*attr.StringValue)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred(),
+					"device %q in slice %q has an invalid SMT layout", dev.Name, slice.Name)
+				gomega.Expect(siblings).ToNot(gomega.BeEmpty(),
+					"device %q in slice %q SMT layout contains no CPUs", dev.Name, slice.Name)
 			}
 		}
 	})
