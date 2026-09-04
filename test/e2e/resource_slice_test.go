@@ -81,7 +81,6 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 		}
 
 		isInt := func(a resourcev1.DeviceAttribute) bool { return a.IntValue != nil }
-		isBool := func(a resourcev1.DeviceAttribute) bool { return a.BoolValue != nil }
 		isString := func(a resourcev1.DeviceAttribute) bool { return a.StringValue != nil }
 
 		var checks []attrCheck
@@ -92,7 +91,6 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 				{deviceattribute.StandardDeviceAttributeNUMANode, isInt},
 				// Driver specific attributes next
 				{device.AttributeSocketID, isInt},
-				{device.AttributeSMTEnabled, isBool},
 				{device.AttributeCacheL3ID, isInt},
 				{device.AttributeCoreType, isString},
 				{device.AttributeCoreID, isInt},
@@ -102,7 +100,6 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 			switch groupBy {
 			case device.GROUP_BY_MACHINE:
 				checks = []attrCheck{
-					{device.AttributeSMTEnabled, isBool},
 					{device.AttributeNumCPUs, isInt},
 				}
 			case device.GROUP_BY_NUMA_NODE:
@@ -111,13 +108,11 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 					{deviceattribute.StandardDeviceAttributeNUMANode, isInt},
 					// Driver specific attributes next
 					{device.AttributeSocketID, isInt},
-					{device.AttributeSMTEnabled, isBool},
 					{device.AttributeNumCPUs, isInt},
 				}
 			case device.GROUP_BY_SOCKET:
 				checks = []attrCheck{
 					{device.AttributeSocketID, isInt},
-					{device.AttributeSMTEnabled, isBool},
 					{device.AttributeNumCPUs, isInt},
 				}
 			default:

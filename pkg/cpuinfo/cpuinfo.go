@@ -151,6 +151,7 @@ type CPUTopology struct {
 	NumSockets     int
 	NumNUMANodes   int
 	SMTEnabled     bool
+	SMTLevel       int
 	CPUDetails     CPUDetails
 }
 
@@ -200,6 +201,11 @@ func (s *SystemCPUInfo) GetCPUTopology(logger logr.Logger) (*CPUTopology, error)
 		logger.Info("could not determine SMT status from sysfs, falling back to CPU/Core count", "err", err)
 		smtEnabled = len(cpuInfos) > cores.Len()
 	}
+	smtLevel := 1
+	if smtEnabled {
+		// hardcoded: the CPUInfo struct has only 1 sibling ID, hence max supported SMTLevel is 2
+		smtLevel = 2
+	}
 
 	return &CPUTopology{
 		NumCPUs:        len(cpuInfos),
@@ -208,6 +214,7 @@ func (s *SystemCPUInfo) GetCPUTopology(logger logr.Logger) (*CPUTopology, error)
 		NumNUMANodes:   numaNodes.Len(),
 		NumUncoreCache: uncoreCaches.Len(),
 		SMTEnabled:     smtEnabled,
+		SMTLevel:       smtLevel,
 		CPUDetails:     cpuDetails,
 	}, nil
 }

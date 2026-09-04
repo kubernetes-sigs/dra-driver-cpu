@@ -2252,14 +2252,15 @@ func metadataFromCPUInfo(cpu cpuinfo.CPUInfo, smtEnabled bool) *kubeletplugin.De
 		// DRA standard attributes first
 		string(deviceattribute.StandardDeviceAttributeNUMANode): {IntValue: new(int64(cpu.NUMANodeID))},
 		// Driver specific attributes next
-		string(devattr.AttributeCPUID):      {IntValue: new(int64(cpu.CpuID))},
-		string(devattr.AttributeCoreID):     {IntValue: new(int64(cpu.CoreID))},
-		string(devattr.AttributeSocketID):   {IntValue: new(int64(cpu.SocketID))},
-		string(devattr.AttributeCacheL3ID):  {IntValue: new(int64(cpu.UncoreCacheID))},
-		string(devattr.AttributeCoreType):   {StringValue: new(cpu.CoreType.String())},
-		string(devattr.AttributeSMTEnabled): {BoolValue: new(smtEnabled)},
-		"dra.net/numaNode":                  {IntValue: new(int64(cpu.NUMANodeID))},
-		"dra.cpu/numaNodeID":                {IntValue: new(int64(cpu.NUMANodeID))},
+		string(devattr.AttributeCPUID):     {IntValue: new(int64(cpu.CpuID))},
+		string(devattr.AttributeCoreID):    {IntValue: new(int64(cpu.CoreID))},
+		string(devattr.AttributeSocketID):  {IntValue: new(int64(cpu.SocketID))},
+		string(devattr.AttributeCacheL3ID): {IntValue: new(int64(cpu.UncoreCacheID))},
+		string(devattr.AttributeCoreType):  {StringValue: new(cpu.CoreType.String())},
+		string(devattr.AttributeSMTLevel):  {IntValue: new(int64(0))},
+		"dra.cpu/smtEnabled":               {BoolValue: new(smtEnabled)},
+		"dra.cpu/numaNodeID":               {IntValue: new(int64(cpu.NUMANodeID))},
+		"dra.net/numaNode":                 {IntValue: new(int64(cpu.NUMANodeID))},
 	}
 	return &kubeletplugin.DeviceMetadata{Attributes: attrs}
 }
@@ -2281,7 +2282,8 @@ func expectedGroupMetadata(groupBy string, cpuInfos []cpuinfo.CPUInfo, reservedC
 		}
 		attrs[string(devattr.AttributeSocketID)] = resourceapi.DeviceAttribute{IntValue: new(int64(socketID))}
 		attrs[string(devattr.AttributeNumCPUs)] = resourceapi.DeviceAttribute{IntValue: new(numCPUs)}
-		attrs[string(devattr.AttributeSMTEnabled)] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
+		attrs[string(devattr.AttributeSMTLevel)] = resourceapi.DeviceAttribute{IntValue: new(int64(0))}
+		attrs["dra.cpu/smtEnabled"] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
 
 	case devattr.GROUP_BY_NUMA_NODE:
 		var numaID int
@@ -2299,9 +2301,10 @@ func expectedGroupMetadata(groupBy string, cpuInfos []cpuinfo.CPUInfo, reservedC
 		// Driver specific attributes next
 		attrs[string(devattr.AttributeSocketID)] = resourceapi.DeviceAttribute{IntValue: new(int64(socketID))}
 		attrs[string(devattr.AttributeNumCPUs)] = resourceapi.DeviceAttribute{IntValue: new(numCPUs)}
-		attrs[string(devattr.AttributeSMTEnabled)] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
-		attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: new(int64(numaID))}
+		attrs[string(devattr.AttributeSMTLevel)] = resourceapi.DeviceAttribute{IntValue: new(int64(0))}
+		attrs["dra.cpu/smtEnabled"] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
 		attrs["dra.cpu/numaNodeID"] = resourceapi.DeviceAttribute{IntValue: new(int64(numaID))}
+		attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: new(int64(numaID))}
 
 	case devattr.GROUP_BY_MACHINE:
 		var numCPUs int64
@@ -2311,7 +2314,8 @@ func expectedGroupMetadata(groupBy string, cpuInfos []cpuinfo.CPUInfo, reservedC
 			}
 		}
 		attrs[string(devattr.AttributeNumCPUs)] = resourceapi.DeviceAttribute{IntValue: new(numCPUs)}
-		attrs[string(devattr.AttributeSMTEnabled)] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
+		attrs[string(devattr.AttributeSMTLevel)] = resourceapi.DeviceAttribute{IntValue: new(int64(0))}
+		attrs["dra.cpu/smtEnabled"] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
 	}
 
 	if allocatedCPUs > 0 {
