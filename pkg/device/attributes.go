@@ -37,23 +37,29 @@ const (
 )
 
 const (
-	AttributeSocketID   resourceapi.QualifiedName = "dra.cpu/socketID"
-	AttributeSMTEnabled resourceapi.QualifiedName = "dra.cpu/smtEnabled"
-	AttributeCacheL3ID  resourceapi.QualifiedName = "dra.cpu/cacheL3ID"
-	AttributeCoreType   resourceapi.QualifiedName = "dra.cpu/coreType"
-	AttributeCoreID     resourceapi.QualifiedName = "dra.cpu/coreID"
-	AttributeCPUID      resourceapi.QualifiedName = "dra.cpu/cpuID"
-	AttributeNumCPUs    resourceapi.QualifiedName = "dra.cpu/numCPUs"
+	AttributeSocketID  resourceapi.QualifiedName = "dra.cpu/socketID"
+	AttributeCacheL3ID resourceapi.QualifiedName = "dra.cpu/cacheL3ID"
+	AttributeCoreType  resourceapi.QualifiedName = "dra.cpu/coreType"
+	AttributeCoreID    resourceapi.QualifiedName = "dra.cpu/coreID"
+	AttributeCPUID     resourceapi.QualifiedName = "dra.cpu/cpuID"
+	AttributeNumCPUs   resourceapi.QualifiedName = "dra.cpu/numCPUs"
 	// AttributeAllocatedNumCPUs is a metadata-only attribute (not published in
 	// ResourceSlice) that indicates how many CPUs were allocated to a specific
 	// claim from a grouped device's capacity.
 	AttributeAllocatedNumCPUs resourceapi.QualifiedName = "dra.cpu/allocatedNumCPUs"
+	AttributeCPUIDs           resourceapi.QualifiedName = "dra.cpu/cpuIDs"
+	AttributeSMTLevel         resourceapi.QualifiedName = "dra.cpu/smtLevel"
+	AttributeSMTMap           resourceapi.QualifiedName = "dra.cpu/smtMap"
 )
 
 // addCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other
 // DRA resource drivers leveraging attributes which are not kubernetes standard.
 // This is the "staging area" which enables attribute sharing until (or before) they become standard.
-func addCompatibilityAttributes(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, numaID int64) {
+func addCompatibilityAttributes(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, numaID int64, smtEnabled bool) {
+	attrs["dra.cpu/smtEnabled"] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
+	if numaID < 0 {
+		return
+	}
 	attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: new(numaID)}
 	attrs["dra.cpu/numaNodeID"] = resourceapi.DeviceAttribute{IntValue: new(numaID)}
 }

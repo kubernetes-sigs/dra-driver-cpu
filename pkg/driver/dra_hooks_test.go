@@ -27,6 +27,8 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/testr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	devattr "github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
@@ -940,12 +942,15 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			cpuDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
 			cpuDeviceGroupBy: devattr.GROUP_BY_SOCKET,
 			topology: deviceTopology{
-				cpuTopology:            topo,
+				Inventory: devattr.Inventory{
+					CPUTopology: topo,
+				},
 				deviceNameToSocketID:   map[string]int{"cpudevsocket0": 0},
 				deviceNameToNUMANodeID: map[string]int{},
 			},
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 			podConfigStore:     store.NewPodConfig(),
+			cpuAllocator:       cpuallocator.NewCPUManager(testDriverName, topo),
 		}
 		if withExistingAllocation {
 			requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, existingCPUs)
@@ -1042,12 +1047,17 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			},
 			SysFS: testSysFS(cpuInfos),
 		}
+		allocator := driverconfig.AllocatorCPUManager
+		if groupBy == devattr.GROUP_BY_MACHINE {
+			allocator = driverconfig.AllocatorExternal
+		}
 		conf := Config{
 			DriverName:       testDriverName,
 			NodeName:         testNodeName,
 			CPUDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
 			CPUDeviceGroupBy: groupBy,
 			ReservedCPUs:     reservedCPUs,
+			Allocator:        allocator,
 		}
 		driver, err := New(testr.New(t), prov, &conf)
 		require.NoError(t, err)
@@ -1583,11 +1593,14 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			cpuDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
 			cpuDeviceGroupBy: devattr.GROUP_BY_SOCKET,
 			topology: deviceTopology{
-				cpuTopology:            topo,
+				Inventory: devattr.Inventory{
+					CPUTopology: topo,
+				},
 				deviceNameToSocketID:   map[string]int{"cpudevsocket0": 0, "cpudevsocket1": 1},
 				deviceNameToNUMANodeID: map[string]int{},
 			},
 			cpuAllocationStore: cpuStore,
+			cpuAllocator:       cpuallocator.NewCPUManager(testDriverName, topo),
 			cdiMgr:             cdiMgr,
 			podConfigStore:     store.NewPodConfig(),
 		}, cpuStore, cdiMgr
@@ -1602,11 +1615,14 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			cpuDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
 			cpuDeviceGroupBy: devattr.GROUP_BY_NUMA_NODE,
 			topology: deviceTopology{
-				cpuTopology:            topo,
+				Inventory: devattr.Inventory{
+					CPUTopology: topo,
+				},
 				deviceNameToSocketID:   map[string]int{},
 				deviceNameToNUMANodeID: map[string]int{"cpudevnuma0": 0, "cpudevnuma1": 1},
 			},
 			cpuAllocationStore: cpuStore,
+			cpuAllocator:       cpuallocator.NewCPUManager(testDriverName, topo),
 			cdiMgr:             cdiMgr,
 			podConfigStore:     store.NewPodConfig(),
 		}, cpuStore, cdiMgr
@@ -2151,7 +2167,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 				}(),
 			},
 			expectedErrors: map[string]string{
-				"claim-1": "are already assigned to another device in this claim",
+				"claim-1": "opaque cpuset size 2 does not match the request total of 4 CPUs",
 			},
 		},
 	}
@@ -2163,7 +2179,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 				testReserved = tc.reservedCPUs
 			}
 			mockCdi := newMockCdiMgr()
-			driver := createCPUDriverForTest(t, devattr.GROUP_BY_MACHINE, cpuInfos, tc.initialAllocations, testReserved, mockCdi)
+			driver := createCPUDriverExternalAllocForTest(t, devattr.GROUP_BY_MACHINE, cpuInfos, tc.initialAllocations, testReserved, mockCdi)
 
 			prepared, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
 			require.NoError(t, err)
@@ -2192,7 +2208,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 	}
 }
 
-func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet, cdiMgr cdiManager) *CPUDriver {
+func createCPUDriverExternalAllocForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet, cdiMgr cdiManager) *CPUDriver {
 	t.Helper()
 	logger := testr.New(t)
 	driver := &CPUDriver{}
@@ -2203,10 +2219,12 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 	driver.topology.deviceNameToSocketID = make(map[string]int)
 	driver.topology.deviceNameToNUMANodeID = make(map[string]int)
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
-	driver.topology.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
-	driver.topology.onlineCPUs = driver.topology.cpuTopology.CPUDetails.CPUs()
-	driver.cpuAllocationStore = store.NewCPUAllocation(driver.topology.cpuTopology, reservedCPUs)
+	driver.topology.CPUTopology, _ = mockProvider.GetCPUTopology(logger)
+	driver.topology.OnlineCPUs = driver.topology.CPUTopology.CPUDetails.CPUs()
+	driver.topology.ReservedCPUs = reservedCPUs
+	driver.cpuAllocationStore = store.NewCPUAllocation(driver.topology.CPUTopology, reservedCPUs)
 	driver.podConfigStore = store.NewPodConfig()
+	driver.cpuAllocator = cpuallocator.NewExternal(testDriverName, driver.topology.OnlineCPUs, reservedCPUs)
 	for claimUID, cpus := range initialAllocations {
 		requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, cpus)
 	}
@@ -2234,14 +2252,15 @@ func metadataFromCPUInfo(cpu cpuinfo.CPUInfo, smtEnabled bool) *kubeletplugin.De
 		// DRA standard attributes first
 		string(deviceattribute.StandardDeviceAttributeNUMANode): {IntValue: new(int64(cpu.NUMANodeID))},
 		// Driver specific attributes next
-		string(devattr.AttributeCPUID):      {IntValue: new(int64(cpu.CpuID))},
-		string(devattr.AttributeCoreID):     {IntValue: new(int64(cpu.CoreID))},
-		string(devattr.AttributeSocketID):   {IntValue: new(int64(cpu.SocketID))},
-		string(devattr.AttributeCacheL3ID):  {IntValue: new(int64(cpu.UncoreCacheID))},
-		string(devattr.AttributeCoreType):   {StringValue: new(cpu.CoreType.String())},
-		string(devattr.AttributeSMTEnabled): {BoolValue: new(smtEnabled)},
-		"dra.net/numaNode":                  {IntValue: new(int64(cpu.NUMANodeID))},
-		"dra.cpu/numaNodeID":                {IntValue: new(int64(cpu.NUMANodeID))},
+		string(devattr.AttributeCPUID):     {IntValue: new(int64(cpu.CpuID))},
+		string(devattr.AttributeCoreID):    {IntValue: new(int64(cpu.CoreID))},
+		string(devattr.AttributeSocketID):  {IntValue: new(int64(cpu.SocketID))},
+		string(devattr.AttributeCacheL3ID): {IntValue: new(int64(cpu.UncoreCacheID))},
+		string(devattr.AttributeCoreType):  {StringValue: new(cpu.CoreType.String())},
+		string(devattr.AttributeSMTLevel):  {IntValue: new(int64(0))},
+		"dra.cpu/smtEnabled":               {BoolValue: new(smtEnabled)},
+		"dra.cpu/numaNodeID":               {IntValue: new(int64(cpu.NUMANodeID))},
+		"dra.net/numaNode":                 {IntValue: new(int64(cpu.NUMANodeID))},
 	}
 	return &kubeletplugin.DeviceMetadata{Attributes: attrs}
 }
@@ -2263,7 +2282,8 @@ func expectedGroupMetadata(groupBy string, cpuInfos []cpuinfo.CPUInfo, reservedC
 		}
 		attrs[string(devattr.AttributeSocketID)] = resourceapi.DeviceAttribute{IntValue: new(int64(socketID))}
 		attrs[string(devattr.AttributeNumCPUs)] = resourceapi.DeviceAttribute{IntValue: new(numCPUs)}
-		attrs[string(devattr.AttributeSMTEnabled)] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
+		attrs[string(devattr.AttributeSMTLevel)] = resourceapi.DeviceAttribute{IntValue: new(int64(0))}
+		attrs["dra.cpu/smtEnabled"] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
 
 	case devattr.GROUP_BY_NUMA_NODE:
 		var numaID int
@@ -2281,9 +2301,10 @@ func expectedGroupMetadata(groupBy string, cpuInfos []cpuinfo.CPUInfo, reservedC
 		// Driver specific attributes next
 		attrs[string(devattr.AttributeSocketID)] = resourceapi.DeviceAttribute{IntValue: new(int64(socketID))}
 		attrs[string(devattr.AttributeNumCPUs)] = resourceapi.DeviceAttribute{IntValue: new(numCPUs)}
-		attrs[string(devattr.AttributeSMTEnabled)] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
-		attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: new(int64(numaID))}
+		attrs[string(devattr.AttributeSMTLevel)] = resourceapi.DeviceAttribute{IntValue: new(int64(0))}
+		attrs["dra.cpu/smtEnabled"] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
 		attrs["dra.cpu/numaNodeID"] = resourceapi.DeviceAttribute{IntValue: new(int64(numaID))}
+		attrs["dra.net/numaNode"] = resourceapi.DeviceAttribute{IntValue: new(int64(numaID))}
 
 	case devattr.GROUP_BY_MACHINE:
 		var numCPUs int64
@@ -2293,7 +2314,8 @@ func expectedGroupMetadata(groupBy string, cpuInfos []cpuinfo.CPUInfo, reservedC
 			}
 		}
 		attrs[string(devattr.AttributeNumCPUs)] = resourceapi.DeviceAttribute{IntValue: new(numCPUs)}
-		attrs[string(devattr.AttributeSMTEnabled)] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
+		attrs[string(devattr.AttributeSMTLevel)] = resourceapi.DeviceAttribute{IntValue: new(int64(0))}
+		attrs["dra.cpu/smtEnabled"] = resourceapi.DeviceAttribute{BoolValue: new(smtEnabled)}
 	}
 
 	if allocatedCPUs > 0 {

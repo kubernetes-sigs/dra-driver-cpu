@@ -55,6 +55,11 @@ honor these settings, where applicable.
   NOTE: Likewise the e2e tests, the Makefile also behaves differently depending on this setting.
   It is recommended to set it before to run targets like `make ci-manifests`.
 
+- `DRACPU_E2E_ALLOCATOR`: (optional): If set, change the behavior of the tests to assume
+  the driver is configured with the corresponding allocator. Is meant to enable external allocator testing
+  and/or machine mode testing.
+  NOTE: the Makefile defaults to "cpumanager" if not set, because a nonempty value is needed internally.
+
 - `DRACPU_E2E_NODE_ALLOCATABLE_MAPPING`: (optional, default `false`): when `true`, *the Makefile*
   `ci-kind-setup` target deploys the driver with the
   `driverConfig.publishNodeAllocatableResourceMapping: true` option; any other value

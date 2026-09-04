@@ -89,12 +89,20 @@ func TestDeviceBuilderNodeAllocatableResourceMapping(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			mc := device.Inventory{
+				CPUTopology:  topo,
+				OnlineCPUs:   online,
+				ReservedCPUs: reserved,
+			}
+
+			var err error
 			var devices []resourceapi.Device
 			if tc.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
-				devices, _ = device.BuildGrouped(logr.Discard(), tc.groupBy, topo, online, reserved, store.NewPCIeRootMapper(), tc.publishNodeAllocatableMapping)
+				devices, _, err = device.BuildGrouped(logr.Discard(), tc.groupBy, mc, store.NewPCIeRootMapper(), tc.publishNodeAllocatableMapping, false)
 			} else {
-				devices, _ = device.Build(topo, reserved, store.NewPCIeRootMapper(), tc.publishNodeAllocatableMapping)
+				devices, _, err = device.Build(mc, store.NewPCIeRootMapper(), tc.publishNodeAllocatableMapping)
 			}
+			require.NoError(t, err)
 			require.NotEmpty(t, devices)
 
 			for _, dev := range devices {
