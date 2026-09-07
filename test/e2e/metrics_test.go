@@ -21,9 +21,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"iter"
 	"math"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -206,6 +208,115 @@ var _ = ginkgo.When("checking metrics", ginkgo.Serial, ginkgo.Label("metrics"), 
 				g.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse baseline allocation metrics")
 				expectBasicMetricProperties(g, snapshot)
 				g.Expect(snapshot).To(gomega.Equal(allocBaseline))
+			}).WithTimeout(driverPodPollTimeout).WithPolling(driverPodPollInterval).Should(gomega.Succeed())
+		})
+	})
+
+	ginkgo.Context("NRI specific", func() {
+		ginkgo.It("reconciles metrics across driver restart and workload deletion", func(ctx context.Context) {
+			rawMetrics, err := getDriverRawMetrics(ctx, metricsFxt, targetNode.Name)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot fetch baseline NRI metrics")
+			baseline, err := parseNRIMetricSnapshot(rawMetrics)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse baseline NRI metrics")
+			expectBasicNRIMetricPropertiesNow(baseline)
+
+			claimTemplate := resourcev1.ResourceClaimTemplate{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "cpu-claim-metrics",
+				},
+				Spec: resourcev1.ResourceClaimTemplateSpec{
+					Spec: claimSpec,
+				},
+			}
+			createdClaimTemplate, err := metricsFxt.K8SClientset.ResourceV1().ResourceClaimTemplates(metricsFxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			testerPod := makeTesterPodWithExclusiveCPUClaim(metricsFxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, 1, targetNode.Name, getDriverConfig(ctx, metricsFxt.K8SClientset).PublishNodeAllocatableResourceMapping)
+			createdPod, err := e2epod.CreateSync(ctx, metricsFxt.K8SClientset, testerPod)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			ginkgo.By("verifying NRI metrics reflect the new claim")
+			gomega.Eventually(func(g gomega.Gomega) {
+				rawMetrics, err := getDriverRawMetrics(ctx, metricsFxt, targetNode.Name)
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "cannot fetch raw NRI metrics snapshot")
+				snapshot, err := parseNRIMetricSnapshot(rawMetrics)
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse raw NRI metrics snapshot")
+				expectBasicNRIMetricProperties(g, snapshot)
+				for key := range expectedNRIMetricKeys() {
+					if key.Name != "dra_cpu_nri_create_container_duration_seconds" {
+						continue
+					}
+					var delta uint64
+					if key.Result == "success" && key.CPUAllocationMode == "exclusive" {
+						delta = 1
+					}
+					expectNRIChange(g, baseline, snapshot, delta, key)
+				}
+			}).WithTimeout(driverPodPollTimeout).WithPolling(driverPodPollInterval).Should(gomega.Succeed())
+
+			ginkgo.DeferCleanup(func(ctx context.Context) {
+				restoreDriverDaemonSet(ctx, metricsFxt.K8SClientset, orgDaemonSet)
+			})
+
+			ginkgo.By("stopping the driver on the target node")
+			excludeNodeFromDriverDaemonSet(ctx, metricsFxt.K8SClientset, targetNode.Name)
+			waitForDriverPodTerminationOnNode(ctx, metricsFxt.K8SClientset, targetNode.Name)
+
+			ginkgo.By("restoring the driver on the target node")
+			restoreDriverDaemonSet(ctx, metricsFxt.K8SClientset, orgDaemonSet)
+			waitForDriverPodReadyOnNode(ctx, metricsFxt.K8SClientset, targetNode.Name)
+
+			rawMetricsRestarted, err := getDriverRawMetrics(ctx, metricsFxt, targetNode.Name)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot fetch baseline NRI metrics post driver restart")
+			baselineRestarted, err := parseNRIMetricSnapshot(rawMetricsRestarted)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse baseline NRI metrics post driver restart")
+			expectBasicNRIMetricPropertiesNow(baselineRestarted)
+
+			ginkgo.By("verifying NRI metrics correctly reflect synchronization on restart")
+			gomega.Eventually(func(g gomega.Gomega) {
+				rawMetrics, err := getDriverRawMetrics(ctx, metricsFxt, targetNode.Name)
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "cannot fetch raw NRI metrics snapshot")
+				snapshot, err := parseNRIMetricSnapshot(rawMetrics)
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse raw NRI metrics snapshot")
+				expectBasicNRIMetricProperties(g, snapshot)
+
+				for result, expectedCount := range map[string]uint64{
+					"success": 1,
+					"error":   0,
+					"unknown": 0,
+				} {
+					key := nriMetricKey{Name: "dra_cpu_nri_synchronize_duration_seconds", Result: result}
+					syncHist, ok := snapshot.Histograms[key]
+					g.Expect(ok).To(gomega.BeTrue(), "missing metric for %s synchronize", result)
+					g.Expect(syncHist.Count).To(gomega.Equal(expectedCount), "unexpected synchronize %s count %d", result, syncHist.Count)
+				}
+			}).WithTimeout(driverPodPollTimeout).WithPolling(driverPodPollInterval).Should(gomega.Succeed())
+
+			ginkgo.By("deleting the workload and verifying NRI metrics update accordingly")
+			gomega.Expect(e2epod.DeleteSync(ctx, metricsFxt.K8SClientset, createdPod)).To(gomega.Succeed(), "cannot delete tester pod %s", e2epod.Identify(createdPod))
+			gomega.Eventually(func(g gomega.Gomega) {
+				rawMetrics, err := getDriverRawMetrics(ctx, metricsFxt, targetNode.Name)
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "cannot fetch raw NRI metrics snapshot")
+				snapshot, err := parseNRIMetricSnapshot(rawMetrics)
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse raw NRI metrics snapshot")
+				expectBasicNRIMetricProperties(g, snapshot)
+				for key := range expectedNRIMetricKeys() {
+					if key.Name != "dra_cpu_nri_stop_container_duration_seconds" {
+						continue
+					}
+					var delta uint64
+					if key.Result == "success" && key.CPUAllocationMode == "exclusive" {
+						delta = 1
+					}
+					expectNRIChange(g, baselineRestarted, snapshot, delta, key)
+				}
+				for key := range expectedNRIMetricKeys() {
+					if key.Name != "dra_cpu_nri_remove_container_duration_seconds" {
+						continue
+					}
+					delta := uint64(0)
+					expectNRIChange(g, baselineRestarted, snapshot, delta, key)
+				}
 			}).WithTimeout(driverPodPollTimeout).WithPolling(driverPodPollInterval).Should(gomega.Succeed())
 		})
 	})
@@ -439,4 +550,186 @@ func waitForDriverPodReadyOnNode(ctx context.Context, cs kubernetes.Interface, n
 		}
 		g.Expect(ready).To(gomega.BeTrue(), "driver pod on node %q is not ready", nodeName)
 	}).WithTimeout(driverPodPollTimeout).WithPolling(driverPodPollInterval).Should(gomega.Succeed(), "timed out waiting for pod to become ready")
+}
+
+type nriMetricKey struct {
+	Name              string
+	Result            string
+	CPUAllocationMode string
+}
+
+type nriHistogramSnapshot struct {
+	Count   uint64
+	Sum     float64
+	Buckets map[float64]uint64
+}
+
+type nriMetricSnapshot struct {
+	Histograms map[nriMetricKey]nriHistogramSnapshot
+}
+
+func expectNRIChange(g gomega.Gomega, prev, cur nriMetricSnapshot, delta uint64, key nriMetricKey) {
+	prevHist, ok := prev.Histograms[key]
+	g.Expect(ok).To(gomega.BeTrue(), "missing previous sample for %q", key)
+	curHist, ok := cur.Histograms[key]
+	g.Expect(ok).To(gomega.BeTrue(), "missing current sample for %q", key)
+	dt := curHist.Count - prevHist.Count
+	g.Expect(dt).To(gomega.Equal(delta), "computed delta %d different from expected delta %d", dt, delta)
+}
+
+func expectBasicNRIMetricPropertiesNow(snapshot nriMetricSnapshot) {
+	ginkgo.GinkgoHelper()
+	for key := range expectedNRIMetricKeys() {
+		hist, ok := snapshot.Histograms[key]
+		gomega.Expect(ok).To(gomega.BeTrue(), "missing expected key %q", key)
+		gomega.Expect(hist.Sum).To(gomega.BeNumerically(">=", 0), "sum for key %q must be non-negative", key)
+		gomega.Expect(hist.Buckets).ToNot(gomega.BeEmpty(), "histogram for key %q has no buckets", key)
+
+		upperBounds := make([]float64, 0, len(hist.Buckets))
+		for upperBound := range hist.Buckets {
+			upperBounds = append(upperBounds, upperBound)
+		}
+		sort.Float64s(upperBounds)
+
+		var previousCount uint64
+		for _, upperBound := range upperBounds {
+			count := hist.Buckets[upperBound]
+			// Prometheus histogram buckets are cumulative: each bucket includes all
+			// observations in the preceding buckets, and cannot exceed the total count.
+			gomega.Expect(count).To(gomega.BeNumerically("<=", hist.Count), "bucket %v for key %q exceeds the total count", upperBound, key)
+			gomega.Expect(count).To(gomega.BeNumerically(">=", previousCount), "bucket counts for key %q must be cumulative", key)
+			previousCount = count
+		}
+	}
+}
+
+func expectBasicNRIMetricProperties(g gomega.Gomega, snapshot nriMetricSnapshot) {
+	ginkgo.GinkgoHelper()
+	for key := range expectedNRIMetricKeys() {
+		hist, ok := snapshot.Histograms[key]
+		g.Expect(ok).To(gomega.BeTrue(), "missing expected key %q", key)
+		g.Expect(hist.Sum).To(gomega.BeNumerically(">=", 0), "sum for key %q must be non-negative", key)
+		g.Expect(hist.Buckets).ToNot(gomega.BeEmpty(), "histogram for key %q has no buckets", key)
+
+		upperBounds := make([]float64, 0, len(hist.Buckets))
+		for upperBound := range hist.Buckets {
+			upperBounds = append(upperBounds, upperBound)
+		}
+		sort.Float64s(upperBounds)
+
+		var previousCount uint64
+		for _, upperBound := range upperBounds {
+			count := hist.Buckets[upperBound]
+			// Prometheus histogram buckets are cumulative: each bucket includes all
+			// observations in the preceding buckets, and cannot exceed the total count.
+			g.Expect(count).To(gomega.BeNumerically("<=", hist.Count), "bucket %v for key %q exceeds the total count", upperBound, key)
+			g.Expect(count).To(gomega.BeNumerically(">=", previousCount), "bucket counts for key %q must be cumulative", key)
+			previousCount = count
+		}
+	}
+}
+
+func parseNRIMetricSnapshot(rawMetrics string) (nriMetricSnapshot, error) {
+	parser := expfmt.NewTextParser(model.UTF8Validation)
+	families, err := parser.TextToMetricFamilies(strings.NewReader(rawMetrics))
+	if err != nil {
+		return nriMetricSnapshot{}, err
+	}
+
+	expectedLabels := map[string]map[string]bool{
+		"dra_cpu_nri_synchronize_duration_seconds":      {"result": true},
+		"dra_cpu_nri_create_container_duration_seconds": {"result": true, "cpu_allocation_mode": true},
+		"dra_cpu_nri_stop_container_duration_seconds":   {"result": true, "cpu_allocation_mode": true},
+		"dra_cpu_nri_remove_container_duration_seconds": {"result": true, "cpu_allocation_mode": true},
+	}
+
+	snapshot := nriMetricSnapshot{Histograms: make(map[nriMetricKey]nriHistogramSnapshot)}
+	for metricName, labels := range expectedLabels {
+		family, ok := families[metricName]
+		if !ok {
+			return nriMetricSnapshot{}, fmt.Errorf("metric %q not found", metricName)
+		}
+		if family.GetType() != dto.MetricType_HISTOGRAM {
+			return nriMetricSnapshot{}, fmt.Errorf("metric %q has unexpected type %q", metricName, family.GetType())
+		}
+
+		for _, metric := range family.Metric {
+			metricLabels := make(map[string]string, len(metric.Label))
+			for _, label := range metric.Label {
+				labelName := label.GetName()
+				if !labels[labelName] {
+					return nriMetricSnapshot{}, fmt.Errorf("metric %q has unexpected label %q", metricName, labelName)
+				}
+				if _, duplicate := metricLabels[labelName]; duplicate {
+					return nriMetricSnapshot{}, fmt.Errorf("metric %q has duplicate label %q", metricName, labelName)
+				}
+				metricLabels[labelName] = label.GetValue()
+			}
+			for labelName := range labels {
+				if _, found := metricLabels[labelName]; !found {
+					return nriMetricSnapshot{}, fmt.Errorf("metric %q is missing label %q", metricName, labelName)
+				}
+			}
+
+			histogram := metric.GetHistogram()
+			if histogram == nil {
+				return nriMetricSnapshot{}, fmt.Errorf("metric %q has no histogram value", metricName)
+			}
+			key := nriMetricKey{
+				Name:              metricName,
+				Result:            metricLabels["result"],
+				CPUAllocationMode: metricLabels["cpu_allocation_mode"],
+			}
+			if _, duplicate := snapshot.Histograms[key]; duplicate {
+				return nriMetricSnapshot{}, fmt.Errorf("metric %q has duplicate series for result=%q, cpu_allocation_mode=%q", metricName, key.Result, key.CPUAllocationMode)
+			}
+
+			buckets := make(map[float64]uint64, len(histogram.Bucket))
+			for _, bucket := range histogram.Bucket {
+				upperBound := bucket.GetUpperBound()
+				if _, duplicate := buckets[upperBound]; duplicate {
+					return nriMetricSnapshot{}, fmt.Errorf("metric %q has duplicate bucket with upper bound %v", metricName, upperBound)
+				}
+				buckets[upperBound] = bucket.GetCumulativeCount()
+			}
+			snapshot.Histograms[key] = nriHistogramSnapshot{
+				Count:   histogram.GetSampleCount(),
+				Sum:     histogram.GetSampleSum(),
+				Buckets: buckets,
+			}
+		}
+	}
+
+	return snapshot, nil
+}
+
+func expectedNRIMetricKeys() iter.Seq[nriMetricKey] {
+	return func(yield func(nriMetricKey) bool) {
+		for _, result := range []string{"success", "error", "unknown"} {
+			if !yield(nriMetricKey{
+				Name:   "dra_cpu_nri_synchronize_duration_seconds",
+				Result: result,
+			}) {
+				return
+			}
+		}
+
+		for _, metricName := range []string{
+			"dra_cpu_nri_create_container_duration_seconds",
+			"dra_cpu_nri_stop_container_duration_seconds",
+			"dra_cpu_nri_remove_container_duration_seconds",
+		} {
+			for _, result := range []string{"success", "error", "unknown"} {
+				for _, allocationMode := range []string{"shared", "exclusive"} {
+					if !yield(nriMetricKey{
+						Name:              metricName,
+						Result:            result,
+						CPUAllocationMode: allocationMode,
+					}) {
+						return
+					}
+				}
+			}
+		}
+	}
 }
