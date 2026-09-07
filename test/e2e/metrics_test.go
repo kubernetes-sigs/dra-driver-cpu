@@ -73,32 +73,44 @@ func (s allocationMetricSnapshot) String() string {
 // This serial spec complements the unit coverage in pkg/driver/metrics_test.go
 // with a real-cluster check that gauge state survives NRI restart and is released
 // again when the workload stops.
-var _ = ginkgo.Describe("Metrics", ginkgo.Serial, func() {
-	ginkgo.It("reconciles allocation metrics across driver restart and workload deletion", func(ctx context.Context) {
-		dracpuTesterImage := os.Getenv("DRACPU_E2E_TEST_IMAGE")
+var _ = ginkgo.When("checking metrics", ginkgo.Serial, ginkgo.Label("metrics"), func() {
+
+	var dracpuTesterImage string
+	var rootFxt *fixture.Fixture
+	var metricsFxt *fixture.Fixture
+	var targetNode *v1.Node
+	var daemonSet *appsv1.DaemonSet
+	var orgDaemonSet *appsv1.DaemonSet
+	var cfgValues driverConfigValues
+	var claimSpec resourcev1.ResourceClaimSpec
+	var rawMetrics string
+	var allocBaseline allocationMetricSnapshot
+
+	ginkgo.BeforeEach(func(ctx context.Context) {
+		dracpuTesterImage = os.Getenv("DRACPU_E2E_TEST_IMAGE")
 		gomega.Expect(dracpuTesterImage).ToNot(gomega.BeEmpty(), "missing environment variable DRACPU_E2E_TEST_IMAGE")
 
-		rootFxt, err := fixture.ForGinkgo()
+		var err error
+		rootFxt, err = fixture.ForGinkgo()
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create root fixture: %v", err)
-		metricsFxt := rootFxt.WithPrefix("metrics")
+		metricsFxt = rootFxt.WithPrefix("metrics")
 		gomega.Expect(metricsFxt.Setup(ctx)).To(gomega.Succeed())
 		ginkgo.DeferCleanup(metricsFxt.Teardown)
 
-		targetNode, err := e2enode.PickWorker(ctx, metricsFxt.K8SClientset, 5*time.Second, 1*time.Minute, metricsFxt.Log)
+		targetNode, err = e2enode.PickWorker(ctx, metricsFxt.K8SClientset, 5*time.Second, 1*time.Minute, metricsFxt.Log)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		metricsFxt.Log.Info("using worker node", "nodeName", targetNode.Name)
 
-		daemonSet, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, driverDaemonSetName, metav1.GetOptions{})
+		daemonSet, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, driverDaemonSetName, metav1.GetOptions{})
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get dracpu daemonset")
 		gomega.Expect(daemonSet.Spec.Template.Spec.Containers).ToNot(gomega.BeEmpty(), "no containers in dracpu daemonset")
-		orgDaemonSet := daemonSet.DeepCopy()
+		orgDaemonSet = daemonSet.DeepCopy()
 
-		cfgValues, err := getDriverConfigValues(ctx, rootFxt.K8SClientset, daemonSetNamespace, daemonSet)
+		cfgValues, err = getDriverConfigValues(ctx, rootFxt.K8SClientset, daemonSetNamespace, daemonSet)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot read dracpu driver config values")
 		cpuDeviceMode := cfgValues.CPUDeviceMode
 		groupBy := cfgValues.GroupBy
 
-		var claimSpec resourcev1.ResourceClaimSpec
 		if cpuDeviceMode == "grouped" && groupBy == "machine" {
 			var reservedCPUs cpuset.CPUSet
 			if len(cfgValues.ReservedCPUs) > 0 {
@@ -117,72 +129,85 @@ var _ = ginkgo.Describe("Metrics", ginkgo.Serial, func() {
 			claimSpec = makeResourceClaimSpec(1, cpuDeviceMode == "grouped")
 		}
 
-		baseline, err := getDriverAllocationMetrics(ctx, metricsFxt.K8SClientset, targetNode.Name)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get baseline allocation metrics")
-		expectBasicMetricPropertiesNow(baseline)
-		if baseline.AvailableCPUs < 1 {
-			ginkgo.Skip(fmt.Sprintf("no available CPUs reported on node %q: %s", targetNode.Name, baseline.String()))
+		rawMetrics, err = getDriverRawMetrics(ctx, metricsFxt, targetNode.Name)
+		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot fetch raw allocation metrics")
+		allocBaseline, err = parseAllocationMetricSnapshot(rawMetrics)
+		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse baseline allocation metrics")
+		expectBasicMetricPropertiesNow(allocBaseline)
+		if allocBaseline.AvailableCPUs < 1 {
+			ginkgo.Skip(fmt.Sprintf("no available CPUs reported on node %q: %s", targetNode.Name, allocBaseline.String()))
 		}
 
-		claimTemplate := resourcev1.ResourceClaimTemplate{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "cpu-claim-metrics",
-			},
-			Spec: resourcev1.ResourceClaimTemplateSpec{
-				Spec: claimSpec,
-			},
-		}
-		createdClaimTemplate, err := metricsFxt.K8SClientset.ResourceV1().ResourceClaimTemplates(metricsFxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	})
 
-		testerPod := makeTesterPodWithExclusiveCPUClaim(metricsFxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, 1, targetNode.Name, getDriverConfig(ctx, metricsFxt.K8SClientset).PublishNodeAllocatableResourceMapping)
-		createdPod, err := e2epod.CreateSync(ctx, metricsFxt.K8SClientset, testerPod)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	ginkgo.Context("generic", ginkgo.Label("generic"), func() {
+		ginkgo.It("reconciles allocation metrics across driver restart and workload deletion", func(ctx context.Context) {
+			claimTemplate := resourcev1.ResourceClaimTemplate{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "cpu-claim-metrics",
+				},
+				Spec: resourcev1.ResourceClaimTemplateSpec{
+					Spec: claimSpec,
+				},
+			}
+			createdClaimTemplate, err := metricsFxt.K8SClientset.ResourceV1().ResourceClaimTemplates(metricsFxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
-		ginkgo.By("verifying allocation metrics reflect the new claim")
-		gomega.Eventually(func(g gomega.Gomega) {
-			snapshot, err := getDriverAllocationMetrics(ctx, metricsFxt.K8SClientset, targetNode.Name)
-			g.Expect(err).ToNot(gomega.HaveOccurred())
-			expectBasicMetricProperties(g, snapshot)
-			g.Expect(snapshot.TotalCPUs()).To(gomega.Equal(baseline.TotalCPUs()))
-			g.Expect(snapshot.AllocatedCPUs).To(gomega.Equal(baseline.AllocatedCPUs + 1))
-			g.Expect(snapshot.AvailableCPUs).To(gomega.Equal(baseline.AvailableCPUs - 1))
-			g.Expect(snapshot.ReservedCPUs).To(gomega.Equal(baseline.ReservedCPUs))
-			g.Expect(snapshot.ActiveResourceClaims).To(gomega.Equal(baseline.ActiveResourceClaims + 1))
-		}).WithTimeout(driverPodPollTimeout).WithPolling(driverPodPollInterval).Should(gomega.Succeed())
+			testerPod := makeTesterPodWithExclusiveCPUClaim(metricsFxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, 1, targetNode.Name, getDriverConfig(ctx, metricsFxt.K8SClientset).PublishNodeAllocatableResourceMapping)
+			createdPod, err := e2epod.CreateSync(ctx, metricsFxt.K8SClientset, testerPod)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
-		ginkgo.DeferCleanup(func(ctx context.Context) {
+			ginkgo.By("verifying allocation metrics reflect the new claim")
+			gomega.Eventually(func(g gomega.Gomega) {
+				rawMetrics, err := getDriverRawMetrics(ctx, metricsFxt, targetNode.Name)
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "cannot fetch raw allocation metrics")
+				snapshot, err := parseAllocationMetricSnapshot(rawMetrics)
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse baseline allocation metrics")
+				expectBasicMetricProperties(g, snapshot)
+				g.Expect(snapshot.TotalCPUs()).To(gomega.Equal(allocBaseline.TotalCPUs()))
+				g.Expect(snapshot.AllocatedCPUs).To(gomega.Equal(allocBaseline.AllocatedCPUs + 1))
+				g.Expect(snapshot.AvailableCPUs).To(gomega.Equal(allocBaseline.AvailableCPUs - 1))
+				g.Expect(snapshot.ReservedCPUs).To(gomega.Equal(allocBaseline.ReservedCPUs))
+				g.Expect(snapshot.ActiveResourceClaims).To(gomega.Equal(allocBaseline.ActiveResourceClaims + 1))
+			}).WithTimeout(driverPodPollTimeout).WithPolling(driverPodPollInterval).Should(gomega.Succeed())
+
+			ginkgo.DeferCleanup(func(ctx context.Context) {
+				restoreDriverDaemonSet(ctx, rootFxt.K8SClientset, orgDaemonSet)
+			})
+
+			ginkgo.By("stopping the driver on the target node")
+			excludeNodeFromDriverDaemonSet(ctx, rootFxt.K8SClientset, targetNode.Name)
+			waitForDriverPodTerminationOnNode(ctx, rootFxt.K8SClientset, targetNode.Name)
+
+			ginkgo.By("restoring the driver on the target node")
 			restoreDriverDaemonSet(ctx, rootFxt.K8SClientset, orgDaemonSet)
+			waitForDriverPodReadyOnNode(ctx, rootFxt.K8SClientset, targetNode.Name)
+
+			ginkgo.By("verifying allocation metrics were rebuilt after restart")
+			gomega.Eventually(func(g gomega.Gomega) {
+				rawMetrics, err := getDriverRawMetrics(ctx, metricsFxt, targetNode.Name)
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "cannot fetch raw allocation metrics")
+				snapshot, err := parseAllocationMetricSnapshot(rawMetrics)
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse baseline allocation metrics")
+				expectBasicMetricProperties(g, snapshot)
+				g.Expect(snapshot.TotalCPUs()).To(gomega.Equal(allocBaseline.TotalCPUs()))
+				g.Expect(snapshot.AllocatedCPUs).To(gomega.Equal(allocBaseline.AllocatedCPUs + 1))
+				g.Expect(snapshot.AvailableCPUs).To(gomega.Equal(allocBaseline.AvailableCPUs - 1))
+				g.Expect(snapshot.ReservedCPUs).To(gomega.Equal(allocBaseline.ReservedCPUs))
+				g.Expect(snapshot.ActiveResourceClaims).To(gomega.Equal(allocBaseline.ActiveResourceClaims + 1))
+			}).WithTimeout(driverPodPollTimeout).WithPolling(driverPodPollInterval).Should(gomega.Succeed())
+
+			ginkgo.By("deleting the workload and verifying allocation metrics return to baseline")
+			gomega.Expect(e2epod.DeleteSync(ctx, metricsFxt.K8SClientset, createdPod)).To(gomega.Succeed(), "cannot delete tester pod %s", e2epod.Identify(createdPod))
+			gomega.Eventually(func(g gomega.Gomega) {
+				rawMetrics, err := getDriverRawMetrics(ctx, metricsFxt, targetNode.Name)
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "cannot fetch raw allocation metrics")
+				snapshot, err := parseAllocationMetricSnapshot(rawMetrics)
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse baseline allocation metrics")
+				expectBasicMetricProperties(g, snapshot)
+				g.Expect(snapshot).To(gomega.Equal(allocBaseline))
+			}).WithTimeout(driverPodPollTimeout).WithPolling(driverPodPollInterval).Should(gomega.Succeed())
 		})
-
-		ginkgo.By("stopping the driver on the target node")
-		excludeNodeFromDriverDaemonSet(ctx, rootFxt.K8SClientset, targetNode.Name)
-		waitForDriverPodTerminationOnNode(ctx, rootFxt.K8SClientset, targetNode.Name)
-
-		ginkgo.By("restoring the driver on the target node")
-		restoreDriverDaemonSet(ctx, rootFxt.K8SClientset, orgDaemonSet)
-		waitForDriverPodReadyOnNode(ctx, rootFxt.K8SClientset, targetNode.Name)
-
-		ginkgo.By("verifying allocation metrics were rebuilt after restart")
-		gomega.Eventually(func(g gomega.Gomega) {
-			snapshot, err := getDriverAllocationMetrics(ctx, metricsFxt.K8SClientset, targetNode.Name)
-			g.Expect(err).ToNot(gomega.HaveOccurred())
-			expectBasicMetricProperties(g, snapshot)
-			g.Expect(snapshot.TotalCPUs()).To(gomega.Equal(baseline.TotalCPUs()))
-			g.Expect(snapshot.AllocatedCPUs).To(gomega.Equal(baseline.AllocatedCPUs + 1))
-			g.Expect(snapshot.AvailableCPUs).To(gomega.Equal(baseline.AvailableCPUs - 1))
-			g.Expect(snapshot.ReservedCPUs).To(gomega.Equal(baseline.ReservedCPUs))
-			g.Expect(snapshot.ActiveResourceClaims).To(gomega.Equal(baseline.ActiveResourceClaims + 1))
-		}).WithTimeout(driverPodPollTimeout).WithPolling(driverPodPollInterval).Should(gomega.Succeed())
-
-		ginkgo.By("deleting the workload and verifying allocation metrics return to baseline")
-		gomega.Expect(e2epod.DeleteSync(ctx, metricsFxt.K8SClientset, createdPod)).To(gomega.Succeed(), "cannot delete tester pod %s", e2epod.Identify(createdPod))
-		gomega.Eventually(func(g gomega.Gomega) {
-			snapshot, err := getDriverAllocationMetrics(ctx, metricsFxt.K8SClientset, targetNode.Name)
-			g.Expect(err).ToNot(gomega.HaveOccurred())
-			expectBasicMetricProperties(g, snapshot)
-			g.Expect(snapshot).To(gomega.Equal(baseline))
-		}).WithTimeout(driverPodPollTimeout).WithPolling(driverPodPollInterval).Should(gomega.Succeed())
 	})
 })
 
@@ -208,22 +233,22 @@ func discoverAvailableCPUs(ctx context.Context, fxt *fixture.Fixture, nodeName, 
 	return allocatableCPUs.Difference(reservedCPUs), nil
 }
 
-func getDriverAllocationMetrics(ctx context.Context, cs kubernetes.Interface, nodeName string) (allocationMetricSnapshot, error) {
-	dracpuPod, err := e2epod.GetDRACPUPod(ctx, cs, nodeName)
+func getDriverRawMetrics(ctx context.Context, fxt *fixture.Fixture, nodeName string) (string, error) {
+	dracpuPod, err := e2epod.GetDRACPUPod(ctx, fxt.K8SClientset, nodeName)
 	if err != nil {
-		return allocationMetricSnapshot{}, err
+		return "", err
 	}
 
-	podIP, err := waitForPodIP(ctx, cs, dracpuPod.Name)
+	podIP, err := waitForPodIP(ctx, fxt.K8SClientset, dracpuPod.Name)
 	if err != nil {
-		return allocationMetricSnapshot{}, err
+		return "", err
 	}
 
 	rawMetrics, err := getMetricsFromPodIP(podIP)
 	if err != nil {
-		return allocationMetricSnapshot{}, fmt.Errorf("cannot get metrics from the dracpu pod: %w", err)
+		return "", fmt.Errorf("cannot get metrics from the dracpu pod: %w", err)
 	}
-	return parseAllocationMetricSnapshot(rawMetrics)
+	return rawMetrics, nil
 }
 
 func metricsURL(podIP string) string {
