@@ -111,6 +111,11 @@ LOCAL_PLATFORM?=linux/$(ARCH)
 DRACPU_E2E_CPU_DEVICE_MODE ?= grouped
 DRACPU_E2E_CPU_GROUP_BY ?= numanode
 DRACPU_E2E_RESERVED_CPUS ?= 0
+DRACPU_E2E_LABEL_FILTER ?=
+GINKGO_LABEL_FILTER_ARG :=
+ifneq ($(strip $(DRACPU_E2E_LABEL_FILTER)),)
+GINKGO_LABEL_FILTER_ARG := --ginkgo.label-filter="$(DRACPU_E2E_LABEL_FILTER)"
+endif
 # Set to "true" to have ci-kind-setup deploy the driver with the
 # publishNodeAllocatableResourceMapping driverConfig option.
 # Also requires a cluster (KIND_K8S_VERSION node image) with the
@@ -229,7 +234,7 @@ build-test-dracpuinfo: ## build helper to expose hardware info in the internal d
 	go build -v -o "$(OUT_DIR)/dracpuinfo" ./test/image/dracpuinfo
 
 test-e2e: ## run e2e test against an existing configured cluster
-	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) go test -v ./test/e2e/ --ginkgo.v
+	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) go test -v ./test/e2e/ --ginkgo.v $(GINKGO_LABEL_FILTER_ARG)
 
 test-e2e-kind: ci-kind-setup test-e2e ## run e2e test against a purpose-built kind cluster
 
