@@ -98,8 +98,7 @@ The driver then publishes a `nodeAllocatableResources` mapping on every device, 
 
 - the **scheduler** counts the claim's CPUs against node allocatable `cpu`. Do not also add
   them to container requests; that counts them twice.
-- the **kubelet** adds the claim's CPUs to the cgroup limits, so that a spec cpu limit does
-  not throttle the claim's CPUs:
+- the **kubelet** adds the claim's CPUs to the cgroup limits when spec limits are declared:
   - **pod-level cgroup**: added to requests (`cpu.weight`) and limits (`cpu.max`);
   - **container-level cgroup**: added to limits (`cpu.max`) only, and only for containers
     that declare a cpu limit. Container `cpu.weight` stays derived from the spec requests
@@ -107,23 +106,59 @@ The driver then publishes a `nodeAllocatableResources` mapping on every device, 
     removes those CPUs from the [shared pool](how-it-works.md) and no other workload
     competes there.
 
-### Configuring the right QoS class with claims
+### Recommended Pod Configuration
 
-The kubelet determines the [QoS class](https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/)
-from the standard `spec` requests and limits only — DRA claims do not affect it (changing the
-QoS classification logic is an explicit non-goal of the KEP). The assigned class is reported
-in `pod.status.qosClass`.
+When deploying workloads with exclusive CPU claims, the recommended pattern is:
 
-The classification rules below are the standard Pod QoS rules; the table only adds the
-claim-specific configuration on top of them. QoS can be set at either level: when
-**pod-level resources** (`pod.spec.resources`, beta since 1.34) are set, the kubelet
-computes QoS from the pod-level values only; otherwise it is computed from the containers.
+1. **Omit `cpu` requests and limits** on the container referencing the exclusive claim. This prevents the kubelet from setting a CFS bandwidth quota (`cpu.max`), avoiding throttling on dedicated cores.
+1. **Specify `memory` requests and/or limits** matching the container's memory needs. This assigns the pod to the **Burstable** QoS class, providing better protection against eviction and out-of-memory (OOM) termination than BestEffort.
 
-| Desired QoS | What to set                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Caveats                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Guaranteed  | **Option 1 — container-level:** `requests` == `limits` for both `cpu` and `memory` on every container, including init containers. On claim containers a minimum cpu value in requests and limits (e.g. `cpu: 1m`) is enough — it only qualifies the pod for Guaranteed QoS; set memory to the container's actual need.<br><br>**Option 2 — pod-level:** `pod.spec.resources` with `requests` == `limits` for both `cpu` and `memory`, covering the claim CPUs (see caveat). Claim containers can omit container-level cpu. | **Option 1:** the Guaranteed rule requires a cpu entry on every container, but on claim containers the value serves only that classification — it does not change which CPUs the container runs on (the driver pins it to the claim's CPUs), while the scheduler still subtracts it from node allocatable. `1m` satisfies the rule with the smallest deduction. Memory, unlike cpu, is enforced normally by the kubelet (this driver manages only CPUs), so it must reflect the container's actual need.<br><br>**Option 2:** the kubelet applies pod-level values to the pod cgroup as-is — the claim's CPUs are not added on top and must fit within them. The scheduler therefore rejects pod-level values below Σ(container standard requests) + Σ(claim CPUs). Example: a 10-CPU claim plus 1 CPU for sidecars → pod-level `cpu: 11`. Non-claim containers run within the remainder (pod-level values minus claim CPUs). |
-| Burstable   | **Option 1 — container-level:** a `memory` and/or `cpu` request (> 0) on at least one container.<br><br>**Option 2 — pod-level:** any pod-level request or limit that does not meet the Guaranteed condition.                                                                                                                                                                                                                                                                                                              | **Option 1:** the request's purpose is classification (any non-zero request avoids BestEffort). On a claim container a cpu request has no runtime effect and is still subtracted from node allocatable, so prefer a memory request or `cpu: 1m`. Requests on non-claim containers work normally: those containers run on the driver's [shared pool](how-it-works.md).<br><br>**Option 2:** the same coverage rule as Guaranteed Option 2 applies to pod-level requests: ≥ Σ(container standard requests) + Σ(claim CPUs).                                                                                                                                                                                                                                                                                                                                                                                                     |
-| BestEffort  | No requests or limits anywhere. Container-level only: a pod with `pod.spec.resources` set is never BestEffort.                                                                                                                                                                                                                                                                                                                                                                                                             | CPU pinning works; the standard BestEffort eviction and OOM behavior applies and the claim does not change it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: low-latency-exclusive-workload
+spec:
+  containers:
+  - name: exclusive-app
+    image: my-app:latest
+    resources:
+      # Omit cpu requests and limits for the claim container
+      requests:
+        memory: "4Gi"   # Memory requests ensure Burstable QoS & eviction protection
+      limits:
+        memory: "4Gi"
+      claims:
+      - name: exclusive-cpus
+  resourceClaims:
+  - name: exclusive-cpus
+    resourceClaimTemplateName: exclusive-cpus-template
+```
+
+A complete, runnable version of this pattern is available in [`hack/examples/pod_with_resource_claim_node_allocatable.yaml`](../../hack/examples/pod_with_resource_claim_node_allocatable.yaml).
+
+### Configuring the Right QoS Class with Claims
+
+The kubelet determines the [QoS class](https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/) strictly from standard `spec` requests and limits — DRA claims do not affect it.
+
+When running workloads with exclusive CPU claims, selecting the appropriate QoS class is essential for [preventing CFS throttling](#preventing-cfs-throttling-on-exclusive-cpus) while maintaining eviction protection.
+
+| QoS Class                        | How to Configure                                                                         | CFS Quota (Throttling) | Eviction & OOM Safety                                                              |
+| :------------------------------- | :--------------------------------------------------------------------------------------- | :--------------------- | :--------------------------------------------------------------------------------- |
+| **Burstable**<br>*(Recommended)* | Set `memory` requests/limits;<br>**omit `cpu` requests and limits** on claim containers. | ✅ **No quota set**    | ✅ **Better protected than BestEffort** (OOM score scales with the memory request) |
+| **Guaranteed**                   | Set `requests == limits` for both `cpu` and `memory` on every container.                 | ⚠️ **Quota set**       | ✅ **Most protected** (lowest OOM score, fixed)                                    |
+| **BestEffort**                   | Omit all `cpu` and `memory` requests and limits in all containers.                       | ✅ **No quota set**    | ❌ **Evicted and OOM-killed first**                                                |
+
+- Non-claim containers (such as logging sidecars) can specify standard CPU requests and limits normally; they run on the driver's [shared pool](how-it-works.md).
+- When using **pod-level resources** (`pod.spec.resources`), set pod-level `memory` requests and omit pod-level `limits.cpu`.
+
+#### Preventing CFS Throttling on Exclusive CPUs
+
+A primary motivation for requesting exclusive CPUs is to achieve predictable execution by avoiding CFS quota-induced throttling and latency spikes.
+
+When exclusive CPUs are assigned via DRA claims, declaring `limits.cpu` in `pod.spec` (even when attempting to achieve Guaranteed QoS) causes the kubelet to enforce a CFS bandwidth quota that will throttle polling threads during period boundaries. To avoid throttling, follow the **Burstable** recommendation above by omitting `cpu` requests and limits on the claim container (and at the pod level if using pod-level resources).
+
+> For an in-depth technical explanation of Linux cgroup v2, Kubelet cgroup managers, and CFS quota mechanics, see the [Kubelet Cgroups and QoS Deep Dive](../dev/kubelet-cgroups-and-qos.md).
 
 **Reserved environment variables:** the `DRA_CPUSET_*` environment variable prefix is reserved for the driver's CDI injection — do not set variables with this prefix; containers with malformed `DRA_CPUSET_*` values are rejected during creation. See [How it Works](how-it-works.md).
 
