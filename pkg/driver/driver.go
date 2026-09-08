@@ -112,7 +112,6 @@ type deviceTopology struct {
 	deviceNameToNUMANodeID map[string]int
 	deviceSlices           [][]resourceapi.Device
 	reservedCPUs           cpuset.CPUSet
-	onlineCPUs             cpuset.CPUSet
 }
 
 // Providers group the interfaces the CPUDriver depends on
@@ -192,15 +191,6 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		health:                  newHealthTracker(),
 		kubeletRootDir:          config.KubeletRootDir,
 	}
-	sfs := providers.EnsureSysFS()
-
-	onlineCPUs, err := cpuinfo.OnlineCPUs(logger, sfs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get online CPUs: %w", err)
-	}
-	logger.V(2).Info("detected online CPUs", "cpus", onlineCPUs.String())
-	plugin.topology.onlineCPUs = onlineCPUs
-
 	topo, err := providers.EnsureCPUInfo().GetCPUTopology(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get CPU topology: %w", err)
@@ -209,9 +199,11 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		return nil, fmt.Errorf("failed to get CPU topology: topology is nil")
 	}
 	plugin.topology.cpuTopology = topo
+	managedCPUs := topo.CPUDetails.CPUs()
+	logger.V(2).Info("detected topology-validated CPUs", "cpus", managedCPUs.String())
 
 	if config.ExposePCIeRoots {
-		if err := plugin.pcieRootMapper.Probe(logger, sfs, onlineCPUs); err != nil {
+		if err := plugin.pcieRootMapper.Probe(logger, providers.EnsureSysFS(), managedCPUs); err != nil {
 			return nil, fmt.Errorf("failed to list PCIe domains: %w", err)
 		}
 	}
@@ -224,7 +216,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 
 	if plugin.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
 		var nameToID map[string]int
-		devices, nameToID = device.BuildGrouped(logger, plugin.cpuDeviceGroupBy, plugin.topology.cpuTopology, plugin.topology.onlineCPUs, plugin.topology.reservedCPUs, plugin.pcieRootMapper, config.PublishNodeAllocatableResourceMapping)
+		devices, nameToID = device.BuildGrouped(logger, plugin.cpuDeviceGroupBy, plugin.topology.cpuTopology, plugin.topology.reservedCPUs, plugin.pcieRootMapper, config.PublishNodeAllocatableResourceMapping)
 		switch plugin.cpuDeviceGroupBy {
 		case device.GROUP_BY_SOCKET:
 			plugin.topology.deviceNameToSocketID = nameToID

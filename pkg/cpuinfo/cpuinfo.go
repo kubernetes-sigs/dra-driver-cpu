@@ -39,7 +39,9 @@ func ProcfsRoot() string {
 	return path.Join(os.Getenv("HOST_ROOT"), procfsRoot)
 }
 
-func OnlineCPUs(logger logr.Logger, sysfs fs.ReadLinkFS) (cpuset.CPUSet, error) {
+// readOnlineCPUs returns the kernel's raw online CPU set. Callers that need
+// CPUs usable by the driver should use CPUTopology.CPUDetails instead.
+func readOnlineCPUs(sysfs fs.ReadLinkFS) (cpuset.CPUSet, error) {
 	cpuData, err := fs.ReadFile(sysfs, filepath.Join("devices", "system", "cpu", "online"))
 	if err != nil {
 		return cpuset.New(), err
@@ -231,7 +233,7 @@ func (s *SystemCPUInfo) IsSMTEnabled() (bool, error) {
 
 // GetCPUInfos returns a slice of CPUInfo structs, one for each logical CPU.
 func (s *SystemCPUInfo) GetCPUInfos(logger logr.Logger) ([]CPUInfo, error) {
-	onlineCPUs, err := OnlineCPUs(logger, s.sysfs)
+	onlineCPUs, err := readOnlineCPUs(s.sysfs)
 	if err != nil {
 		return []CPUInfo{}, fmt.Errorf("could not get online CPUs: %w", err)
 	}

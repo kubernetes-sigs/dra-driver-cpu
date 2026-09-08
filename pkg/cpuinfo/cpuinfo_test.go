@@ -31,53 +31,6 @@ import (
 	"k8s.io/utils/cpuset"
 )
 
-func TestOnlineCPUs(t *testing.T) {
-	logger := testr.New(t)
-	tests := []struct {
-		name    string
-		fs      fstest.MapFS
-		want    string
-		wantErr bool
-	}{
-		{
-			name:    "missing cpu online file",
-			fs:      fstest.MapFS{},
-			wantErr: true,
-		},
-		{
-			name: "single range",
-			fs: fstest.MapFS{
-				filepath.Join("devices", "system", "cpu", "online"): &fstest.MapFile{
-					Data: []byte("0-255"),
-				},
-			},
-			want: "0-255",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := OnlineCPUs(logger, tt.fs)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			want, err := cpuset.Parse(tt.want)
-			if err != nil {
-				t.Fatalf("parsing want cpuset %q: %v", tt.want, err)
-			}
-			if !got.Equals(want) {
-				t.Errorf("got %v, want %v", got, want)
-			}
-		})
-	}
-}
-
 func TestPopulateCpuSiblings(t *testing.T) {
 	testCases := []struct {
 		name             string
@@ -390,32 +343,32 @@ func TestGetCPUInfos(t *testing.T) {
 
 func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
 	logger := testr.New(t)
-	baseTopo := fakeCPUTopology{
-		numSockets: 1, numNumaNodesPerSocket: 1, numCoresPerNumaNode: 1, cpusPerCore: 1, coresPerL3: 1,
-	}
 
 	testCases := []struct {
 		name                   string
-		setup                  func(t *testing.T, dir string)
+		setup                  func(fstest.MapFS)
 		expectedErrorSubstring string
 		expectedInfos          []CPUInfo // For non-error cases to ensure graceful handling
 	}{
 		{
+			name: "missing online CPUs",
+			setup: func(sfs fstest.MapFS) {
+				delete(sfs, "devices/system/cpu/online")
+			},
+			expectedErrorSubstring: "could not get online CPUs",
+		},
+		{
 			name: "missing physical_package_id",
-			setup: func(t *testing.T, dir string) {
-				if err := os.Remove(filepath.Join(dir, "sys/devices/system/cpu/cpu0/topology/physical_package_id")); err != nil {
-					t.Fatal(err)
-				}
+			setup: func(sfs fstest.MapFS) {
+				delete(sfs, "devices/system/cpu/cpu0/topology/physical_package_id")
 			},
 			expectedErrorSubstring: "",          // Should warn and skip CPU
 			expectedInfos:          []CPUInfo{}, // CPU gets skipped
 		},
 		{
 			name: "missing cpulist",
-			setup: func(t *testing.T, dir string) {
-				if err := os.Remove(filepath.Join(dir, "sys/devices/system/node/node0/cpulist")); err != nil {
-					t.Fatal(err)
-				}
+			setup: func(sfs fstest.MapFS) {
+				delete(sfs, "devices/system/node/node0/cpulist")
 			},
 			expectedErrorSubstring: "", // Should warn and continue
 			expectedInfos: []CPUInfo{
@@ -424,30 +377,24 @@ func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
 		},
 		{
 			name: "negative core_id",
-			setup: func(t *testing.T, dir string) {
-				if err := os.WriteFile(filepath.Join(dir, "sys/devices/system/cpu/cpu0/topology/core_id"), []byte("-1\n"), 0600); err != nil {
-					t.Fatal(err)
-				}
+			setup: func(sfs fstest.MapFS) {
+				sfs["devices/system/cpu/cpu0/topology/core_id"] = &fstest.MapFile{Data: []byte("-1\n")}
 			},
 			expectedErrorSubstring: "",          // Should warn and skip CPU
 			expectedInfos:          []CPUInfo{}, // CPU gets skipped
 		},
 		{
 			name: "missing shared_cpu_list",
-			setup: func(t *testing.T, dir string) {
-				if err := os.Remove(filepath.Join(dir, "sys/devices/system/cpu/cpu0/cache/index3/shared_cpu_list")); err != nil {
-					t.Fatal(err)
-				}
+			setup: func(sfs fstest.MapFS) {
+				delete(sfs, "devices/system/cpu/cpu0/cache/index3/shared_cpu_list")
 			},
 			expectedErrorSubstring: "",          // Should warn and skip CPU
 			expectedInfos:          []CPUInfo{}, // CPU gets skipped
 		},
 		{
 			name: "missing cache id - ARM fallback behavior",
-			setup: func(t *testing.T, dir string) {
-				if err := os.Remove(filepath.Join(dir, "sys/devices/system/cpu/cpu0/cache/index3/id")); err != nil {
-					t.Fatal(err)
-				}
+			setup: func(sfs fstest.MapFS) {
+				delete(sfs, "devices/system/cpu/cpu0/cache/index3/id")
 			},
 			expectedErrorSubstring: "", // Should succeed with synthetic ID
 			expectedInfos: []CPUInfo{
@@ -456,10 +403,8 @@ func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
 		},
 		{
 			name: "x86 cluster_id 65535 fallback",
-			setup: func(t *testing.T, dir string) {
-				if err := os.WriteFile(filepath.Join(dir, "sys/devices/system/cpu/cpu0/topology/cluster_id"), []byte("65535\n"), 0600); err != nil {
-					t.Fatal(err)
-				}
+			setup: func(sfs fstest.MapFS) {
+				sfs["devices/system/cpu/cpu0/topology/cluster_id"] = &fstest.MapFile{Data: []byte("65535\n")}
 			},
 			expectedErrorSubstring: "", // Should succeed and map 65535 to -1
 			expectedInfos: []CPUInfo{
@@ -470,15 +415,10 @@ func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			t.Setenv("HOST_ROOT", tmpDir)
+			sfs := validSingleCPUInfoFS()
+			tc.setup(sfs)
 
-			// Create the base topology for all error scenarios.
-			createFakeCPUTopology(t, tmpDir, baseTopo)
-			// Apply the specific modification for the current test case.
-			tc.setup(t, tmpDir)
-
-			provider := NewSystemCPUInfo(sysfs.Host())
+			provider := NewSystemCPUInfo(sfs)
 			cpuInfos, err := provider.GetCPUInfos(logger)
 			if tc.expectedErrorSubstring != "" {
 				if err == nil {
@@ -496,6 +436,19 @@ func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func validSingleCPUInfoFS() fstest.MapFS {
+	return fstest.MapFS{
+		"devices/system/cpu/online":                            &fstest.MapFile{Data: []byte("0\n")},
+		"devices/system/cpu/cpu0/topology/physical_package_id": &fstest.MapFile{Data: []byte("0\n")},
+		"devices/system/cpu/cpu0/topology/core_id":             &fstest.MapFile{Data: []byte("0\n")},
+		"devices/system/cpu/cpu0/node0":                        &fstest.MapFile{Mode: 0755 | os.ModeDir},
+		"devices/system/node/node0/cpulist":                    &fstest.MapFile{Data: []byte("0\n")},
+		"devices/system/cpu/cpu0/cache/index3/level":           &fstest.MapFile{Data: []byte("3\n")},
+		"devices/system/cpu/cpu0/cache/index3/shared_cpu_list": &fstest.MapFile{Data: []byte("0\n")},
+		"devices/system/cpu/cpu0/cache/index3/id":              &fstest.MapFile{Data: []byte("0\n")},
 	}
 }
 

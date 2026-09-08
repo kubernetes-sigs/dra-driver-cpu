@@ -53,7 +53,6 @@ func fakeTopology() *cpuinfo.CPUTopology {
 
 func TestDeviceBuilderNodeAllocatableResourceMapping(t *testing.T) {
 	topo := fakeTopology()
-	online := cpuset.New(0, 1, 2, 3)
 	reserved := cpuset.New(0)
 	one := resource.MustParse("1")
 
@@ -91,7 +90,7 @@ func TestDeviceBuilderNodeAllocatableResourceMapping(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var devices []resourceapi.Device
 			if tc.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
-				devices, _ = device.BuildGrouped(logr.Discard(), tc.groupBy, topo, online, reserved, store.NewPCIeRootMapper(), tc.publishNodeAllocatableMapping)
+				devices, _ = device.BuildGrouped(logr.Discard(), tc.groupBy, topo, reserved, store.NewPCIeRootMapper(), tc.publishNodeAllocatableMapping)
 			} else {
 				devices, _ = device.Build(topo, reserved, store.NewPCIeRootMapper(), tc.publishNodeAllocatableMapping)
 			}
@@ -139,12 +138,11 @@ func TestDeviceBuilderNodeAllocatableResourceMapping(t *testing.T) {
 
 func TestMachineGroupedUsesTopologyValidatedCPUs(t *testing.T) {
 	topo := fakeTopology()
-	// CPU 4 is online but was omitted from CPUDetails because topology
-	// discovery could not validate it.
-	online := cpuset.New(0, 1, 2, 3, 4)
+	// CPU 4 was omitted from CPUDetails because topology discovery could not
+	// validate it.
 
 	devices, _ := device.BuildGrouped(
-		logr.Discard(), device.GROUP_BY_MACHINE, topo, online, cpuset.New(),
+		logr.Discard(), device.GROUP_BY_MACHINE, topo, cpuset.New(),
 		store.NewPCIeRootMapper(), false,
 	)
 	require.Len(t, devices, 1)
