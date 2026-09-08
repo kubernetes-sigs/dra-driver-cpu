@@ -2104,12 +2104,12 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 			},
 		},
 		{
-			name: "CPU allocation with offline cores",
+			name: "CPU allocation with unmanaged cores",
 			claims: []*resourceapi.ResourceClaim{
 				testClaimWithOpaqueConfig("claim-1", testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: 2}, "99,100"),
 			},
 			expectedErrors: map[string]string{
-				"claim-1": "contain offline cores: 99-100",
+				"claim-1": "not managed by this driver: 99-100",
 			},
 		},
 		{
@@ -2211,7 +2211,6 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 	driver.topology.deviceNameToNUMANodeID = make(map[string]int)
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
 	driver.topology.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
-	driver.topology.onlineCPUs = driver.topology.cpuTopology.CPUDetails.CPUs()
 	driver.cpuAllocationStore = store.NewCPUAllocation(driver.topology.cpuTopology, reservedCPUs)
 	driver.podConfigStore = store.NewPodConfig()
 	for claimUID, cpus := range initialAllocations {

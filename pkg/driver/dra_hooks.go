@@ -183,7 +183,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no opaque cpuset configuration found for allocation request %q", alloc.Request)}
 			}
 
-			if err := cp.validateOpaqueCPUSet(opaqueCPUSet, cp.topology.onlineCPUs, cpuAssignment, claimCPUCount); err != nil {
+			if err := cp.validateOpaqueCPUSet(opaqueCPUSet, topo.CPUDetails.CPUs(), cpuAssignment, claimCPUCount); err != nil {
 				return kubeletplugin.PrepareResult{Err: err}
 			}
 			cur = opaqueCPUSet
@@ -430,16 +430,17 @@ func (cp *CPUDriver) getOpaqueCPUSet(logger logr.Logger, allocation *resourceapi
 	return cpuset.CPUSet{}, false, nil
 }
 
-func (cp *CPUDriver) validateOpaqueCPUSet(opaqueCPUSet cpuset.CPUSet, onlineCPUs cpuset.CPUSet, cpuAssignment cpuset.CPUSet, claimCPUCount int64) error {
+func (cp *CPUDriver) validateOpaqueCPUSet(opaqueCPUSet cpuset.CPUSet, managedCPUs cpuset.CPUSet, cpuAssignment cpuset.CPUSet, claimCPUCount int64) error {
 	// Verify core count matches requested capacity
 	if int64(opaqueCPUSet.Size()) != claimCPUCount {
 		return fmt.Errorf("opaque config cpuset size %d does not match requested capacity %d", opaqueCPUSet.Size(), claimCPUCount)
 	}
 
-	// Verify CPUs are online
-	if !opaqueCPUSet.IsSubsetOf(onlineCPUs) {
-		offlineCPUs := opaqueCPUSet.Difference(onlineCPUs)
-		return fmt.Errorf("requested CPUs %s from opaque config contain offline cores: %s", opaqueCPUSet.String(), offlineCPUs.String())
+	// Verify CPUs are represented in the validated topology and therefore can
+	// be allocated by this driver.
+	if !opaqueCPUSet.IsSubsetOf(managedCPUs) {
+		unmanagedCPUs := opaqueCPUSet.Difference(managedCPUs)
+		return fmt.Errorf("requested CPUs %s from opaque config are not managed by this driver: %s", opaqueCPUSet.String(), unmanagedCPUs.String())
 	}
 
 	// Verify CPUs are not part of --reserved-cpus config passed to the driver

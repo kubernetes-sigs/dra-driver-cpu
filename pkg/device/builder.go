@@ -48,8 +48,8 @@ func Build(topo *cpuinfo.CPUTopology, reservedCPUSet cpuset.CPUSet, pcieRootMapp
 	return createCPUDeviceSlices(deviceInfos, pcieRootMapper, topo.SMTEnabled, nodeAllocatableResources), nameToID
 }
 
-func BuildGrouped(logger logr.Logger, groupBy string, topo *cpuinfo.CPUTopology, onlineCPUs, reservedCPUSet cpuset.CPUSet, pcieRootMapper *store.PCIeRootMapper, nodeAllocatableResources bool) ([]resourceapi.Device, map[string]int) {
-	deviceInfos := groupedCPUDeviceInfos(groupBy, topo, onlineCPUs, reservedCPUSet)
+func BuildGrouped(logger logr.Logger, groupBy string, topo *cpuinfo.CPUTopology, reservedCPUSet cpuset.CPUSet, pcieRootMapper *store.PCIeRootMapper, nodeAllocatableResources bool) ([]resourceapi.Device, map[string]int) {
+	deviceInfos := groupedCPUDeviceInfos(groupBy, topo, reservedCPUSet)
 	nameToID := make(map[string]int)
 	for _, dev := range deviceInfos {
 		switch groupBy {
@@ -101,7 +101,7 @@ type cpuDeviceInfo struct {
 	cpu  cpuinfo.CPUInfo
 }
 
-func groupedCPUDeviceInfos(groupBy string, topo *cpuinfo.CPUTopology, onlineCPUs, reservedCPUs cpuset.CPUSet) []groupedCPUDeviceInfo {
+func groupedCPUDeviceInfos(groupBy string, topo *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUSet) []groupedCPUDeviceInfo {
 	var devices []groupedCPUDeviceInfo
 
 	switch groupBy {

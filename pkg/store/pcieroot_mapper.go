@@ -37,8 +37,8 @@ func NewPCIeRootMapper() *PCIeRootMapper {
 	return &PCIeRootMapper{}
 }
 
-// Probe scans the machine and builds the CPU -> PCIe root mapping
-func (prm *PCIeRootMapper) Probe(logger logr.Logger, sfs sysfs.FS, onlineCPUs cpuset.CPUSet) error {
+// Probe scans the machine and builds the managed CPU -> PCIe root mapping.
+func (prm *PCIeRootMapper) Probe(logger logr.Logger, sfs sysfs.FS, managedCPUs cpuset.CPUSet) error {
 	var err error
 	prm.pcieDomains, err = pcie.PCIeDomainsFromFS(logger, sfs)
 	if err != nil {
@@ -52,13 +52,13 @@ func (prm *PCIeRootMapper) Probe(logger logr.Logger, sfs sysfs.FS, onlineCPUs cp
 	} else {
 		logger.Info("PCIe domains: none detected, device attributes will not be available")
 	}
-	extraCPUs := pcie.FindOrphanedCPUs(prm.pcieDomains, onlineCPUs)
+	extraCPUs := pcie.FindOrphanedCPUs(prm.pcieDomains, managedCPUs)
 	if !extraCPUs.IsEmpty() {
 		// not critical, intentionally continue
-		logger.Info("PCIe domains: detected cpus not local to any detected PCIe Root", "CPUs", extraCPUs.String())
+		logger.Info("PCIe domains: detected managed CPUs not local to any detected PCIe Root", "CPUs", extraCPUs.String())
 	}
 
-	prm.cpuIDToPCIeDomain = pcie.MapCPUsToPCIeDomain(prm.pcieDomains, onlineCPUs)
+	prm.cpuIDToPCIeDomain = pcie.MapCPUsToPCIeDomain(prm.pcieDomains, managedCPUs)
 	logger.V(4).Info("mapped CPUs to PCIe domains", "count", len(prm.cpuIDToPCIeDomain))
 
 	return nil
