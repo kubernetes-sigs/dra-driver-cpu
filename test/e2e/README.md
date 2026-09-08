@@ -32,6 +32,11 @@ honor these settings, where applicable.
   Please use the go logging configuration for the e2e tests proper.
   There's no support for verbosity levels.
 
+- `DRACPU_E2E_LABEL_FILTER`: (optional) a [Ginkgo label-filter expression](https://onsi.github.io/ginkgo/#spec-labels)
+  used by the Makefile `test-e2e` target to select which specs to run. For example,
+  set it to `metrics` to run only metrics specs, or `!negative` to exclude specs
+  labeled `negative`.
+
 - `DRACPU_E2E_TEST_IMAGE`: (mandatory) the full pullSpec of the test image the suite should
   use as container image to run test containers. The default CI configuration sets this
   value automatically.
@@ -76,6 +81,17 @@ make test-e2e-kind
 ```
 
 This creates a kind cluster from scratch, deploys the driver, and runs the full suite.
+To run only specs labeled `metrics`, use:
+
+```bash
+DRACPU_E2E_LABEL_FILTER=metrics make test-e2e-kind
+```
+
+To run all specs except those labeled `negative` against an existing configured cluster:
+
+```bash
+DRACPU_E2E_LABEL_FILTER='!negative' make test-e2e
+```
 
 To run against an existing cluster with the driver already deployed:
 
