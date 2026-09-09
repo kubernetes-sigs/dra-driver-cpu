@@ -52,6 +52,7 @@ NONE
 List docs changed by this PR or write NONE.
 Example:
 - README updates
+- upgrade instructions
 - Helm chart docs
 - release process docs
 -->
