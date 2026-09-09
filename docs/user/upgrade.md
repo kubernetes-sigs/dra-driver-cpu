@@ -35,6 +35,11 @@ driverConfig:
 This requirement was implicit prior to 0.3.0 and it is now explicit.
 Failing to set the `external` allocator will cause the driver to fail to startup.
 
+If you use grouped mode with `groupBy: machine`, make sure all the claims use
+exact or fistAvailable device request count to 1. Different request counts will
+cause the driver to fail at claim preparation stage.
+This constraint was previously implicit prior to 0.3.0 and it is now explicit.
+
 ### Action recommended
 
 #### Previous installations using `install.yaml`

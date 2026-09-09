@@ -1840,6 +1840,84 @@ func testClaimWithResults(claimUID types.UID, results []resourceapi.DeviceReques
 	}
 }
 
+func TestPrepareGroupedResourceClaimMachineModeRejectsMultiDeviceRequests(t *testing.T) {
+	testCases := []struct {
+		name          string
+		request       resourceapi.DeviceRequest
+		result        resourceapi.DeviceRequestAllocationResult
+		expectedError string
+	}{
+		{
+			name:          "exact request handled by this driver",
+			expectedError: "supports exact device request up to 1",
+			request: resourceapi.DeviceRequest{
+				Name:    "cpu-request",
+				Exactly: &resourceapi.ExactDeviceRequest{Count: 2},
+			},
+			result: resourceapi.DeviceRequestAllocationResult{Driver: testDriverName, Request: "cpu-request"},
+		},
+		{
+			name:          "first available subrequest handled by this driver",
+			expectedError: "supports first available device request up to 1",
+			request: resourceapi.DeviceRequest{
+				Name:           "cpu-request",
+				FirstAvailable: []resourceapi.DeviceSubRequest{{Name: "cpu", Count: 2}},
+			},
+			result: resourceapi.DeviceRequestAllocationResult{Driver: testDriverName, Request: "cpu-request/cpu"},
+		},
+		{
+			name: "exact request handled by another driver",
+			request: resourceapi.DeviceRequest{
+				Name:    "other-request",
+				Exactly: &resourceapi.ExactDeviceRequest{Count: 2},
+			},
+			result: resourceapi.DeviceRequestAllocationResult{Driver: "other-driver", Request: "other-request"},
+		},
+		{
+			name: "first available subrequest handled by another driver",
+			request: resourceapi.DeviceRequest{
+				Name:           "other-request",
+				FirstAvailable: []resourceapi.DeviceSubRequest{{Name: "other", Count: 2}},
+			},
+			result: resourceapi.DeviceRequestAllocationResult{Driver: "other-driver", Request: "other-request/other"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			claimUID := types.UID("claim-1")
+			driver := createCPUDriverExternalAllocForTest(
+				t,
+				devattr.GROUP_BY_MACHINE,
+				mockCPUInfos_SingleSocket_4CPUS_HT,
+				nil,
+				cpuset.New(),
+				newMockCdiMgr(),
+			)
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{UID: claimUID, Name: string(claimUID)},
+				Spec: resourceapi.ResourceClaimSpec{
+					Devices: resourceapi.DeviceClaim{Requests: []resourceapi.DeviceRequest{tc.request}},
+				},
+				Status: resourceapi.ResourceClaimStatus{Allocation: &resourceapi.AllocationResult{
+					Devices: resourceapi.DeviceAllocationResult{Results: []resourceapi.DeviceRequestAllocationResult{tc.result}},
+				}},
+			}
+
+			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
+			require.NoError(t, err)
+			result, ok := preparedClaims[claimUID]
+			require.True(t, ok)
+			if tc.expectedError != "" {
+				require.ErrorContains(t, result.Err, tc.expectedError)
+			} else {
+				require.NoError(t, result.Err)
+			}
+			require.Empty(t, result.Devices)
+		})
+	}
+}
+
 func testClaim(claimUID types.UID, driverName, poolName string, consumedCapacity map[string]int64) *resourceapi.ResourceClaim {
 	results := []resourceapi.DeviceRequestAllocationResult{}
 	for device, quantity := range consumedCapacity {

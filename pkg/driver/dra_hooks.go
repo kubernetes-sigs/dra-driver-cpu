@@ -30,6 +30,7 @@ import (
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/utils/cpuset"
@@ -115,6 +116,14 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 	if claim.Status.Allocation == nil {
 		return kubeletplugin.PrepareResult{
 			Err: fmt.Errorf("claim %s/%s has no allocation", claim.Namespace, claim.Name),
+		}
+	}
+
+	if cp.cpuDeviceGroupBy == device.GROUP_BY_MACHINE {
+		if err := checkDeviceRequestCountUpTo(claim, 1, cp.driverName); err != nil {
+			return kubeletplugin.PrepareResult{
+				Err: err,
+			}
 		}
 	}
 
@@ -391,4 +400,40 @@ func (cp *CPUDriver) HandleError(ctx context.Context, err error, msg string) {
 		ctxlog.Flush()
 		os.Exit(1)
 	}
+}
+
+func checkDeviceRequestCountUpTo(claim *resourceapi.ResourceClaim, limit int64, driverName string) error {
+	// we need to backtrack the requests from the allocations,
+	// because driverName (from allocation result) is a parameter we get,
+	// while deviceClass (from allocation request) is not something we can
+	// safely infer.
+	requestsForDriver := sets.New[string]()
+	for _, result := range claim.Status.Allocation.Devices.Results {
+		if result.Driver == driverName {
+			requestsForDriver.Insert(result.Request)
+		}
+	}
+
+	for _, req := range claim.Spec.Devices.Requests {
+		if req.Exactly != nil {
+			if !requestsForDriver.Has(req.Name) {
+				continue
+			}
+			if req.Exactly.Count > limit {
+				return fmt.Errorf("claim %s/%s: driver grouping mode %q supports exact device request up to %d", claim.Namespace, claim.Name, device.GROUP_BY_MACHINE, limit)
+			}
+			// safe to continue here: the apiserver guarantees only one between Exactly and FirstAvailable will be set
+			continue
+		}
+		for _, subrequest := range req.FirstAvailable {
+			requestName := req.Name + "/" + subrequest.Name
+			if !requestsForDriver.Has(requestName) {
+				continue
+			}
+			if subrequest.Count > limit {
+				return fmt.Errorf("claim %s/%s: driver grouping mode %q supports first available device request up to %d", claim.Namespace, claim.Name, device.GROUP_BY_MACHINE, limit)
+			}
+		}
+	}
+	return nil
 }
