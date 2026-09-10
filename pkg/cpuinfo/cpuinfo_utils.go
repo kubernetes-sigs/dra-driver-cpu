@@ -17,6 +17,10 @@ limitations under the License.
 package cpuinfo
 
 import (
+	"fmt"
+	"slices"
+	"sort"
+
 	"k8s.io/utils/cpuset"
 )
 
@@ -28,6 +32,41 @@ import (
 
 // CPUDetails is a map from CPU ID to Core ID, Socket ID, and NUMA ID.
 type CPUDetails map[int]CPUInfo
+
+// CoreKey identifies a physical core within the topology. CoreID alone is not
+// globally unique on all systems, so callers that need core-level precision
+// should use this key instead of the raw CoreID.
+type CoreKey struct {
+	SocketID  int
+	ClusterID int
+	CoreID    int
+}
+
+// Less provides a deterministic tie-breaker for sorted CoreKey slices. The
+// ordering is CoreID-first to stay aligned with the existing CPUManager-style
+// traversal, where callers already group by socket or NUMA before ordering
+// cores.
+func (k CoreKey) Less(other CoreKey) bool {
+	if k.CoreID != other.CoreID {
+		return k.CoreID < other.CoreID
+	}
+	if k.SocketID != other.SocketID {
+		return k.SocketID < other.SocketID
+	}
+	return k.ClusterID < other.ClusterID
+}
+
+func (k CoreKey) String() string {
+	return fmt.Sprintf("socket=%d,cluster=%d,core=%d", k.SocketID, k.ClusterID, k.CoreID)
+}
+
+func (i CPUInfo) CoreKey() CoreKey {
+	return CoreKey{
+		SocketID:  i.SocketID,
+		ClusterID: i.ClusterID,
+		CoreID:    i.CoreID,
+	}
+}
 
 func (d CPUDetails) KeepOnly(cpus cpuset.CPUSet) CPUDetails {
 	result := CPUDetails{}
@@ -66,13 +105,27 @@ func (d CPUDetails) CPUsInNUMANodes(ids ...int) cpuset.CPUSet {
 // core IDs in this CPUDetails.
 // TODO: CoreID is only unique within a socket. On multi-socket systems where CoreIDs repeat
 // across sockets, this method may return CPUs from multiple sockets for the same CoreID.
-// Consider refactoring core-level methods to use CoreKey{SocketID, CoreID} for correct
+// Consider refactoring core-level methods to use CoreKey{SocketID, ClusterID, CoreID} for correct
 // disambiguation, similar to CPUTopology.CPUsByCore.
 func (d CPUDetails) CPUsInCores(ids ...int) cpuset.CPUSet {
 	var cpuIDs []int
 	for _, id := range ids {
 		for cpu, info := range d {
 			if info.CoreID == id {
+				cpuIDs = append(cpuIDs, cpu)
+			}
+		}
+	}
+	return cpuset.New(cpuIDs...)
+}
+
+// CPUsInCoreKeys returns all logical CPUs associated with the given physical
+// core keys.
+func (d CPUDetails) CPUsInCoreKeys(keys ...CoreKey) cpuset.CPUSet {
+	var cpuIDs []int
+	for _, key := range keys {
+		for cpu, info := range d {
+			if info.CoreKey() == key {
 				cpuIDs = append(cpuIDs, cpu)
 			}
 		}
@@ -170,6 +223,14 @@ func (d CPUDetails) CoresInSockets(ids ...int) cpuset.CPUSet {
 	return cpuset.New(coreIDs...)
 }
 
+// CoreKeysInSockets returns all physical core keys associated with the given
+// socket IDs.
+func (d CPUDetails) CoreKeysInSockets(ids ...int) []CoreKey {
+	return d.coreKeysFor(func(info CPUInfo) bool {
+		return slices.Contains(ids, info.SocketID)
+	})
+}
+
 // NUMANodesInSockets returns all of the logical NUMANode IDs associated with
 // the given socket IDs in this CPUDetails.
 func (d CPUDetails) NUMANodesInSockets(ids ...int) cpuset.CPUSet {
@@ -198,6 +259,14 @@ func (d CPUDetails) CoresInNUMANodes(ids ...int) cpuset.CPUSet {
 	return cpuset.New(coreIDs...)
 }
 
+// CoreKeysInNUMANodes returns all physical core keys associated with the given
+// NUMA node IDs.
+func (d CPUDetails) CoreKeysInNUMANodes(ids ...int) []CoreKey {
+	return d.coreKeysFor(func(info CPUInfo) bool {
+		return slices.Contains(ids, info.NUMANodeID)
+	})
+}
+
 // CoresNeededInUncoreCache returns either the full list of all available unique core IDs associated with the given
 // UnCoreCache IDs in this CPUDetails or subset that matches the ask.
 func (d CPUDetails) CoresNeededInUncoreCache(numCoresNeeded int, ids ...int) cpuset.CPUSet {
@@ -207,6 +276,21 @@ func (d CPUDetails) CoresNeededInUncoreCache(numCoresNeeded int, ids ...int) cpu
 	}
 	tmpCoreIDs := coreIDs.List()
 	return cpuset.New(tmpCoreIDs[:numCoresNeeded]...)
+}
+
+// CoreKeysNeededForCPUsInUncoreCache returns the ordered prefix of core keys
+// from the given UncoreCache IDs whose CPUs first satisfy numCPUsNeeded. This
+// is a deterministic best-effort heuristic, not a search for the globally
+// smallest-cardinality subset of cores.
+func (d CPUDetails) CoreKeysNeededForCPUsInUncoreCache(numCPUsNeeded int, ids ...int) []CoreKey {
+	var result []CoreKey
+	for _, key := range d.coreKeysInUncoreCache(ids...) {
+		result = append(result, key)
+		if d.CPUsInCoreKeys(result...).Size() >= numCPUsNeeded {
+			return result
+		}
+	}
+	return result
 }
 
 // Helper function that just gets the cores
@@ -220,4 +304,28 @@ func (d CPUDetails) coresInUncoreCache(ids ...int) cpuset.CPUSet {
 		}
 	}
 	return cpuset.New(coreIDs...)
+}
+
+func (d CPUDetails) coreKeysInUncoreCache(ids ...int) []CoreKey {
+	return d.coreKeysFor(func(info CPUInfo) bool {
+		return slices.Contains(ids, info.UncoreCacheID)
+	})
+}
+
+func (d CPUDetails) coreKeysFor(include func(CPUInfo) bool) []CoreKey {
+	seen := map[CoreKey]struct{}{}
+	for _, info := range d {
+		if include(info) {
+			seen[info.CoreKey()] = struct{}{}
+		}
+	}
+
+	coreKeys := make([]CoreKey, 0, len(seen))
+	for key := range seen {
+		coreKeys = append(coreKeys, key)
+	}
+	sort.Slice(coreKeys, func(i, j int) bool {
+		return coreKeys[i].Less(coreKeys[j])
+	})
+	return coreKeys
 }
