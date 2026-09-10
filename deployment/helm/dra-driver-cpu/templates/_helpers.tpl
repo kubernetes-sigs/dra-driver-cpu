@@ -80,8 +80,12 @@ check below for why that specific check exists.
 {{- fail (printf "kubeletRootDir must be an absolute path, got %q" $root) -}}
 {{- end -}}
 {{- /* Cleaned (not just trimmed) so this resolves to the same directory the
-       driver's filepath.Join produces. */ -}}
+       driver's filepath.Join produces. Cleaned before the check below, because
+       that value is what reaches the argument and the two mount paths. */ -}}
 {{- $cleaned := clean $root -}}
+{{- if or (contains "$(" $cleaned) (contains "$$" $cleaned) -}}
+{{- fail (printf "kubeletRootDir must not contain %q or %q once cleaned; %q cleans to %q: the kubelet may reinterpret those in a container's arguments but not in hostPath.path or volumeMount.mountPath" "$(" "$$" $root $cleaned) -}}
+{{- end -}}
 {{- /* The registrar socket under this root has to fit sun_path: 108 bytes minus
        the terminating NUL leaves 107 for the path, and this suffix, fixed while
        rolling updates are off, leaves 73 for the root. Checked here in bytes,
