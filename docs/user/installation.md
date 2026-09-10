@@ -2,7 +2,7 @@
 
 The [Quickstart](quickstart.md) walks through an install with a
 verification step after each stage, ending with a pod running on exclusive CPUs. This page
-is the reference: compatibility, runtime setup, security, upgrade, uninstall, and migration.
+is the reference: compatibility, runtime setup, security, uninstall, and migration.
 
 ## Compatibility
 
@@ -106,7 +106,7 @@ The driver needs node-level privileges: `hostNetwork: true`, and hostPath mounts
 socket (`/var/run/nri`), the CDI spec directory (`/var/run/cdi`), and the kubelet plugin
 directories.
 
-## Upgrading
+## Upgrading (generic instructions)
 
 Upgrade with Helm:
 
@@ -132,28 +132,3 @@ pool anymore; delete or reschedule claim-bearing pods afterwards.
 make manifests
 kubectl apply -f dist/helm-manifest.yaml
 ```
-
-## Migrating from install.yaml to Helm
-
-`install.yaml` was the manifest used to install the driver in the `0.1.0` release and is now
-obsolete. It has since been replaced by the rendered manifest above and, preferably, the Helm
-chart. If you still have a cluster running the `install.yaml`-based installation, use the steps
-below to migrate to the Helm chart.
-
-Because the DaemonSet label selectors differ between `install.yaml` (`app: dracpu`) and the Helm chart
-(`app.kubernetes.io/name`, `app.kubernetes.io/instance`), and DaemonSet selectors are immutable, an
-in-place migration is not possible. The only practical migration path is a delete and reinstall:
-
-```bash
-# Step 1: remove the legacy manifest-managed resources
-# (use the same manifest file that was originally applied)
-kubectl delete -f <legacy-manifest>.yaml
-
-# Step 2: install the Helm-managed release
-helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu -n kube-system
-```
-
-**Disruption:** Deleting the DaemonSet terminates the driver pods on all nodes simultaneously. During
-the migration window, no new CPU allocations can be made and the shared-pool cpuset updates stop.
-Existing workloads are not evicted and their CPUs should remain. Once the new DaemonSet is scheduled
-and the driver pods are running, the driver should recover its state.

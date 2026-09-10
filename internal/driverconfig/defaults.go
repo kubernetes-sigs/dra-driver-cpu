@@ -29,5 +29,6 @@ func Default() Config {
 		CPUDeviceMode:  device.CPU_DEVICE_MODE_GROUPED,
 		GroupBy:        device.GROUP_BY_NUMA_NODE,
 		KubeletRootDir: DefaultKubeletRootDir,
+		Allocator:      AllocatorCPUManager,
 	}
 }

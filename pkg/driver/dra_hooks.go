@@ -24,16 +24,14 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	opaqueapi "github.com/kubernetes-sigs/dra-driver-cpu/api"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
-	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpumanager"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
-	"k8s.io/dynamic-resource-allocation/resourceclaim"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/utils/cpuset"
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
@@ -121,6 +119,14 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		}
 	}
 
+	if cp.cpuDeviceGroupBy == device.GROUP_BY_MACHINE {
+		if err := checkDeviceRequestCountUpTo(claim, 1, cp.driverName); err != nil {
+			return kubeletplugin.PrepareResult{
+				Err: err,
+			}
+		}
+	}
+
 	if existingCPUs, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(claim.UID); ok {
 		logger.V(2).Info("claim already has allocated CPUs in store, reusing assignment", "cpus", existingCPUs.String())
 		// Even if the claim is already allocated in our in-memory store (which happens when a duplicate prepare
@@ -131,8 +137,9 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		return cp.prepareDevices(logger, claim, existingCPUs)
 	}
 
-	var cpuAssignment cpuset.CPUSet
+	var assignedCPUs cpuset.CPUSet
 	allocatableCPUs := cp.cpuAllocationStore.GetSharedCPUs()
+
 	for _, alloc := range claim.Status.Allocation.Devices.Results {
 		if alloc.Driver != cp.driverName {
 			continue
@@ -144,17 +151,25 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		if quantity.Sign() <= 0 {
 			return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity for device %q must be positive, got %s", alloc.Device, quantity.String())}
 		}
-		claimCPUCount := quantity.Value()
-		if quantity.CmpInt64(claimCPUCount) != 0 {
+		count := quantity.Value()
+		if quantity.CmpInt64(count) != 0 {
 			return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity for device %q must be a whole number, got %s", alloc.Device, quantity.String())}
 		}
+
+		claimCPUCount := int(count)
 		logger.V(4).Info("found CPU request", "numCPUs", claimCPUCount, "device", alloc.Device)
 
 		topo := cp.topology.cpuTopology
+		// TODO: what if `claimCPUCount==0`?
+
+		// The preferred hint comes from the request's opaque config (if any); the
+		// group-specific branches below pick the actual CPUs out of it.
+		preferredCPUs, err := cp.cpuAllocator.GetPreferredCPUs(logger, claim.Status.Allocation, alloc)
+		if err != nil {
+			return kubeletplugin.PrepareResult{Err: err}
+		}
 
 		var cur cpuset.CPUSet
-		var err error
-
 		switch cp.cpuDeviceGroupBy {
 		case device.GROUP_BY_SOCKET:
 			socketID, ok := cp.topology.deviceNameToSocketID[alloc.Device]
@@ -162,56 +177,51 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid socket ID found for device %s", alloc.Device)}
 			}
 			socketCPUs := topo.CPUDetails.CPUsInSockets(socketID)
-			availableCPUsForDevice := allocatableCPUs.Difference(cpuAssignment).Intersection(socketCPUs)
+			availableCPUsForDevice := allocatableCPUs.Difference(assignedCPUs).Intersection(socketCPUs)
 			logger.V(4).Info("socket CPU availability", "socketID", socketID, "socketCPUs", socketCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
-			cur, err = cpumanager.TakeByTopologyNUMAPacked(logger, topo, availableCPUsForDevice, int(claimCPUCount), cpumanager.CPUSortingStrategyPacked, true)
+			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, preferredCPUs, claimCPUCount)
 		case device.GROUP_BY_NUMA_NODE:
 			numaNodeID, ok := cp.topology.deviceNameToNUMANodeID[alloc.Device]
 			if !ok {
 				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid NUMA node ID found for device %s", alloc.Device)}
 			}
 			numaCPUs := topo.CPUDetails.CPUsInNUMANodes(numaNodeID)
-			availableCPUsForDevice := allocatableCPUs.Difference(cpuAssignment).Intersection(numaCPUs)
+			availableCPUsForDevice := allocatableCPUs.Difference(assignedCPUs).Intersection(numaCPUs)
 			logger.V(4).Info("NUMA node CPU availability", "numaNodeID", numaNodeID, "numaCPUs", numaCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
-			cur, err = cpumanager.TakeByTopologyNUMAPacked(logger, topo, availableCPUsForDevice, int(claimCPUCount), cpumanager.CPUSortingStrategyPacked, true)
+			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, preferredCPUs, claimCPUCount)
 		case device.GROUP_BY_MACHINE:
-			opaqueCPUSet, ok, err := cp.getOpaqueCPUSet(logger, claim.Status.Allocation, alloc)
-			if err != nil {
-				return kubeletplugin.PrepareResult{Err: err}
-			}
-			if !ok {
-				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no opaque cpuset configuration found for allocation request %q", alloc.Request)}
-			}
-
-			if err := cp.validateOpaqueCPUSet(opaqueCPUSet, topo.CPUDetails.CPUs(), cpuAssignment, claimCPUCount); err != nil {
-				return kubeletplugin.PrepareResult{Err: err}
-			}
-			cur = opaqueCPUSet
+			// no mapping needed in machine mode - just one device = the whole machine
+			availableCPUs := topo.CPUDetails.CPUs().Difference(cp.topology.reservedCPUs)
+			logger.V(4).Info("Machine CPU availability", "availableCPUs", availableCPUs.String())
+			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUs, preferredCPUs, claimCPUCount)
 			logger.V(2).Info("using opaque config CPU assignment", "device", alloc.Device, "assigned", cur.String())
 		}
 
 		if err != nil {
 			return kubeletplugin.PrepareResult{Err: err}
 		}
-		cpuAssignment = cpuAssignment.Union(cur)
-		logger.V(2).Info("CPU assignment for device", "device", alloc.Device, "assigned", cur.String(), "allAssigned", cpuAssignment.String())
+		if err := cp.cpuAllocator.Validate(cur, assignedCPUs, cp.cpuAllocationStore.GetPreparedCPUs()); err != nil {
+			return kubeletplugin.PrepareResult{Err: err}
+		}
+		assignedCPUs = assignedCPUs.Union(cur)
+		logger.V(2).Info("CPU assignment for device", "device", alloc.Device, "assigned", cur.String(), "allAssigned", assignedCPUs.String())
 	}
 
-	if cpuAssignment.Size() == 0 {
+	if assignedCPUs.Size() == 0 {
 		logger.V(6).Info("claim has no CPU allocations for this driver")
 		return kubeletplugin.PrepareResult{}
 	}
 
 	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.
-	if err := cp.reserveResourceClaimAllocation(logger, claim.UID, cpuAssignment); err != nil {
+	if err := cp.reserveResourceClaimAllocation(logger, claim.UID, assignedCPUs); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
-	result := cp.prepareDevices(logger, claim, cpuAssignment)
+	result := cp.prepareDevices(logger, claim, assignedCPUs)
 	if result.Err != nil {
 		cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claim.UID)
 		return result
 	}
-	cp.metrics.RecordClaimAllocatedCPUs(cpuAssignment.Size())
+	cp.metrics.RecordClaimAllocatedCPUs(assignedCPUs.Size())
 	cp.refreshAllocationMetrics()
 	return result
 }
@@ -392,75 +402,38 @@ func (cp *CPUDriver) HandleError(ctx context.Context, err error, msg string) {
 	}
 }
 
-func (cp *CPUDriver) getOpaqueCPUSet(logger logr.Logger, allocation *resourceapi.AllocationResult, alloc resourceapi.DeviceRequestAllocationResult) (cpuset.CPUSet, bool, error) {
-	if allocation == nil {
-		return cpuset.CPUSet{}, false, nil
+func checkDeviceRequestCountUpTo(claim *resourceapi.ResourceClaim, limit int64, driverName string) error {
+	// we need to backtrack the requests from the allocations,
+	// because driverName (from allocation result) is a parameter we get,
+	// while deviceClass (from allocation request) is not something we can
+	// safely infer.
+	requestsForDriver := sets.New[string]()
+	for _, result := range claim.Status.Allocation.Devices.Results {
+		if result.Driver == driverName {
+			requestsForDriver.Insert(result.Request)
+		}
 	}
 
-	configs := resourceclaim.ConfigForResult(allocation.Devices.Config, alloc)
-	var matchedConfig *resourceapi.DeviceAllocationConfiguration
-	matchCount := 0
-
-	for i := range configs {
-		config := &configs[i]
-		if config.Opaque.Driver != cp.driverName {
+	for _, req := range claim.Spec.Devices.Requests {
+		if req.Exactly != nil {
+			if !requestsForDriver.Has(req.Name) {
+				continue
+			}
+			if req.Exactly.Count > limit {
+				return fmt.Errorf("claim %s/%s: driver grouping mode %q supports exact device request up to %d", claim.Namespace, claim.Name, device.GROUP_BY_MACHINE, limit)
+			}
+			// safe to continue here: the apiserver guarantees only one between Exactly and FirstAvailable will be set
 			continue
 		}
-		if config.Source != resourceapi.AllocationConfigSourceClaim {
-			return cpuset.CPUSet{}, false, fmt.Errorf("opaque config: configuration from DeviceClass is not supported by this driver, custom cpusets must be defined per ResourceClaim request")
+		for _, subrequest := range req.FirstAvailable {
+			requestName := req.Name + "/" + subrequest.Name
+			if !requestsForDriver.Has(requestName) {
+				continue
+			}
+			if subrequest.Count > limit {
+				return fmt.Errorf("claim %s/%s: driver grouping mode %q supports first available device request up to %d", claim.Namespace, claim.Name, device.GROUP_BY_MACHINE, limit)
+			}
 		}
-		matchedConfig = config
-		matchCount++
 	}
-
-	if matchCount != 1 {
-		return cpuset.CPUSet{}, false, fmt.Errorf("opaque config: request %q is targeted by %d configurations, must be targeted by exactly 1", alloc.Request, matchCount)
-	}
-
-	// Return the matched config if found
-	if matchedConfig != nil && len(matchedConfig.Opaque.Parameters.Raw) > 0 {
-		parsedCPUSet, err := opaqueapi.ParseOpaqueConfig(matchedConfig.Opaque.Parameters.Raw)
-		if err != nil {
-			return cpuset.CPUSet{}, false, err
-		}
-		logger.V(4).Info("found cpuset override in opaque config", "request", alloc.Request, "cpuset", parsedCPUSet.String())
-		return parsedCPUSet, true, nil
-	}
-
-	return cpuset.CPUSet{}, false, nil
-}
-
-func (cp *CPUDriver) validateOpaqueCPUSet(opaqueCPUSet cpuset.CPUSet, managedCPUs cpuset.CPUSet, cpuAssignment cpuset.CPUSet, claimCPUCount int64) error {
-	// Verify core count matches requested capacity
-	if int64(opaqueCPUSet.Size()) != claimCPUCount {
-		return fmt.Errorf("opaque config cpuset size %d does not match requested capacity %d", opaqueCPUSet.Size(), claimCPUCount)
-	}
-
-	// Verify CPUs are represented in the validated topology and therefore can
-	// be allocated by this driver.
-	if !opaqueCPUSet.IsSubsetOf(managedCPUs) {
-		unmanagedCPUs := opaqueCPUSet.Difference(managedCPUs)
-		return fmt.Errorf("requested CPUs %s from opaque config are not managed by this driver: %s", opaqueCPUSet.String(), unmanagedCPUs.String())
-	}
-
-	// Verify CPUs are not part of --reserved-cpus config passed to the driver
-	reservedCPUs := cp.cpuAllocationStore.GetReservedCPUs()
-	reservedOverlap := opaqueCPUSet.Intersection(reservedCPUs)
-	if reservedOverlap.Size() > 0 {
-		return fmt.Errorf("requested CPUs %s from opaque config contain reserved cores: %s", opaqueCPUSet.String(), reservedOverlap.String())
-	}
-
-	// Verify cores do not overlap with other claims prepared in this same batch
-	currentClaimCPUs := opaqueCPUSet.Intersection(cpuAssignment)
-	if currentClaimCPUs.Size() > 0 {
-		return fmt.Errorf("requested CPUs %s from opaque config are already assigned to another device in this claim", opaqueCPUSet.String())
-	}
-
-	// Verify cores do not overlap with other active claims on this node
-	existingClaimCPUs := cp.cpuAllocationStore.GetPreparedCPUs()
-	if opaqueCPUSet.Intersection(existingClaimCPUs).Size() > 0 {
-		return fmt.Errorf("requested CPUs %s from opaque config conflict with already allocated claims", opaqueCPUSet.String())
-	}
-
 	return nil
 }

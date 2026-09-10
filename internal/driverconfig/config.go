@@ -25,6 +25,11 @@ import (
 // ConfigAPIVersion is the version validated in config files.
 const ConfigAPIVersion = "v1alpha1"
 
+const (
+	AllocatorExternal   = "external"
+	AllocatorCPUManager = "cpumanager"
+)
+
 // Config holds the driver runtime configuration.
 type Config struct {
 	Kubeconfig       string `json:"kubeconfig,omitempty"`
@@ -43,7 +48,8 @@ type Config struct {
 	// PublishNodeAllocatableResourceMapping publishes KEP-5517 nodeAllocatableResources
 	// mappings in ResourceSlice devices. Requires the DRANodeAllocatableResources
 	// feature gate in the cluster. Defaults to false.
-	PublishNodeAllocatableResourceMapping bool `json:"publishNodeAllocatableResourceMapping,omitempty"`
+	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping,omitempty"`
+	Allocator                             string `json:"allocator,omitempty"`
 }
 
 // LogValues returns key-value pairs for structured logging of the config.
@@ -59,6 +65,7 @@ func (c Config) LogValues() []any {
 		"sysfsOverlay", c.SysFSOverlay,
 		"kubeletRootDir", c.KubeletRootDir,
 		"publishNodeAllocatableResourceMapping", c.PublishNodeAllocatableResourceMapping,
+		"allocator", c.Allocator,
 	}
 }
 
@@ -75,6 +82,7 @@ type dumpConfig struct {
 	SysFSOverlay                          string `json:"sysfsOverlay"`
 	KubeletRootDir                        string `json:"kubeletRootDir"`
 	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping"`
+	Allocator                             string `json:"allocator"`
 }
 
 // Dump renders the Config as YAML, for logging a human-readable snapshot of

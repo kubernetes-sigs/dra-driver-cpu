@@ -27,6 +27,8 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/testr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	devattr "github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
@@ -949,6 +951,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 			podConfigStore:     store.NewPodConfig(),
 			metrics:            cpumetrics.Noop(),
+			cpuAllocator:       cpuallocator.NewCPUManager(testDriverName, topo),
 		}
 		if withExistingAllocation {
 			requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, existingCPUs)
@@ -1045,12 +1048,17 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			},
 			SysFS: testSysFS(cpuInfos),
 		}
+		allocator := driverconfig.AllocatorCPUManager
+		if groupBy == devattr.GROUP_BY_MACHINE {
+			allocator = driverconfig.AllocatorExternal
+		}
 		conf := Config{
 			DriverName:       testDriverName,
 			NodeName:         testNodeName,
 			CPUDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
 			CPUDeviceGroupBy: groupBy,
 			ReservedCPUs:     reservedCPUs,
+			Allocator:        allocator,
 		}
 		driver, err := New(testr.New(t), prov, &conf)
 		require.NoError(t, err)
@@ -1591,6 +1599,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 				deviceNameToNUMANodeID: map[string]int{},
 			},
 			cpuAllocationStore: cpuStore,
+			cpuAllocator:       cpuallocator.NewCPUManager(testDriverName, topo),
 			cdiMgr:             cdiMgr,
 			podConfigStore:     store.NewPodConfig(),
 			metrics:            cpumetrics.Noop(),
@@ -1611,6 +1620,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 				deviceNameToNUMANodeID: map[string]int{"cpudevnuma0": 0, "cpudevnuma1": 1},
 			},
 			cpuAllocationStore: cpuStore,
+			cpuAllocator:       cpuallocator.NewCPUManager(testDriverName, topo),
 			cdiMgr:             cdiMgr,
 			podConfigStore:     store.NewPodConfig(),
 			metrics:            cpumetrics.Noop(),
@@ -1827,6 +1837,84 @@ func testClaimWithResults(claimUID types.UID, results []resourceapi.DeviceReques
 				},
 			},
 		},
+	}
+}
+
+func TestPrepareGroupedResourceClaimMachineModeRejectsMultiDeviceRequests(t *testing.T) {
+	testCases := []struct {
+		name          string
+		request       resourceapi.DeviceRequest
+		result        resourceapi.DeviceRequestAllocationResult
+		expectedError string
+	}{
+		{
+			name:          "exact request handled by this driver",
+			expectedError: "supports exact device request up to 1",
+			request: resourceapi.DeviceRequest{
+				Name:    "cpu-request",
+				Exactly: &resourceapi.ExactDeviceRequest{Count: 2},
+			},
+			result: resourceapi.DeviceRequestAllocationResult{Driver: testDriverName, Request: "cpu-request"},
+		},
+		{
+			name:          "first available subrequest handled by this driver",
+			expectedError: "supports first available device request up to 1",
+			request: resourceapi.DeviceRequest{
+				Name:           "cpu-request",
+				FirstAvailable: []resourceapi.DeviceSubRequest{{Name: "cpu", Count: 2}},
+			},
+			result: resourceapi.DeviceRequestAllocationResult{Driver: testDriverName, Request: "cpu-request/cpu"},
+		},
+		{
+			name: "exact request handled by another driver",
+			request: resourceapi.DeviceRequest{
+				Name:    "other-request",
+				Exactly: &resourceapi.ExactDeviceRequest{Count: 2},
+			},
+			result: resourceapi.DeviceRequestAllocationResult{Driver: "other-driver", Request: "other-request"},
+		},
+		{
+			name: "first available subrequest handled by another driver",
+			request: resourceapi.DeviceRequest{
+				Name:           "other-request",
+				FirstAvailable: []resourceapi.DeviceSubRequest{{Name: "other", Count: 2}},
+			},
+			result: resourceapi.DeviceRequestAllocationResult{Driver: "other-driver", Request: "other-request/other"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			claimUID := types.UID("claim-1")
+			driver := createCPUDriverExternalAllocForTest(
+				t,
+				devattr.GROUP_BY_MACHINE,
+				mockCPUInfos_SingleSocket_4CPUS_HT,
+				nil,
+				cpuset.New(),
+				newMockCdiMgr(),
+			)
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{UID: claimUID, Name: string(claimUID)},
+				Spec: resourceapi.ResourceClaimSpec{
+					Devices: resourceapi.DeviceClaim{Requests: []resourceapi.DeviceRequest{tc.request}},
+				},
+				Status: resourceapi.ResourceClaimStatus{Allocation: &resourceapi.AllocationResult{
+					Devices: resourceapi.DeviceAllocationResult{Results: []resourceapi.DeviceRequestAllocationResult{tc.result}},
+				}},
+			}
+
+			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
+			require.NoError(t, err)
+			result, ok := preparedClaims[claimUID]
+			require.True(t, ok)
+			if tc.expectedError != "" {
+				require.ErrorContains(t, result.Err, tc.expectedError)
+			} else {
+				require.NoError(t, result.Err)
+			}
+			require.Empty(t, result.Devices)
+		})
 	}
 }
 
@@ -2157,7 +2245,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 				}(),
 			},
 			expectedErrors: map[string]string{
-				"claim-1": "are already assigned to another device in this claim",
+				"claim-1": "opaque cpuset size 2 does not match the request total of 4 CPUs",
 			},
 		},
 	}
@@ -2169,7 +2257,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 				testReserved = tc.reservedCPUs
 			}
 			mockCdi := newMockCdiMgr()
-			driver := createCPUDriverForTest(t, devattr.GROUP_BY_MACHINE, cpuInfos, tc.initialAllocations, testReserved, mockCdi)
+			driver := createCPUDriverExternalAllocForTest(t, devattr.GROUP_BY_MACHINE, cpuInfos, tc.initialAllocations, testReserved, mockCdi)
 
 			prepared, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
 			require.NoError(t, err)
@@ -2198,7 +2286,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 	}
 }
 
-func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet, cdiMgr cdiManager) *CPUDriver {
+func createCPUDriverExternalAllocForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet, cdiMgr cdiManager) *CPUDriver {
 	t.Helper()
 	logger := testr.New(t)
 	driver := &CPUDriver{}
@@ -2211,8 +2299,10 @@ func createCPUDriverForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPU
 	driver.topology.deviceNameToNUMANodeID = make(map[string]int)
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
 	driver.topology.cpuTopology, _ = mockProvider.GetCPUTopology(logger)
+	driver.topology.reservedCPUs = reservedCPUs
 	driver.cpuAllocationStore = store.NewCPUAllocation(driver.topology.cpuTopology, reservedCPUs)
 	driver.podConfigStore = store.NewPodConfig()
+	driver.cpuAllocator = cpuallocator.NewExternal(testDriverName, driver.topology.cpuTopology.CPUDetails.CPUs(), reservedCPUs)
 	for claimUID, cpus := range initialAllocations {
 		requirePreparedResourceClaim(t, logger, driver.cpuAllocationStore, claimUID, cpus)
 	}

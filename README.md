@@ -163,7 +163,8 @@ when filing an issue — it collects the CPU topology and driver configuration n
 ### User Documentation
 
 - [Quickstart](docs/user/quickstart.md) - install, run a pod on exclusive CPUs, and verify each step.
-- [Installation](docs/user/installation.md) - compatibility, runtime setup, security, upgrade, uninstall, and migration from `install.yaml`.
+- [Installation](docs/user/installation.md) - compatibility, runtime setup, security, uninstall, and migration from `install.yaml`.
+- [Upgrade](docs/user/upgrade.md) - release-specific upgrade actions. Read this first before to upgrade the driver!
 - [Configuration](docs/user/configuration.md) - the config file schema, command-line flags, and kubelet prerequisites.
 - [How it Works](docs/user/how-it-works.md) - driver architecture, CDI, and NRI integration.
 - [Feature Support](docs/user/feature-support.md) - supported/unsupported features.
