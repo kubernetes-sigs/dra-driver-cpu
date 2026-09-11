@@ -2,6 +2,16 @@
 
 `dra.cpu/smtLayout` is a compact representation of logical-CPU sibling pairs.
 
+We reserve the option to version the encoding, adding new versions with
+the `Vxxx` suffix appended. The reason for this decision is because,
+albeit aiming to be correct and completed, the encoding format didn't
+get sufficient testing and validation to be called confidently final.
+Therefore we version to enable smooth future upgrades.
+Users should consider then unversioned name `dra.cpu/smtLayout` effectively
+as synonym for `V1`.
+The V1 format represents only two-way SMT; see the user-facing
+[attribute reference](../user/device-attributes.md) for more details.
+
 ## design
 
 The encoding is composed by entries separated by `;`.
