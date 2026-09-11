@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	v1 "k8s.io/api/core/v1"
@@ -39,27 +38,132 @@ const (
 	CPUDeviceMachineGrouped      = "cpudevmachine"
 )
 
-func Build(topo *cpuinfo.CPUTopology, reservedCPUSet cpuset.CPUSet, pcieRootMapper *store.PCIeRootMapper, nodeAllocatableResources bool) ([]resourceapi.Device, map[string]int) {
-	deviceInfos := cpuDeviceInfos(topo, reservedCPUSet)
-	nameToID := make(map[string]int)
-	for _, dev := range deviceInfos {
-		nameToID[dev.name] = dev.cpu.CpuID
-	}
-	return createCPUDeviceSlices(deviceInfos, pcieRootMapper, topo.SMTEnabled, nodeAllocatableResources), nameToID
+// Inventory holds the machine data and resource availability
+// as configured. Represents a subset of the physical resources.
+type Inventory struct {
+	CPUTopology  *cpuinfo.CPUTopology
+	ReservedCPUs cpuset.CPUSet
 }
 
-func BuildGrouped(logger logr.Logger, groupBy string, topo *cpuinfo.CPUTopology, reservedCPUSet cpuset.CPUSet, pcieRootMapper *store.PCIeRootMapper, nodeAllocatableResources bool) ([]resourceapi.Device, map[string]int) {
-	deviceInfos := groupedCPUDeviceInfos(groupBy, topo, reservedCPUSet)
-	nameToID := make(map[string]int)
+// ManagedCPUs returns CPUs reports the validated online CPUs.
+func (inv Inventory) ManagedCPUs() cpuset.CPUSet {
+	return inv.CPUTopology.CPUDetails.CPUs()
+}
+
+// AllocatableCPUs returns all the machine-level CPUs available for allocation
+// NOTE this DOES NOT take into account currently allocated CPUs: it returns
+// the maximum available theoretical pool depending only on static configuration
+func (inv Inventory) AllocatableCPUs() cpuset.CPUSet {
+	return inv.ManagedCPUs().Difference(inv.ReservedCPUs)
+}
+
+// Mapping includes the reverse lookup maps to bind the exposed DRA device names
+// to the pool we need to allocate resources from.
+// At most one lookup map is populated. LayoutMachine does not populate one, by design.
+type Mapping struct {
+	// NameToCPUID is populated for LayoutIndividual.
+	NameToCPUID map[string]int
+	// NameToSocketID is populated for LayoutSocket.
+	NameToSocketID map[string]int
+	// NameToNUMANodeID is populated for LayoutNUMA.
+	NameToNUMANodeID map[string]int
+}
+
+// Layout controls how CPUs are exposed as DRA devices.
+// It abstracts the driver configuration grouping mode and criteria on a single
+// device layer selector.
+type Layout string
+
+const (
+	// LayoutIndividual exposes each CPU as a separate device.
+	LayoutIndividual Layout = "individual"
+	// LayoutSocket exposes one device per CPU socket.
+	LayoutSocket Layout = "socket"
+	// LayoutNUMA exposes one device per NUMA node.
+	LayoutNUMA Layout = "numa"
+	// LayoutMachine exposes one device for all allocatable CPUs in the machine.
+	LayoutMachine Layout = "machine"
+)
+
+// FindLayout converts the driver configuration into a device layout.
+func FindLayout(cpuDeviceMode, cpuDeviceGroupBy string) Layout {
+	if cpuDeviceMode != CPU_DEVICE_MODE_GROUPED {
+		return LayoutIndividual
+	}
+	switch cpuDeviceGroupBy {
+	case GROUP_BY_SOCKET:
+		return LayoutSocket
+	case GROUP_BY_NUMA_NODE:
+		return LayoutNUMA
+	default:
+		return LayoutMachine
+	}
+}
+
+// BuildInput is the input for Build. It carries both input parameters and input data.
+type BuildInput struct {
+	// Inventory describes the CPU topology and CPU availability to expose.
+	Inventory Inventory
+	// Layout controls how CPUs are exposed as devices.
+	Layout Layout
+	// PCIeRootMapper provides the PCIe roots associated with CPUs.
+	PCIeRootMapper *store.PCIeRootMapper
+	// PublishNodeAllocatableResourceMapping enables node allocatable resource
+	// mappings on the generated devices.
+	PublishNodeAllocatableResourceMapping bool
+	// Expose attributes intended for consumption of an external allocator:
+	// - cpuset pertaining to a grouped device as attribute
+	// - smt sibling maapping
+	ExposeExtAttrs bool
+}
+
+type BuildResult struct {
+	// Devices are the generated DRA devices.
+	Devices []resourceapi.Device
+	Mapping Mapping
+}
+
+func Build(input BuildInput) (BuildResult, error) {
+	if input.Layout == LayoutIndividual {
+		nameToID := make(map[string]int)
+		deviceInfos := cpuDeviceInfos(input.Inventory)
+		for _, dev := range deviceInfos {
+			nameToID[dev.name] = dev.cpu.CpuID
+		}
+		devices, err := createCPUDeviceSlices(deviceInfos, input.PCIeRootMapper, input.Inventory.CPUTopology, input.PublishNodeAllocatableResourceMapping)
+		if err != nil {
+			return BuildResult{}, err
+		}
+		return BuildResult{
+			Devices: devices,
+			Mapping: Mapping{
+				NameToCPUID: nameToID,
+			},
+		}, nil
+	}
+
+	var err error
+	var res BuildResult
+	switch input.Layout {
+	case LayoutSocket:
+		res.Mapping.NameToSocketID = make(map[string]int)
+	case LayoutNUMA:
+		res.Mapping.NameToNUMANodeID = make(map[string]int)
+	}
+	deviceInfos := groupedCPUDeviceInfos(input.Layout, input.Inventory)
 	for _, dev := range deviceInfos {
-		switch groupBy {
-		case GROUP_BY_SOCKET:
-			nameToID[dev.name] = dev.socketID
-		case GROUP_BY_NUMA_NODE:
-			nameToID[dev.name] = dev.numaNodeID
+		switch input.Layout {
+		case LayoutSocket:
+			res.Mapping.NameToSocketID[dev.name] = dev.socketID
+		case LayoutNUMA:
+			res.Mapping.NameToNUMANodeID[dev.name] = dev.numaNodeID
 		}
 	}
-	return createGroupedCPUDeviceSlices(logger, groupBy, deviceInfos, pcieRootMapper, topo.SMTEnabled, nodeAllocatableResources), nameToID
+	res.Devices, err = createGroupedCPUDeviceSlices(input.Layout, deviceInfos, input.PCIeRootMapper, input.Inventory.CPUTopology, input.PublishNodeAllocatableResourceMapping, input.ExposeExtAttrs)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	return res, nil
 }
 
 func groupedCPUNodeAllocatable(enabled bool) map[v1.ResourceName]resourceapi.NodeAllocatableResource {
@@ -101,14 +205,16 @@ type cpuDeviceInfo struct {
 	cpu  cpuinfo.CPUInfo
 }
 
-func groupedCPUDeviceInfos(groupBy string, topo *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUSet) []groupedCPUDeviceInfo {
+func groupedCPUDeviceInfos(layout Layout, machine Inventory) []groupedCPUDeviceInfo {
 	var devices []groupedCPUDeviceInfo
 
-	switch groupBy {
-	case GROUP_BY_SOCKET:
+	topo := machine.CPUTopology // shortcut
+
+	switch layout {
+	case LayoutSocket:
 		socketIDs := topo.CPUDetails.Sockets().List()
 		for _, socketID := range socketIDs {
-			allocatableCPUs := topo.CPUDetails.CPUsInSockets(socketID).Difference(reservedCPUs)
+			allocatableCPUs := topo.CPUDetails.CPUsInSockets(socketID).Difference(machine.ReservedCPUs)
 			if allocatableCPUs.Size() == 0 {
 				continue
 			}
@@ -118,10 +224,10 @@ func groupedCPUDeviceInfos(groupBy string, topo *cpuinfo.CPUTopology, reservedCP
 				socketID: socketID,
 			})
 		}
-	case GROUP_BY_NUMA_NODE:
+	case LayoutNUMA:
 		numaNodeIDs := topo.CPUDetails.NUMANodes().List()
 		for _, numaID := range numaNodeIDs {
-			allocatableCPUs := topo.CPUDetails.CPUsInNUMANodes(numaID).Difference(reservedCPUs)
+			allocatableCPUs := topo.CPUDetails.CPUsInNUMANodes(numaID).Difference(machine.ReservedCPUs)
 			if allocatableCPUs.Size() == 0 {
 				continue
 			}
@@ -135,14 +241,13 @@ func groupedCPUDeviceInfos(groupBy string, topo *cpuinfo.CPUTopology, reservedCP
 				numaNodeID: numaID,
 			})
 		}
-	case GROUP_BY_MACHINE:
+	case LayoutMachine:
 		// Use the topology-validated CPU set. GetCPUInfos filters online CPUs
 		// whose topology is incomplete, and the allocation store is built from
 		// the same CPUDetails map.
-		allocatableCPUs := topo.CPUDetails.CPUs().Difference(reservedCPUs)
 		devices = append(devices, groupedCPUDeviceInfo{
 			name: CPUDeviceMachineGrouped,
-			cpus: allocatableCPUs,
+			cpus: machine.AllocatableCPUs(),
 		})
 	}
 	return devices
@@ -152,9 +257,11 @@ func groupedCPUDeviceInfos(groupBy string, topo *cpuinfo.CPUTopology, reservedCP
 // both ResourceSlice publication and PrepareResourceClaims device lookup.
 // Keep the ordering in one place so device names resolve to the same CPUs even
 // when Prepare runs before the first ResourceSlice publication after restart.
-func cpuDeviceInfos(topo *cpuinfo.CPUTopology, reservedCPUSet cpuset.CPUSet) []cpuDeviceInfo {
+func cpuDeviceInfos(machine Inventory) []cpuDeviceInfo {
+	topo := machine.CPUTopology // shortcut
+
 	reservedCPUs := make(map[int]bool)
-	for _, cpuID := range reservedCPUSet.List() {
+	for _, cpuID := range machine.ReservedCPUs.List() {
 		reservedCPUs[cpuID] = true
 	}
 
@@ -209,9 +316,7 @@ func cpuDeviceInfos(topo *cpuinfo.CPUTopology, reservedCPUSet cpuset.CPUSet) []c
 	return devices
 }
 
-// createGroupedCPUDeviceSlices creates Device objects based on the CPU topology, grouped by a specific criteria.
-func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfos []groupedCPUDeviceInfo, pcieRootMapper *store.PCIeRootMapper, smtEnabled bool, nodeAllocatableResources bool) []resourceapi.Device {
-	logger.V(4).Info("creating grouped CPU devices")
+func createGroupedCPUDeviceSlices(layout Layout, deviceInfos []groupedCPUDeviceInfo, pcieRootMapper *store.PCIeRootMapper, topo *cpuinfo.CPUTopology, nodeAllocatableResources, exposeExtAttrs bool) ([]resourceapi.Device, error) {
 	var devices []resourceapi.Device
 
 	for _, deviceInfo := range deviceInfos {
@@ -220,14 +325,25 @@ func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfo
 			CPUResourceQualifiedName: {Value: *resource.NewQuantity(availableCPUs, resource.DecimalSI)},
 		}
 
-		switch groupBy {
-		case GROUP_BY_SOCKET:
+		switch layout {
+		case LayoutSocket:
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				AttributeSocketID:   {IntValue: new(int64(deviceInfo.socketID))},
-				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
-				AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
+				AttributeSocketID: {IntValue: new(int64(deviceInfo.socketID))},
+				AttributeNumCPUs:  {IntValue: new(availableCPUs)},
+				AttributeSMTLevel: {IntValue: new(int64(topo.SMTLevel))},
 			}
-			addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...)
+			addCompatibilityAttributes(deviceAttrs, -1, topo.SMTEnabled)
+			if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...); err != nil {
+				return nil, err
+			}
+			if exposeExtAttrs {
+				if err := addCPUIDsAttribute(deviceAttrs, deviceInfo.cpus); err != nil {
+					return nil, err
+				}
+				if err := addSMTMapAttribute(deviceAttrs, topo); err != nil {
+					return nil, err
+				}
+			}
 
 			devices = append(devices, resourceapi.Device{
 				Name:                     deviceInfo.name,
@@ -236,17 +352,27 @@ func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfo
 				AllowMultipleAllocations: new(true),
 				NodeAllocatableResources: groupedCPUNodeAllocatable(nodeAllocatableResources),
 			})
-		case GROUP_BY_NUMA_NODE:
+		case LayoutNUMA:
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 				// DRA standard attributes first
 				deviceattribute.StandardDeviceAttributeNUMANode: {IntValue: new(int64(deviceInfo.numaNodeID))},
 				// Driver-specific/non-standard attributes next
-				AttributeSocketID:   {IntValue: new(int64(deviceInfo.socketID))},
-				AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
-				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
+				AttributeSocketID: {IntValue: new(int64(deviceInfo.socketID))},
+				AttributeNumCPUs:  {IntValue: new(availableCPUs)},
+				AttributeSMTLevel: {IntValue: new(int64(topo.SMTLevel))},
 			}
-			addCompatibilityAttributes(deviceAttrs, int64(deviceInfo.numaNodeID))
-			addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...)
+			addCompatibilityAttributes(deviceAttrs, int64(deviceInfo.numaNodeID), topo.SMTEnabled)
+			if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...); err != nil {
+				return nil, err
+			}
+			if exposeExtAttrs {
+				if err := addCPUIDsAttribute(deviceAttrs, deviceInfo.cpus); err != nil {
+					return nil, err
+				}
+				if err := addSMTMapAttribute(deviceAttrs, topo); err != nil {
+					return nil, err
+				}
+			}
 
 			devices = append(devices, resourceapi.Device{
 				Name:                     deviceInfo.name,
@@ -255,12 +381,23 @@ func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfo
 				AllowMultipleAllocations: new(true),
 				NodeAllocatableResources: groupedCPUNodeAllocatable(nodeAllocatableResources),
 			})
-		case GROUP_BY_MACHINE:
+		case LayoutMachine:
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
-				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
+				AttributeNumCPUs:  {IntValue: new(availableCPUs)},
+				AttributeSMTLevel: {IntValue: new(int64(topo.SMTLevel))},
 			}
-			addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...)
+			addCompatibilityAttributes(deviceAttrs, -1, topo.SMTEnabled)
+			if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...); err != nil {
+				return nil, err
+			}
+			if exposeExtAttrs {
+				if err := addCPUIDsAttribute(deviceAttrs, deviceInfo.cpus); err != nil {
+					return nil, err
+				}
+				if err := addSMTMapAttribute(deviceAttrs, topo); err != nil {
+					return nil, err
+				}
+			}
 			devices = append(devices, resourceapi.Device{
 				Name:                     deviceInfo.name,
 				Attributes:               deviceAttrs,
@@ -271,14 +408,14 @@ func createGroupedCPUDeviceSlices(logger logr.Logger, groupBy string, deviceInfo
 		}
 	}
 
-	return devices
+	return devices, nil
 }
 
 // createCPUDeviceSlices creates Device objects based on the CPU topology.
 // It groups CPUs by physical core to assign consecutive device IDs to hyperthreads.
 // This allows the DRA scheduler, which requests resources in contiguous blocks,
 // to co-locate workloads on hyperthreads of the same core.
-func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PCIeRootMapper, smtEnabled bool, nodeAllocatableResources bool) []resourceapi.Device {
+func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PCIeRootMapper, topo *cpuinfo.CPUTopology, nodeAllocatableResources bool) ([]resourceapi.Device, error) {
 	var allDevices []resourceapi.Device
 	for _, deviceInfo := range deviceInfos {
 		cpu := deviceInfo.cpu
@@ -286,15 +423,18 @@ func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PC
 			// DRA standard attributes first
 			deviceattribute.StandardDeviceAttributeNUMANode: {IntValue: new(int64(cpu.NUMANodeID))},
 			// Driver-specific/non-standard attributes next
-			AttributeSocketID:   {IntValue: new(int64(cpu.SocketID))},
-			AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
-			AttributeCacheL3ID:  {IntValue: new(int64(cpu.UncoreCacheID))},
-			AttributeCoreType:   {StringValue: new(cpu.CoreType.String())},
-			AttributeCoreID:     {IntValue: new(int64(cpu.CoreID))},
-			AttributeCPUID:      {IntValue: new(int64(cpu.CpuID))},
+			AttributeSocketID:  {IntValue: new(int64(cpu.SocketID))},
+			AttributeCacheL3ID: {IntValue: new(int64(cpu.UncoreCacheID))},
+			AttributeCoreType:  {StringValue: new(cpu.CoreType.String())},
+			AttributeCoreID:    {IntValue: new(int64(cpu.CoreID))},
+			AttributeCPUID:     {IntValue: new(int64(cpu.CpuID))},
+			AttributeSMTLevel:  {IntValue: new(int64(topo.SMTLevel))},
 		}
-		addCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID))
-		addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, cpu.CpuID)
+
+		addCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID), topo.SMTEnabled)
+		if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, cpu.CpuID); err != nil {
+			return nil, err
+		}
 
 		cpuDevice := resourceapi.Device{
 			Name:                     deviceInfo.name,
@@ -304,16 +444,57 @@ func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PC
 		}
 		allDevices = append(allDevices, cpuDevice)
 	}
-	return allDevices
+	return allDevices, nil
 }
 
-func addPCIeRootsAttribute(pcieRootMapper *store.PCIeRootMapper, attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, cpuIDs ...int) {
+func addPCIeRootsAttribute(pcieRootMapper *store.PCIeRootMapper, attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, cpuIDs ...int) error {
+	if len(cpuIDs) == 0 {
+		return nil // nothing to do
+	}
 	// Note: union semantics are correct because kernel cpulistaffinity currently collapses to NUMA granularity;
 	// grouped allocation at socket/NUMA level therefore covers all CPUs local to every reported root.
 	// See docs/dev/topology-linux-sysfs.md for in-depth exploration about the topic.
 	pcieRoots := pcieRootMapper.GetPCIeRootsForCPU(cpuIDs...)
 	if len(pcieRoots) == 0 {
-		return
+		return nil // nothing to do
+	}
+	if len(pcieRoots) > resourceapi.DeviceAttributeMaxValueLength {
+		return fmt.Errorf("PCIe roots %q cannot be represented within the limit of DRA max value length=%d", pcieRoots, resourceapi.DeviceAttributeMaxValueLength)
 	}
 	attrs[deviceattribute.StandardDeviceAttributePCIeRoot] = resourceapi.DeviceAttribute{StringValues: pcieRoots}
+	return nil
+}
+
+func addCPUIDsAttribute(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, cpus cpuset.CPUSet) error {
+	if cpus.Size() == 0 {
+		return nil // nothing to do
+	}
+	cpuIDs := cpus.String()
+	if len(cpuIDs) > resourceapi.DeviceAttributeMaxValueLength {
+		return fmt.Errorf("cpus %q cannot be represented within the limit of DRA max value length=%d", cpus.String(), resourceapi.DeviceAttributeMaxValueLength)
+	}
+	attrs[AttributeCPUIDs] = resourceapi.DeviceAttribute{StringValue: &cpuIDs}
+	return nil
+}
+
+func addSMTMapAttribute(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, topo *cpuinfo.CPUTopology) error {
+	smtMap := FormatSMTMap(topo)
+	if len(smtMap) == 0 {
+		return fmt.Errorf("SMT map unexpectedly empty")
+	}
+	if len(smtMap) > resourceapi.DeviceAttributeMaxValueLength {
+		return fmt.Errorf("SMT map %q cannot be represented within the limit of DRA max value length=%d", smtMap, resourceapi.DeviceAttributeMaxValueLength)
+	}
+	attrs[AttributeSMTMapV1] = resourceapi.DeviceAttribute{StringValue: new(smtMap)}
+	return nil
+}
+
+func cpuSMTStride(info cpuinfo.CPUInfo) int {
+	if info.SiblingCPUID == -1 || info.CpuID == -1 {
+		return 0
+	}
+	if info.SiblingCPUID > info.CpuID {
+		return info.SiblingCPUID - info.CpuID
+	}
+	return info.CpuID - info.SiblingCPUID
 }

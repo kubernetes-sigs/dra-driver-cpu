@@ -19,6 +19,7 @@ package e2e
 import (
 	"context"
 
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	"github.com/onsi/ginkgo/v2"
@@ -35,6 +36,7 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 		fxt                    *fixture.Fixture
 		cpuDeviceMode          string
 		groupBy                string
+		allocator              string
 		slices                 []resourcev1.ResourceSlice
 		nodeAllocatableMapping bool
 	)
@@ -53,8 +55,9 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot read dracpu driver config values")
 		cpuDeviceMode = cfgValues.CPUDeviceMode
 		groupBy = cfgValues.GroupBy
+		allocator = cfgValues.Allocator
 		nodeAllocatableMapping = cfgValues.PublishNodeAllocatableResourceMapping
-		fxt.Log.Info("daemonset configuration", "cpuDeviceMode", cpuDeviceMode, "groupBy", groupBy, "nodeAllocatableMapping", nodeAllocatableMapping)
+		fxt.Log.Info("daemonset configuration", "cpuDeviceMode", cpuDeviceMode, "groupBy", groupBy, "allocator", allocator, "nodeAllocatableMapping", nodeAllocatableMapping)
 
 		ginkgo.By("listing ResourceSlices for driver " + driverName)
 		sliceList, err := fxt.K8SClientset.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{
@@ -81,8 +84,16 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 		}
 
 		isInt := func(a resourcev1.DeviceAttribute) bool { return a.IntValue != nil }
-		isBool := func(a resourcev1.DeviceAttribute) bool { return a.BoolValue != nil }
 		isString := func(a resourcev1.DeviceAttribute) bool { return a.StringValue != nil }
+
+		isIntAtLeast := func(v int) func(a resourcev1.DeviceAttribute) bool {
+			return func(a resourcev1.DeviceAttribute) bool {
+				if !isInt(a) {
+					return false
+				}
+				return *a.IntValue >= int64(v)
+			}
+		}
 
 		var checks []attrCheck
 		switch cpuDeviceMode {
@@ -92,18 +103,18 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 				{deviceattribute.StandardDeviceAttributeNUMANode, isInt},
 				// Driver specific attributes next
 				{device.AttributeSocketID, isInt},
-				{device.AttributeSMTEnabled, isBool},
 				{device.AttributeCacheL3ID, isInt},
 				{device.AttributeCoreType, isString},
 				{device.AttributeCoreID, isInt},
 				{device.AttributeCPUID, isInt},
+				{device.AttributeSMTLevel, isIntAtLeast(1)},
 			}
 		default:
 			switch groupBy {
 			case device.GROUP_BY_MACHINE:
 				checks = []attrCheck{
-					{device.AttributeSMTEnabled, isBool},
 					{device.AttributeNumCPUs, isInt},
+					{device.AttributeSMTLevel, isIntAtLeast(1)},
 				}
 			case device.GROUP_BY_NUMA_NODE:
 				checks = []attrCheck{
@@ -111,14 +122,14 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 					{deviceattribute.StandardDeviceAttributeNUMANode, isInt},
 					// Driver specific attributes next
 					{device.AttributeSocketID, isInt},
-					{device.AttributeSMTEnabled, isBool},
 					{device.AttributeNumCPUs, isInt},
+					{device.AttributeSMTLevel, isIntAtLeast(1)},
 				}
 			case device.GROUP_BY_SOCKET:
 				checks = []attrCheck{
 					{device.AttributeSocketID, isInt},
-					{device.AttributeSMTEnabled, isBool},
 					{device.AttributeNumCPUs, isInt},
+					{device.AttributeSMTLevel, isIntAtLeast(1)},
 				}
 			default:
 				ginkgo.Fail("unknown CPU device group-by configuration: " + groupBy)
@@ -134,6 +145,33 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 					gomega.Expect(check.checker(attr)).To(gomega.BeTrue(),
 						"device %q in slice %q attribute %s has wrong type", dev.Name, slice.Name, check.name)
 				}
+			}
+		}
+	})
+
+	ginkgo.It("should publish SMT maps only for grouped external allocation", func() {
+		expectSMTMap := cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED && allocator == driverconfig.AllocatorExternal
+
+		for _, slice := range slices {
+			for _, dev := range slice.Spec.Devices {
+				attr, ok := dev.Attributes[device.AttributeSMTMapV1]
+				if !expectSMTMap {
+					gomega.Expect(ok).To(gomega.BeFalse(),
+						"device %q in slice %q must not have an SMT map", dev.Name, slice.Name)
+					continue
+				}
+				gomega.Expect(ok).To(gomega.BeTrue(),
+					"device %q in slice %q missing SMT map", dev.Name, slice.Name)
+				gomega.Expect(attr.StringValue).ToNot(gomega.BeNil(),
+					"device %q in slice %q SMT map has wrong type", dev.Name, slice.Name)
+				gomega.Expect(*attr.StringValue).ToNot(gomega.BeEmpty(),
+					"device %q in slice %q has an empty SMT map", dev.Name, slice.Name)
+
+				siblings, err := device.DecodeSMTMap(*attr.StringValue)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred(),
+					"device %q in slice %q has an invalid SMT map", dev.Name, slice.Name)
+				gomega.Expect(siblings).ToNot(gomega.BeEmpty(),
+					"device %q in slice %q SMT map contains no CPUs", dev.Name, slice.Name)
 			}
 		}
 	})

@@ -50,6 +50,11 @@ func (m *MockCPUInfoProvider) GetCPUTopology(_ logr.Logger) (*CPUTopology, error
 			uncoreCaches[info.UncoreCacheID] = struct{}{}
 		}
 	}
+	smtEnabled := len(m.CPUInfos) > len(cores)
+	smtLevel := 1
+	if smtEnabled {
+		smtLevel = 2
+	}
 
 	return &CPUTopology{
 		NumCPUs:        len(m.CPUInfos),
@@ -57,6 +62,8 @@ func (m *MockCPUInfoProvider) GetCPUTopology(_ logr.Logger) (*CPUTopology, error
 		NumSockets:     len(sockets),
 		NumNUMANodes:   len(numaNodes),
 		NumUncoreCache: len(uncoreCaches),
+		SMTEnabled:     smtEnabled,
+		SMTLevel:       smtLevel,
 		CPUDetails:     cpuDetails,
 	}, m.Err
 }

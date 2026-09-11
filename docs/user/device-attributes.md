@@ -15,62 +15,116 @@ Which attributes a device carries depends on the driver's device mode
 (`cpuDeviceMode` in [Configuration](configuration.md)): `grouped` exposes one device per
 CPU group, `individual` one device per CPU.
 
+> [!IMPORTANT]
+> SMT reporting currently supports only systems without SMT and systems with two logical
+> CPUs per physical core. Do not rely on `dra.cpu/smtLevel` or `dra.cpu/smtMapV1` on
+> systems which do not meet this constraint.
+
 ### Grouped mode (default)
 
-#### Currently supported attributes
+#### Supported attributes
 
 | Attribute                         | Type    | Description                                                                                                    |
 | --------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------- |
-| `resource.kubernetes.io/numaNode` | int     | Standard NUMA node of the group (published when grouping by NUMA node)                                         |
-| `dra.cpu/socketID`                | int     | CPU socket of the group (published when grouping by NUMA node or socket)                                       |
-| `dra.cpu/numCPUs`                 | int     | CPUs available in the group                                                                                    |
-| `dra.cpu/smtEnabled`              | bool    | Whether SMT/hyper-threading is enabled on the node                                                             |
+| `resource.kubernetes.io/numaNode` | int     | Standard NUMA node of the group; published only when grouping by NUMA node                                     |
 | `resource.kubernetes.io/pcieRoot` | strings | PCIe roots local to the group's CPUs; needs `--expose-pcie-roots` and the `DRAListTypeAttributes` feature gate |
+| `dra.cpu/socketID`                | int     | CPU socket of the group; published when grouping by socket or NUMA node                                        |
+| `dra.cpu/numCPUs`                 | int     | Number of allocatable CPUs in the group                                                                        |
+| `dra.cpu/smtLevel`                | int     | Logical CPUs per core: currently `1` without SMT and `2` with SMT                                              |
 
-#### Legacy attributes (deprecated)
+When `allocator: external` is configured, grouped devices additionally expose attributes
+to help external allocators to reserve resources efficiently:
 
-These compatibility attributes will be removed in a future version:
+| Attribute          | Type   | Description                                                                                                              |
+| ------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `dra.cpu/cpuIDs`   | string | Linux cpuset representation of the allocatable logical CPUs in this group                                                |
+| `dra.cpu/smtMapV1` | string | Version 1 encoding of the node-wide logical-CPU sibling relationships; see [Versioned attributes](#versioned-attributes) |
 
-| Attribute            | Type | Description                                           |
-| -------------------- | ---- | ----------------------------------------------------- |
-| `dra.cpu/numaNodeID` | int  | Driver-specific NUMA node attribute (NUMA grouping)   |
-| `dra.net/numaNode`   | int  | Cross-driver NUMA alignment attribute (NUMA grouping) |
+For example, an external allocator might receive the following additional attributes for a
+group containing CPUs 0 through 7, whose sibling offset is 4:
 
-Grouped devices also expose the consumable capacity `dra.cpu/cpu` — the number of CPUs
-claimable from the group. With `groupBy: machine`, only `numCPUs`, `smtEnabled`, and — when
-`--expose-pcie-roots` is enabled — `resource.kubernetes.io/pcieRoot` are published.
+```yaml
+dra.cpu/cpuIDs:
+  string: 0-7
+dra.cpu/smtMapV1:
+  string: 0-7>4
+```
+
+#### Compatibility / legacy attributes
+
+These attributes are retained for compatibility with existing consumers and potential
+cross-driver alignment. New consumers should use the supported attributes above instead.
+These attributes will be removed in a future release.
+
+| Attribute            | Type | Replaced by                       | Description                                                                                   |
+| -------------------- | ---- | --------------------------------- | --------------------------------------------------------------------------------------------- |
+| `dra.cpu/smtEnabled` | bool | `dra.cpu/smtLevel`                | Whether SMT/hyper-threading is enabled                                                        |
+| `dra.cpu/numaNodeID` | int  | `resource.kubernetes.io/numaNode` | Driver-specific NUMA node; published only when grouping by NUMA node                          |
+| `dra.net/numaNode`   | int  | `resource.kubernetes.io/numaNode` | Experimental cross-driver NUMA-alignment attribute; published only when grouping by NUMA node |
 
 ### Individual mode
 
-#### Currently supported attributes
+#### Supported attributes
 
 | Attribute                         | Type    | Description                                                                                           |
 | --------------------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
+| `resource.kubernetes.io/numaNode` | int     | Standard NUMA node                                                                                    |
+| `resource.kubernetes.io/pcieRoot` | strings | PCIe roots local to the CPU; needs `--expose-pcie-roots` and the `DRAListTypeAttributes` feature gate |
 | `dra.cpu/cpuID`                   | int     | Logical CPU ID                                                                                        |
-| `dra.cpu/coreID`                  | int     | Physical core ID (shared by SMT siblings)                                                             |
+| `dra.cpu/coreID`                  | int     | Physical core ID, shared by SMT siblings                                                              |
 | `dra.cpu/coreType`                | string  | `standard`, `p-core`, or `e-core`                                                                     |
 | `dra.cpu/cacheL3ID`               | int     | L3 (last-level/uncore) cache group                                                                    |
-| `resource.kubernetes.io/numaNode` | int     | Standard NUMA node                                                                                    |
 | `dra.cpu/socketID`                | int     | CPU socket                                                                                            |
-| `dra.cpu/smtEnabled`              | bool    | Whether SMT/hyper-threading is enabled on the node                                                    |
-| `resource.kubernetes.io/pcieRoot` | strings | PCIe roots local to the CPU; needs `--expose-pcie-roots` and the `DRAListTypeAttributes` feature gate |
+| `dra.cpu/smtLevel`                | int     | Logical CPUs per core: currently `1` without SMT and `2` with SMT                                     |
 
-#### Legacy attributes (deprecated)
+#### Compatibility / legacy attributes
 
-These compatibility attributes will be removed in a future version:
+These attributes are retained for compatibility. New consumers should use the supported
+attributes above instead. They may be removed in a future release.
 
-| Attribute            | Type | Description                           |
-| -------------------- | ---- | ------------------------------------- |
-| `dra.cpu/numaNodeID` | int  | Driver-specific NUMA node attribute   |
-| `dra.net/numaNode`   | int  | Cross-driver NUMA alignment attribute |
+| Attribute            | Type | Replaced by                       | Description                                                                                   |
+| -------------------- | ---- | --------------------------------- | --------------------------------------------------------------------------------------------- |
+| `dra.cpu/smtEnabled` | bool | `dra.cpu/smtLevel`                | Whether SMT/hyper-threading is enabled                                                        |
+| `dra.cpu/numaNodeID` | int  | `resource.kubernetes.io/numaNode` | Driver-specific NUMA node; published only when grouping by NUMA node                          |
+| `dra.net/numaNode`   | int  | `resource.kubernetes.io/numaNode` | Experimental cross-driver NUMA-alignment attribute; published only when grouping by NUMA node |
 
-`resource.kubernetes.io/pcieRoot` is intended for cross-driver co-location via
-`matchAttribute` — see [Feature Support](feature-support.md#exposing-pcie-roots) for details
-and current limitations.
+### Prepared-device metadata
 
-Use `resource.kubernetes.io/numaNode` for new workloads. The driver-specific
-`dra.cpu/numaNodeID` and `dra.net/numaNode` attributes are retained as deprecated
-compatibility attributes while the migration timeline is decided in [#299](https://github.com/kubernetes-sigs/dra-driver-cpu/issues/299).
+When a grouped device is prepared, the driver copies its published attributes into the device
+metadata exposed to the container. It also adds the following metadata-only attribute when the
+claim consumes `dra.cpu/cpu` capacity:
+
+| Attribute                  | Type | Description                                                    |
+| -------------------------- | ---- | -------------------------------------------------------------- |
+| `dra.cpu/allocatedNumCPUs` | int  | Number of CPUs allocated to this claim from the grouped device |
+
+This attribute is not published in a `ResourceSlice` and cannot be used to select a device.
+
+## Versioned attributes
+
+Some attributes contain a compact, driver-defined encoding instead of a Kubernetes-standard
+value. We cannot promise that a encoding introduced by this driver is correct and complete on its
+first release, or that it will not need a bug fix or extension.
+We therefore version those attribute names, giving consumers a basis for a smooth upgrade instead of forcing
+every consumer to change at once.
+In particular, `dra.cpu/smtMapV1` is the first version of the SMT sibling-map encoding.
+
+The suffix is a compact semantic version. Trailing `.0` components are omitted:
+
+| Attribute-name suffix | Semantic version |
+| --------------------- | ---------------- |
+| `V1`                  | `v1.0.0`         |
+| `V2_1`                | `v2.1.0`         |
+| `V3_1_2`              | `v3.1.2`         |
+
+The DRA attribute identifier permits letters, digits, and `_`, but not `.` or `-`. Therefore the
+periods in the conceptual versions `V2.1` and `V3.1.2` are represented by underscores in the
+actual attribute names: `dra.cpu/smtMapV2_1` and `dra.cpu/smtMapV3_1_2`.
+
+When introducing an incompatible encoding, the driver can publish both the old and new attributes
+(for example, `dra.cpu/smtMapV1` and `dra.cpu/smtMapV2`) for a migration period. Consumers should
+select the highest version that they understand and ignore newer versions. Once published, the
+meaning of a versioned attribute is immutable.
 
 ## Example ResourceSlices
 
@@ -98,6 +152,8 @@ spec:
     attributes:
       dra.cpu/smtEnabled:
         bool: true
+      dra.cpu/smtLevel:
+        int: 2
       dra.cpu/numCPUs:
         int: 64
       resource.kubernetes.io/numaNode:
@@ -121,6 +177,8 @@ spec:
     attributes:
       dra.cpu/smtEnabled:
         bool: true
+      dra.cpu/smtLevel:
+        int: 2
       dra.cpu/numCPUs:
         int: 64
       resource.kubernetes.io/numaNode:
@@ -173,6 +231,8 @@ spec:
         int: 0
       dra.cpu/smtEnabled:
         bool: true
+      dra.cpu/smtLevel:
+        int: 2
       dra.cpu/socketID:
         int: 0
       dra.net/numaNode:
@@ -197,6 +257,8 @@ spec:
         int: 0
       dra.cpu/smtEnabled:
         bool: true
+      dra.cpu/smtLevel:
+        int: 2
       dra.cpu/socketID:
         int: 0
       dra.net/numaNode:
@@ -292,9 +354,9 @@ spec:
             expression: device.attributes["dra.cpu"].coreType == "p-core"
 ```
 
-Any attribute works the same way — for example, swap the expression for
-`device.attributes["dra.cpu"].smtEnabled == false` to avoid nodes with SMT/hyper-threading
-enabled (e.g. for side-channel isolation).
+Any supported attribute works the same way — for example, use
+`device.attributes["dra.cpu"].smtLevel == 1` to avoid nodes with SMT/hyper-threading enabled
+(for example, for side-channel isolation).
 
 Selectors filter each request independently; to make *multiple* requests land on matching
 topology, add a
