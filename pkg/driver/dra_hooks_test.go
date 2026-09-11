@@ -32,7 +32,6 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
-	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	devattr "github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
@@ -2453,8 +2452,8 @@ func expectedGroupMetadata(groupBy string, cpuInfos []cpuinfo.CPUInfo, reservedC
 		attrs[string(devattr.AttributeAllocatedNumCPUs)] = resourceapi.DeviceAttribute{IntValue: new(allocatedCPUs)}
 	}
 	if exposeExtAttrs {
-		if smtMap := device.FormatSMTMap(topo); smtMap != "" {
-			attrs[string(devattr.AttributeSMTMap)] = resourceapi.DeviceAttribute{StringValue: new(smtMap)}
+		if smtMap := devattr.FormatSMTMap(topo); smtMap != "" {
+			attrs[string(devattr.AttributeSMTMapV1)] = resourceapi.DeviceAttribute{StringValue: new(smtMap)}
 		}
 		if len(cpuIDs) > 0 {
 			attrs[string(devattr.AttributeCPUIDs)] = resourceapi.DeviceAttribute{StringValue: new(cpuset.New(cpuIDs...).String())}

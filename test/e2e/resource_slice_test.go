@@ -154,7 +154,7 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 
 		for _, slice := range slices {
 			for _, dev := range slice.Spec.Devices {
-				attr, ok := dev.Attributes[device.AttributeSMTMap]
+				attr, ok := dev.Attributes[device.AttributeSMTMapV1]
 				if !expectSMTMap {
 					gomega.Expect(ok).To(gomega.BeFalse(),
 						"device %q in slice %q must not have an SMT map", dev.Name, slice.Name)

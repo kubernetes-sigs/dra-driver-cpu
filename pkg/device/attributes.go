@@ -49,7 +49,7 @@ const (
 	AttributeAllocatedNumCPUs resourceapi.QualifiedName = "dra.cpu/allocatedNumCPUs"
 	AttributeCPUIDs           resourceapi.QualifiedName = "dra.cpu/cpuIDs"
 	AttributeSMTLevel         resourceapi.QualifiedName = "dra.cpu/smtLevel"
-	AttributeSMTMap           resourceapi.QualifiedName = "dra.cpu/smtMap"
+	AttributeSMTMapV1         resourceapi.QualifiedName = "dra.cpu/smtMapV1"
 )
 
 // addCompatibilityAttributes add attributes to enable compatibility (e.g. alignment) with other

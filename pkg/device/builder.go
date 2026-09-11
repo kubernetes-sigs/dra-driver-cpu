@@ -485,7 +485,7 @@ func addSMTMapAttribute(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAt
 	if len(smtMap) > resourceapi.DeviceAttributeMaxValueLength {
 		return fmt.Errorf("SMT map %q cannot be represented within the limit of DRA max value length=%d", smtMap, resourceapi.DeviceAttributeMaxValueLength)
 	}
-	attrs[AttributeSMTMap] = resourceapi.DeviceAttribute{StringValue: new(smtMap)}
+	attrs[AttributeSMTMapV1] = resourceapi.DeviceAttribute{StringValue: new(smtMap)}
 	return nil
 }
 

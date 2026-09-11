@@ -1,6 +1,12 @@
 # SMT sibling-map encoding
 
-`dra.cpu/smtMap` is a compact representation of logical-CPU sibling pairs.
+`dra.cpu/smtMapV1` is a compact representation of logical-CPU sibling pairs.
+
+The encoding is versioned because, albeit aiming to be correct and completed,
+the encoding format didn't get sufficient testing and validation to be called
+confidently final; therefore we version to enable smooth future upgrades.
+The V1 format represents only two-way SMT; see the user-facing
+[attribute reference](../user/device-attributes.md) for more details.
 
 The encoding is composed by entries separated by `;`.
 Each entry has the generic format `cpuset[>S]` where `cpuset` is the encoding
