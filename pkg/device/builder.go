@@ -134,6 +134,9 @@ func Build(input BuildInput) (BuildResult, error) {
 		if err != nil {
 			return BuildResult{}, err
 		}
+		if err := validateDeviceAttributeValueCount(devices); err != nil {
+			return BuildResult{}, err
+		}
 		return BuildResult{
 			Devices: devices,
 			Mapping: Mapping{
@@ -161,6 +164,9 @@ func Build(input BuildInput) (BuildResult, error) {
 	}
 	res.Devices, err = createGroupedCPUDeviceSlices(input.Layout, deviceInfos, input.PCIeRootMapper, input.Inventory.CPUTopology, input.PublishNodeAllocatableResourceMapping, input.ExposeExtAttrs)
 	if err != nil {
+		return BuildResult{}, err
+	}
+	if err := validateDeviceAttributeValueCount(res.Devices); err != nil {
 		return BuildResult{}, err
 	}
 	return res, nil
@@ -457,11 +463,30 @@ func addPCIeRootsAttribute(pcieRootMapper *store.PCIeRootMapper, attrs map[resou
 	if len(pcieRoots) == 0 {
 		return nil // nothing to do
 	}
-	if len(pcieRoots) > resourceapi.DeviceAttributeMaxValueLength {
-		return fmt.Errorf("PCIe roots %q cannot be represented within the limit of DRA max value length=%d", pcieRoots, resourceapi.DeviceAttributeMaxValueLength)
-	}
 	attrs[deviceattribute.StandardDeviceAttributePCIeRoot] = resourceapi.DeviceAttribute{StringValues: pcieRoots}
 	return nil
+}
+
+func validateDeviceAttributeValueCount(devices []resourceapi.Device) error {
+	for _, device := range devices {
+		if numDeviceAttributeValues(device.Attributes) > resourceapi.ResourceSliceMaxAttributeValuesPerDevice {
+			return fmt.Errorf("device %q exceeds the DRA max attribute value limit=%d", device.Name, resourceapi.ResourceSliceMaxAttributeValuesPerDevice)
+		}
+	}
+	return nil
+}
+
+func numDeviceAttributeValues(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute) int {
+	count := 0
+	for _, attr := range attrs {
+		listAttrLen := len(attr.BoolValues) + len(attr.IntValues) + len(attr.StringValues) + len(attr.VersionValues)
+		if listAttrLen > 0 {
+			count += listAttrLen
+		} else {
+			count++ // A non-list attribute has one scalar value.
+		}
+	}
+	return count
 }
 
 func addCPUIDsAttribute(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, cpus cpuset.CPUSet) error {
