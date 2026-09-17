@@ -17,9 +17,13 @@ limitations under the License.
 package device_test
 
 import (
+	"fmt"
+	"path"
+	"strings"
 	"testing"
+	"testing/fstest"
 
-	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/testr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
@@ -27,6 +31,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/dynamic-resource-allocation/deviceattribute"
 	"k8s.io/utils/cpuset"
 )
 
@@ -88,15 +93,19 @@ func TestDeviceBuilderNodeAllocatableResourceMapping(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var devices []resourceapi.Device
-			if tc.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
-				devices, _ = device.BuildGrouped(logr.Discard(), tc.groupBy, topo, reserved, store.NewPCIeRootMapper(), tc.publishNodeAllocatableMapping)
-			} else {
-				devices, _ = device.Build(topo, reserved, store.NewPCIeRootMapper(), tc.publishNodeAllocatableMapping)
-			}
-			require.NotEmpty(t, devices)
+			res, err := device.Build(device.BuildInput{
+				Inventory: device.Inventory{
+					CPUTopology:  topo,
+					ReservedCPUs: reserved,
+				},
+				Layout:                                device.FindLayout(tc.cpuDeviceMode, tc.groupBy),
+				PCIeRootMapper:                        store.NewPCIeRootMapper(),
+				PublishNodeAllocatableResourceMapping: tc.publishNodeAllocatableMapping,
+			})
+			require.NoError(t, err)
+			require.NotEmpty(t, res.Devices)
 
-			for _, dev := range devices {
+			for _, dev := range res.Devices {
 				if !tc.publishNodeAllocatableMapping {
 					require.Nil(t, dev.NodeAllocatableResources,
 						"device %q must not expose nodeAllocatableResources when publishing is disabled", dev.Name)
@@ -141,15 +150,83 @@ func TestMachineGroupedUsesTopologyValidatedCPUs(t *testing.T) {
 	// CPU 4 was omitted from CPUDetails because topology discovery could not
 	// validate it.
 
-	devices, _ := device.BuildGrouped(
-		logr.Discard(), device.GROUP_BY_MACHINE, topo, cpuset.New(),
-		store.NewPCIeRootMapper(), false,
-	)
-	require.Len(t, devices, 1)
+	res, err := device.Build(
+		device.BuildInput{
+			Inventory: device.Inventory{
+				CPUTopology:  topo,
+				ReservedCPUs: cpuset.New(),
+			},
+			Layout:                                device.LayoutMachine,
+			PCIeRootMapper:                        store.NewPCIeRootMapper(),
+			PublishNodeAllocatableResourceMapping: false,
+		})
+	require.NoError(t, err)
+	require.Len(t, res.Devices, 1)
 
-	capacity := devices[0].Capacity[resourceapi.QualifiedName(device.CPUResourceQualifiedName)]
+	capacity := res.Devices[0].Capacity[resourceapi.QualifiedName(device.CPUResourceQualifiedName)]
 	require.Equal(t, int64(4), capacity.Value.Value())
-	numCPUs := devices[0].Attributes[device.AttributeNumCPUs]
+	numCPUs := res.Devices[0].Attributes[device.AttributeNumCPUs]
 	require.NotNil(t, numCPUs.IntValue)
 	require.Equal(t, int64(4), *numCPUs.IntValue)
+}
+
+func TestBuildValidatesDeviceAttributeValueCount(t *testing.T) {
+	topo := &cpuinfo.CPUTopology{
+		NumCPUs: 1,
+		CPUDetails: cpuinfo.CPUDetails{
+			0: {CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, SiblingCPUID: -1},
+		},
+	}
+	build := func(mapper *store.PCIeRootMapper) (device.BuildResult, error) {
+		return device.Build(device.BuildInput{
+			Inventory: device.Inventory{
+				CPUTopology:  topo,
+				ReservedCPUs: cpuset.New(),
+			},
+			Layout:         device.LayoutNUMANode,
+			PCIeRootMapper: mapper,
+			ExposeExtAttrs: true,
+		})
+	}
+
+	withoutPCIeRoots, err := build(store.NewPCIeRootMapper())
+	require.NoError(t, err)
+	maxPCIeRoots := resourceapi.ResourceSliceMaxAttributeValuesPerDevice - countAttributeValues(withoutPCIeRoots.Devices[0].Attributes)
+
+	withPCIeRoots, err := build(newPCIeRootMapper(t, maxPCIeRoots))
+	require.NoError(t, err)
+	device := withPCIeRoots.Devices[0]
+	require.Len(t, device.Attributes[deviceattribute.StandardDeviceAttributePCIeRoot].StringValues, maxPCIeRoots)
+	require.LessOrEqual(t, len(device.Attributes)+len(device.Capacity), resourceapi.ResourceSliceMaxAttributesAndCapacitiesPerDevice)
+	require.LessOrEqual(t, countAttributeValues(device.Attributes), resourceapi.ResourceSliceMaxAttributeValuesPerDevice)
+
+	_, err = build(newPCIeRootMapper(t, maxPCIeRoots+1))
+	require.ErrorContains(t, err, "DRA max attribute value limit")
+}
+
+func newPCIeRootMapper(t *testing.T, rootCount int) *store.PCIeRootMapper {
+	t.Helper()
+
+	sysfs := fstest.MapFS{}
+	for i := range rootCount {
+		rootName := fmt.Sprintf("pci%04x:%02x", i/256, i%256)
+		busID := strings.TrimPrefix(rootName, "pci")
+		sysfs[path.Join("devices", rootName, "pci_bus", busID, "cpulistaffinity")] = &fstest.MapFile{Data: []byte("0\n")}
+	}
+
+	mapper := store.NewPCIeRootMapper()
+	require.NoError(t, mapper.Probe(testr.New(t), sysfs, cpuset.New(0)))
+	return mapper
+}
+
+func countAttributeValues(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute) int {
+	count := 0
+	for _, attr := range attrs {
+		if len(attr.BoolValues) == 0 && len(attr.IntValues) == 0 && len(attr.StringValues) == 0 && len(attr.VersionValues) == 0 {
+			count++
+			continue
+		}
+		count += len(attr.BoolValues) + len(attr.IntValues) + len(attr.StringValues) + len(attr.VersionValues)
+	}
+	return count
 }

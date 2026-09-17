@@ -308,6 +308,7 @@ func setupFakeHost(t *testing.T, driverCmdline []byte) string {
 	writeTestFile(t, filepath.Join(hostRoot, "sys", "devices", "system", "cpu", "cpu0", "topology", "physical_package_id"), []byte("0\n"))
 	writeTestFile(t, filepath.Join(hostRoot, "sys", "devices", "system", "cpu", "cpu0", "topology", "cluster_id"), []byte("0\n"))
 	writeTestFile(t, filepath.Join(hostRoot, "sys", "devices", "system", "cpu", "cpu0", "topology", "core_id"), []byte("0\n"))
+	writeTestFile(t, filepath.Join(hostRoot, "sys", "devices", "system", "cpu", "cpu0", "topology", "thread_siblings_list"), []byte("0\n"))
 	writeTestFile(t, filepath.Join(hostRoot, "sys", "devices", "system", "cpu", "cpu0", "cache", "index3", "level"), []byte("3\n"))
 	writeTestFile(t, filepath.Join(hostRoot, "sys", "devices", "system", "cpu", "cpu0", "cache", "index3", "shared_cpu_list"), []byte("0\n"))
 	writeTestFile(t, filepath.Join(hostRoot, "sys", "devices", "system", "cpu", "cpu0", "cache", "index3", "id"), []byte("0\n"))

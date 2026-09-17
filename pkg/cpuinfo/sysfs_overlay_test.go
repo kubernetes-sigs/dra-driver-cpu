@@ -76,6 +76,7 @@ func TestSystemCPUInfoFromCompleteSysFSOverlay(t *testing.T) {
 /sys/devices/system/cpu/cpu999/topology/physical_package_id: "7\n"
 /sys/devices/system/cpu/cpu999/topology/core_id: "3\n"
 /sys/devices/system/cpu/cpu999/topology/cluster_id: "4\n"
+/sys/devices/system/cpu/cpu999/topology/thread_siblings_list: "999\n"
 /sys/devices/system/cpu/cpu999/cache/index3/level: "3\n"
 /sys/devices/system/cpu/cpu999/cache/index3/id: "11\n"
 /sys/devices/system/cpu/cpu999/cache/index3/shared_cpu_list: "999\n"
@@ -142,6 +143,7 @@ func TestSystemCPUInfoUsesHostRootAsOverlayBase(t *testing.T) {
 	writeFakeSysFSFile("devices/system/cpu/cpu42/topology/physical_package_id", "1\n")
 	writeFakeSysFSFile("devices/system/cpu/cpu42/topology/core_id", "3\n")
 	writeFakeSysFSFile("devices/system/cpu/cpu42/topology/cluster_id", "4\n")
+	writeFakeSysFSFile("devices/system/cpu/cpu42/topology/thread_siblings_list", "42\n")
 	writeFakeSysFSFile("devices/system/cpu/cpu42/cache/index3/level", "3\n")
 	writeFakeSysFSFile("devices/system/cpu/cpu42/cache/index3/id", "11\n")
 	writeFakeSysFSFile("devices/system/cpu/cpu42/cache/index3/shared_cpu_list", "42\n")

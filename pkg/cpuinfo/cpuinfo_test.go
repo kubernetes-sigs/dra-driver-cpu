@@ -36,6 +36,7 @@ func TestPopulateCpuSiblings(t *testing.T) {
 		name             string
 		input            []CPUInfo
 		expectedSiblings map[int]int
+		expectedError    string
 	}{
 		{
 			name: "2-way hyper-threading",
@@ -55,11 +56,29 @@ func TestPopulateCpuSiblings(t *testing.T) {
 			},
 			expectedSiblings: map[int]int{0: -1, 1: -1},
 		},
+		{
+			name: "three-way SMT is unsupported",
+			input: []CPUInfo{
+				{CpuID: 0, SocketID: 0, ClusterID: -1, CoreID: 0, SiblingCPUID: -1},
+				{CpuID: 1, SocketID: 0, ClusterID: -1, CoreID: 0, SiblingCPUID: -1},
+				{CpuID: 2, SocketID: 0, ClusterID: -1, CoreID: 0, SiblingCPUID: -1},
+			},
+			expectedError: "unsupported SMT level 3",
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			populateCpuSiblings(tc.input)
+			err := populateCpuSiblings(tc.input)
+			if tc.expectedError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.expectedError) {
+					t.Fatalf("populateCpuSiblings() error = %v, want error containing %q", err, tc.expectedError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("populateCpuSiblings() failed: %v", err)
+			}
 			infoMap := make(map[int]CPUInfo)
 			for _, info := range tc.input {
 				infoMap[info.CpuID] = info
@@ -140,6 +159,14 @@ func createFakeCPUTopology(t *testing.T, dir string, topo fakeCPUTopology) {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(topologyDir, "core_id"), []byte(fmt.Sprintf("%d\n", coreID)), 0600); err != nil {
+			t.Fatal(err)
+		}
+		firstCPUInSocket := socketID * coresPerSocket * topo.cpusPerCore
+		threadSiblings := make([]int, 0, topo.cpusPerCore)
+		for thread := range topo.cpusPerCore {
+			threadSiblings = append(threadSiblings, firstCPUInSocket+coreID+thread*coresPerSocket)
+		}
+		if err := os.WriteFile(filepath.Join(topologyDir, "thread_siblings_list"), []byte(cpuset.New(threadSiblings...).String()+"\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
 		if topo.numClustersPerSocket > 1 {
@@ -610,6 +637,40 @@ func TestGetCPUTopology(t *testing.T) {
 			}
 			if topo.NumCores != tc.expectedCores {
 				t.Errorf("expected %d cores, got %d", tc.expectedCores, topo.NumCores)
+			}
+		})
+	}
+}
+
+func TestGetCPUTopologyRejectsUnsupportedSMT(t *testing.T) {
+	logger := testr.New(t)
+	testCases := []struct {
+		name                   string
+		topology               fakeCPUTopology
+		expectedErrorSubstring string
+	}{
+		{
+			name: "three-way SMT",
+			topology: fakeCPUTopology{
+				numSockets:            1,
+				numNumaNodesPerSocket: 1,
+				numCoresPerNumaNode:   1,
+				cpusPerCore:           3,
+				coresPerL3:            1,
+			},
+			expectedErrorSubstring: "unsupported SMT level 3",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("HOST_ROOT", tmpDir)
+			createFakeCPUTopology(t, tmpDir, tc.topology)
+
+			_, err := NewSystemCPUInfo(sysfs.Host()).GetCPUTopology(logger)
+			if err == nil || !strings.Contains(err.Error(), tc.expectedErrorSubstring) {
+				t.Fatalf("GetCPUTopology() error = %v, want error containing %q", err, tc.expectedErrorSubstring)
 			}
 		})
 	}

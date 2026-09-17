@@ -285,7 +285,9 @@ func (s *SystemCPUInfo) GetCPUInfos(logger logr.Logger) ([]CPUInfo, error) {
 		cpuInfos = append(cpuInfos, cpuInfo)
 	}
 
-	populateCpuSiblings(cpuInfos)
+	if err := populateCpuSiblings(cpuInfos); err != nil {
+		return nil, err
+	}
 
 	return cpuInfos, nil
 }
@@ -442,7 +444,8 @@ func populateTopologyInfo(sfs sysfs.FS, cpuInfo *CPUInfo, logger logr.Logger) er
 }
 
 // TODO: Handle more complex sibling relationships (e.g. 4-way SMT) if needed in the future. For now we only handle 2-way hyperthreading which is the most common case.
-func populateCpuSiblings(cpuInfos []CPUInfo) {
+// Since we can't represent anything but 1 oe 2-way SMT (hyperthreading), these topologies are explicitly rejected.
+func populateCpuSiblings(cpuInfos []CPUInfo) error {
 	// Define a key struct to identify a unique physical core.
 	type coreLocation struct {
 		socket  int
@@ -464,7 +467,11 @@ func populateCpuSiblings(cpuInfos []CPUInfo) {
 	}
 
 	// Iterate through the grouped CPUs and set the sibling IDs.
-	for _, siblingIds := range coreToCPU {
+	for location, siblingIds := range coreToCPU {
+		if len(siblingIds) > 2 {
+			return fmt.Errorf("unsupported SMT level %d for core socket %d, cluster %d, core %d", len(siblingIds), location.socket, location.cluster, location.core)
+		}
+
 		// handle 2-way hyper-threading.
 		if len(siblingIds) == 2 {
 			cpu1Id, cpu2Id := siblingIds[0], siblingIds[1]
@@ -474,6 +481,8 @@ func populateCpuSiblings(cpuInfos []CPUInfo) {
 			cpuInfos[cpu2Index].SiblingCPUID = cpu1Id
 		}
 	}
+
+	return nil
 }
 
 func readFile(sysfs fs.FS, filename string) (string, error) {

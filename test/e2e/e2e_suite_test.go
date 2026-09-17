@@ -57,6 +57,7 @@ const (
 	argReservedCPUs       = "--reserved-cpus="
 	argCPUDeviceMode      = "--cpu-device-mode="
 	argGroupBy            = "--group-by="
+	argAllocator          = "--allocator="
 	daemonSetNamespace    = "kube-system"
 	daemonSetLabel        = "app=dracpu"
 	driverPodPollInterval = 2 * time.Second
@@ -325,6 +326,7 @@ func findArgInContainer(container *v1.Container, prefix string) (string, bool) {
 type driverConfigValues struct {
 	CPUDeviceMode                         string `json:"cpuDeviceMode,omitempty"`
 	GroupBy                               string `json:"groupBy,omitempty"`
+	Allocator                             string `json:"allocator,omitempty"`
 	ReservedCPUs                          string `json:"reservedCPUs,omitempty"`
 	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping,omitempty"`
 }
@@ -349,6 +351,9 @@ func getDriverConfigValues(ctx context.Context, client kubernetes.Interface, nam
 	}
 	if val, ok := findArgInContainer(cnt, argGroupBy); ok {
 		values.GroupBy = val
+	}
+	if val, ok := findArgInContainer(cnt, argAllocator); ok {
+		values.Allocator = val
 	}
 	if val, ok := findArgInContainer(cnt, argReservedCPUs); ok {
 		values.ReservedCPUs = val
