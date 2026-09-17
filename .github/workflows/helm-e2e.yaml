@@ -5,6 +5,20 @@ on:
     branches: [ main ]
     paths:
       - 'deployment/helm/**'
+      # The lane installs an image built here with COPY ., so the driver's own
+      # sources decide whether the relocated root is still exercised.
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'go.mod'
+      - 'go.sum'
+      - 'api/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'hack/ci/kind-ci.yaml'
+      - 'hack/ci/kind-ci-relocated-root.yaml'
+      - 'hack/ci/wait-resourcelices.sh'
+      - 'Makefile'
       - '.github/workflows/helm-e2e.yaml'
 
 env:
@@ -16,6 +30,20 @@ jobs:
   helm-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Default kubelet root; the baseline this workflow has always run.
+          - variant: default-root
+            kindConfig: hack/ci/kind-ci.yaml
+            kubeletRootDir: ""
+          # Kubelet relocated to a non-default --root-dir on every node, the
+          # scenario kubeletRootDir exists for (issue #231).
+          - variant: relocated-root
+            kindConfig: hack/ci/kind-ci-relocated-root.yaml
+            kubeletRootDir: /var/lib/custom-kubelet
+    name: helm-e2e (${{ matrix.variant }})
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -25,16 +53,25 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Named rather than left to whatever the runner image ships, so a helm
+      # release cannot change how the chart is installed here on its own.
+      - name: Install Helm
+        uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
+        with:
+          version: v4.2.4
+
       - name: Build the image
         run: make build-image
 
-      # Try to parse KIND_K8S_VERSION from the Makefile and use it to build the node image and create the cluster.
+      # Read KIND_K8S_VERSION from the Makefile and use it to build the node image and create the cluster.
       - name: Create kind cluster
+        env:
+          KIND_CONFIG: ${{ matrix.kindConfig }}
         run: |
           KIND_K8S_VERSION=$(make -s print-kind-k8s-version)
           kind delete cluster --name dra-driver-cpu || true
           kind build node-image --image=kindest/node:${KIND_K8S_VERSION} ${KIND_K8S_VERSION}
-          kind create cluster --name dra-driver-cpu --image=kindest/node:${KIND_K8S_VERSION} --config hack/ci/kind-ci.yaml
+          kind create cluster --name dra-driver-cpu --image=kindest/node:${KIND_K8S_VERSION} --config "${KIND_CONFIG}"
           kind get kubeconfig --name dra-driver-cpu > /tmp/kubeconfig-dra-driver-cpu
           kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
             label node dra-driver-cpu-worker node-role.kubernetes.io/worker=''
@@ -45,7 +82,13 @@ jobs:
             "${IMAGE}:${TAG}"
 
       - name: Install driver via Helm
+        env:
+          KUBELET_ROOT_DIR: ${{ matrix.kubeletRootDir }}
         run: |
+          extra=()
+          if [ -n "${KUBELET_ROOT_DIR}" ]; then
+            extra+=(--set-string "kubeletRootDir=${KUBELET_ROOT_DIR}")
+          fi
           helm install dra-driver-cpu deployment/helm/dra-driver-cpu \
             --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
             --namespace kube-system \
@@ -53,11 +96,16 @@ jobs:
             --set podLabels.app=dracpu \
             --set image.repository="${IMAGE}" \
             --set image.tag="${TAG}" \
-            --set image.pullPolicy=Never
+            --set image.pullPolicy=Never \
+            "${extra[@]}"
 
       - name: Wait for resourceSlices
         run: KUBECONFIG=/tmp/kubeconfig-dra-driver-cpu hack/ci/wait-resourcelices.sh
 
+      # /healthz stays 503 until Start returns, and Start blocks on registering
+      # under <kubeletRootDir>/plugins_registry. A root the kubelet is not
+      # watching publishes no slices, so it fails the wait above first, and
+      # would fail here too.
       - name: Check daemonSet pods are Running & Ready
         run: |
           kubectl --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
