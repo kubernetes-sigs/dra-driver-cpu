@@ -1,6 +1,15 @@
 # How it Works
 
-The driver is deployed as a DaemonSet running a single executable which implements two core components. The lifecycle of a claim, from pod creation to a pinned container:
+The driver is deployed as a DaemonSet. A single executable implements the DRA
+and NRI interfaces, and it owns the node-local CPU allocation state.
+Exactly one active driver instance is expected to manage each node.
+The driver manages all the available CPUs except those configured as reserved.
+The driver manages a single CPU pool, and partitioning that pool is currently
+unsupported.
+The singleton invariant is not currently enforced by the driver and must be
+guaranteed by the deployment.
+
+The lifecycle of a claim, from pod creation to a pinned container:
 
 ```mermaid
 sequenceDiagram

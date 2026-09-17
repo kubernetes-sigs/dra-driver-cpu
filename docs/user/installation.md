@@ -23,6 +23,9 @@ The driver is Linux-only and needs node-level privileges (host networking, and N
 CDI directory, and kubelet plugin directory access) — see
 [Security considerations](#security-considerations).
 
+The deployment must preserve the [singleton ownership
+invariant](how-it-works.md#how-it-works).
+
 ## Installing with Helm
 
 If needed, create a kind cluster. We have one in the repo, if needed, that

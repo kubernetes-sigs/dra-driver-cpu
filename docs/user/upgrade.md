@@ -4,6 +4,11 @@ This document detail the upgrade actions that are specific to releases of
 the CPU DRA driver. It complements the general [installation](installation.md)
 and [configuration](configuration.md) documentation.
 
+Upgrades must preserve the [singleton ownership
+invariant](how-it-works.md#how-it-works).
+An upgrade may temporarily leave a node without an active driver, but it must
+not create overlapping active owners.
+
 ## Upgrade from 0.2.0 to 0.3.0
 
 ### Action required
