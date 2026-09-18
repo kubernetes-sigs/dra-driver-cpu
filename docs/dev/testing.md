@@ -64,11 +64,13 @@ make ci-kind-setup
 
 This command builds the driver image, creates a Kind cluster, loads the image, and installs the driver manifests in `grouped` mode (the default).
 
-To install the driver in `individual` mode instead, use:
+To test the deprecated `individual` mode, use:
 
 ```bash
 DRACPU_E2E_CPU_DEVICE_MODE=individual make ci-kind-setup
 ```
+
+When deploying versions starting with 0.3.0 (included), use the [individual-mode migration path](../user/opaque-cpuset-overrides.md#migrate-from-individual-mode).
 
 To clean up the environment when finished, run:
 
