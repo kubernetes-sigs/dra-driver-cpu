@@ -133,8 +133,10 @@ that pool automatically as claims come and go.
 - Read [Workload Configuration Requirements](workload-requirements.md) — how DRA claims
   interact with `resources.requests.cpu`, pod QoS, and scheduler accounting. Skipping this
   can double-count CPUs or land your pod in an unintended QoS class.
-- Choose a [device exposure mode](configuration.md#driver-configuration) — `grouped`
-  (default, scales well) vs `individual` (fine-grained selection, e.g. by core type).
+- The driver supports a [device exposure mode](configuration.md#driver-configuration).
+  You should stick with `grouped` mode (the default).
+  The `individual` mode is deprecated; for exact CPU selection, see
+  [Migrating from individual mode](opaque-cpuset-overrides.md#migrate-from-individual-mode).
 - Reserve system CPUs with `reservedCPUs` so the driver never hands them out — see
   [Configuration](configuration.md).
 
@@ -142,7 +144,6 @@ that pool automatically as claims come and go.
 
 - More runnable manifests:
   [grouped mode](https://raw.githubusercontent.com/kubernetes-sigs/dra-driver-cpu/v0.2.0/hack/examples/pod_with_resource_claim_grouped_mode.yaml) (default),
-  [individual mode](https://raw.githubusercontent.com/kubernetes-sigs/dra-driver-cpu/v0.2.0/hack/examples/pod_with_resource_claim_individual_mode.yaml),
   [pod-level resources](https://raw.githubusercontent.com/kubernetes-sigs/dra-driver-cpu/v0.2.0/hack/examples/pod_with_pod_level_resources.yaml).
 - Steer placement with CEL selectors over topology attributes — examples in
   [Device Attributes and Selectors](device-attributes.md).
