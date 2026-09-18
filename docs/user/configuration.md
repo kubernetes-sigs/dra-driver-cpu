@@ -26,7 +26,7 @@ example, with a `values.yaml` containing:
 # values.yaml
 # Driver configuration
 driverConfig:
-  cpuDeviceMode: individual
+  cpuDeviceMode: grouped
   reservedCPUs: "0-1"
 # Other tuning knobs of Helm chart
 image:
@@ -43,12 +43,11 @@ nodeSelector:
 helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu -f values.yaml
 ```
 
-Individual fields can also be tuned with `--set` instead of a values file, e.g. to switch
-`cpuDeviceMode` to `individual` and reserve CPUs `0-1`:
+Individual fields can also be tuned with `--set` instead of a values file, e.g. to reserve
+CPUs `0-1`:
 
 ```shell
 helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu \
-    --set driverConfig.cpuDeviceMode=individual \
     --set driverConfig.reservedCPUs="0-1"
 ```
 
@@ -67,9 +66,9 @@ on - is configured through other Helm values, not through this file.
 
 `cpuDeviceMode` (string, default: `grouped`)
 
-- `individual`: exposes each allocatable CPU as a separate device in the `ResourceSlice`.
-  This mode provides fine-grained control, as it exposes granular information specific
-  to each CPU as device attributes.
+- `individual`: **deprecated**. It exposes each allocatable CPU as a separate device in the
+  `ResourceSlice`. For scheduler-controlled selection of exact CPUs, follow
+  [Migrating from individual mode](opaque-cpuset-overrides.md#migrate-from-individual-mode).
 - `grouped`: exposes a single device representing a group of CPUs. This mode treats CPUs
   as a [consumable capacity](https://github.com/kubernetes/enhancements/blob/master/keps/sig-scheduling/5075-dra-consumable-capacity/README.md)
   within the group, improving scalability by reducing the number of API objects.
@@ -80,7 +79,19 @@ on - is configured through other Helm values, not through this file.
 - `numanode`: groups CPUs by NUMA node.
 - `socket`: groups CPUs by socket.
 - `machine`: groups all allocatable node CPUs into a single machine-wide capacity device.
-  NOTE: this mode requires an external scheduler to supply core assignments. See
+  Use it only when that allocator must select from the entire node.
+
+> [!NOTE]
+> All grouping modes support integration with an external scheduler (see `allocator`) to
+> supply CPU core assignments. The `machine` grouping however _requires_ the external
+> allocator, while the other grouping modes work with all the allocator modes.
+> See [Custom Opaque CPUSet Allocation Overrides](opaque-cpuset-overrides.md).
+
+`allocator` (string, default: `cpumanager`)
+
+- `cpumanager`: selects CPUs with the driver's built-in topology-aware allocator.
+- `external`: works with every grouped `groupBy` value, requires an opaque cpuset from an
+  external scheduler, and publishes the attributes that scheduler needs to choose CPUs. See
   [Custom Opaque CPUSet Allocation Overrides](opaque-cpuset-overrides.md).
 
 `reservedCPUs` (string)

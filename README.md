@@ -26,7 +26,7 @@ The [Quickstart](docs/user/quickstart.md) walks through installing the driver an
 - **Topology-Aware CPU Discovery:** Discovers the node's full CPU topology by reading sysfs, including sockets, NUMA nodes, cores, SMT siblings, Last-Level Cache (LLC), core types (Performance/Efficiency), and optionally PCIe root locality.
 - **Exclusive CPU Allocation:** Pods requesting CPUs via a `ResourceClaim` are pinned to exclusive, guaranteed CPUs enforced through CDI and NRI.
 - **Shared Pool Management:** All other containers are dynamically confined to a shared pool made up of CPUs not exclusively assigned to any guaranteed container.
-- **Two Device Exposure Modes:** `individual` mode exposes each CPU as a selectable device for fine-grained placement; `grouped` mode exposes larger aggregates (NUMA node/socket) as consumable capacity for better scalability on large systems.
+- **Grouped Device Exposure:** `grouped` mode exposes NUMA node, socket, or machine aggregates as consumable capacity. The driver also implements a `individual` mode which is now **deprecated**; see [Migrating from individual mode](docs/user/opaque-cpuset-overrides.md#migrate-from-individual-mode).
 - **CPU Manager Feature Parity:** Aims to match key kubelet CPUManager static policy options (e.g. `PreferAlignByUnCoreCache`, `StrictCPUReservation`) - see [Feature Support](docs/user/feature-support.md) for the full comparison.
 - **Stateful Restarts:** Synchronizes with existing pods on restart by inspecting CDI-injected environment variables, rebuilding its allocation state without disrupting running workloads.
 
@@ -170,7 +170,7 @@ when filing an issue — it collects the CPU topology and driver configuration n
 - [Feature Support](docs/user/feature-support.md) - supported/unsupported features.
 - [Matching Kubelet CPU Manager Options](docs/user/feature-support.md#matching-cpu-manager-options) - kubelet cpumanager policy options and their driver equivalents.
 - [Workload Configuration Requirements](docs/user/workload-requirements.md) - how to set pod/container CPU requests alongside DRA claims.
-- [Custom Opaque CPUSet Allocation Overrides](docs/user/opaque-cpuset-overrides.md) - explicit core assignment for `groupBy: machine` mode.
+- [Custom Opaque CPUSet Allocation Overrides](docs/user/opaque-cpuset-overrides.md) - implement explicit core assignment when the external allocator integration is enabled; recommended upgrade path for users of `individual` mode.
 - [Metrics](docs/user/metrics.md) - Prometheus metrics exposed by the driver.
 - [Device Attributes and Selectors](docs/user/device-attributes.md) - selectable device attributes, CEL selector examples, and sample `ResourceSlice` output in each mode.
 - [Troubleshooting & Diagnostics](docs/user/troubleshooting.md) - the `dracpu gatherinfo` diagnostic tool.
