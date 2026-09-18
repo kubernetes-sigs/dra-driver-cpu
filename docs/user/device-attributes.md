@@ -13,7 +13,8 @@ This page is the attribute reference, with worked selector examples and sample
 
 Which attributes a device carries depends on the driver's device mode
 (`cpuDeviceMode` in [Configuration](configuration.md)): `grouped` exposes one device per
-CPU group, `individual` one device per CPU.
+CPU group. `individual` exposes one device per CPU, but is **deprecated**; see
+[Migrating from individual mode](opaque-cpuset-overrides.md#migrate-from-individual-mode).
 
 > [!IMPORTANT]
 > The driver supports only cores with one or two logical CPUs. It refuses to start when
@@ -33,7 +34,7 @@ CPU group, `individual` one device per CPU.
 
 #### External allocator attributes
 
-With the external allocator in grouped mode, the driver also publishes:
+With the external allocator in grouped mode, the driver also publishes these attributes for NUMA-node, socket, and machine groups.
 
 | Attribute           | Type   | Description                                                                                         |
 | ------------------- | ------ | --------------------------------------------------------------------------------------------------- |
@@ -63,7 +64,10 @@ These attributes will be removed in a future release.
 | `dra.cpu/numaNodeID` | int  | `resource.kubernetes.io/numaNode` | Driver-specific NUMA node; published only when grouping by NUMA node                          |
 | `dra.net/numaNode`   | int  | `resource.kubernetes.io/numaNode` | Experimental cross-driver NUMA-alignment attribute; published only when grouping by NUMA node |
 
-### Individual mode
+### Individual mode (deprecated)
+
+This is retained as a reference for existing deployments. For the supported replacement, see
+[Migrating from individual mode](opaque-cpuset-overrides.md#migrate-from-individual-mode).
 
 #### Supported attributes
 
@@ -199,9 +203,10 @@ spec:
     name: cpudevnuma001
 ```
 
-### Individual mode
+### Individual mode (deprecated)
 
-Each CPU is listed as a separate device with detailed attributes.
+In this [mode](opaque-cpuset-overrides.md#migrate-from-individual-mode),
+each CPU is listed as a separate device with detailed attributes.
 
 ```yaml
 apiVersion: resource.k8s.io/v1
@@ -291,7 +296,8 @@ Grouped mode maps the consumed `dra.cpu/cpu` capacity 1:1:
           capacityMultiplier: "1"
 ```
 
-Individual mode maps each device to one CPU:
+For reference and completeness, the [`individual`](opaque-cpuset-overrides.md#migrate-from-individual-mode)
+mode maps each device to one CPU.
 
 ```yaml
   devices:
@@ -329,8 +335,10 @@ spec:
             expression: device.attributes["resource.kubernetes.io"].numaNode == 0
 ```
 
-In `individual` mode, each CPU is its own device, so claims request a `count` of devices and
-selectors pick individual CPUs. A complete claim for 4 performance cores:
+In the [`individual`](opaque-cpuset-overrides.md#migrate-from-individual-mode)
+mode, each CPU is its own device, so claims request a `count` of
+devices and selectors pick individual CPUs.
+A complete legacy claim for 4 performance cores:
 
 ```yaml
 apiVersion: resource.k8s.io/v1
