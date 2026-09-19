@@ -170,6 +170,66 @@ func TestMachineGroupedUsesTopologyValidatedCPUs(t *testing.T) {
 	require.Equal(t, int64(4), *numCPUs.IntValue)
 }
 
+// TestBuildPublishesScalarNUMANodeAttribute pins the shape of the standard
+// numaNode attribute published for a device bound to a single NUMA node: the
+// standard name, the scalar int type and the value. The value is built by the
+// upstream deviceattribute helpers, but the published attribute must remain
+// exactly what the driver published before the switch.
+func TestBuildPublishesScalarNUMANodeAttribute(t *testing.T) {
+	tests := []struct {
+		name     string
+		layout   device.Layout
+		wantNUMA map[string]int64
+	}{
+		{
+			name:   "individual",
+			layout: device.LayoutIndividual,
+			wantNUMA: map[string]int64{
+				"cpudev000": 0,
+				"cpudev001": 0,
+				"cpudev002": 1,
+				"cpudev003": 1,
+			},
+		},
+		{
+			name:   "grouped by numanode",
+			layout: device.LayoutNUMANode,
+			wantNUMA: map[string]int64{
+				"cpudevnuma000": 0,
+				"cpudevnuma001": 1,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := device.Build(device.BuildInput{
+				Inventory: device.Inventory{
+					CPUTopology:  fakeTopology(),
+					ReservedCPUs: cpuset.New(),
+				},
+				Layout:         tc.layout,
+				PCIeRootMapper: store.NewPCIeRootMapper(),
+			})
+			require.NoError(t, err)
+			require.Len(t, res.Devices, len(tc.wantNUMA))
+
+			for _, dev := range res.Devices {
+				want, found := tc.wantNUMA[dev.Name]
+				require.Truef(t, found, "unexpected device %q", dev.Name)
+
+				attr, found := dev.Attributes[deviceattribute.StandardDeviceAttributeNUMANode]
+				require.Truef(t, found, "device %q must publish the standard numaNode attribute", dev.Name)
+				// This release publishes the scalar form only; the list form is a
+				// separate follow-up (see #320).
+				require.Nilf(t, attr.IntValues, "device %q must publish numaNode in scalar form", dev.Name)
+				require.NotNilf(t, attr.IntValue, "device %q must publish a numaNode int value", dev.Name)
+				require.Equalf(t, want, *attr.IntValue, "device %q numaNode", dev.Name)
+			}
+		})
+	}
+}
+
 func TestBuildValidatesDeviceAttributeValueCount(t *testing.T) {
 	topo := &cpuinfo.CPUTopology{
 		NumCPUs: 1,
