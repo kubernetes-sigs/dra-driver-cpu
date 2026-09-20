@@ -62,6 +62,49 @@ var (
 		},
 	}
 
+	topoAsymmetricSockets = &topology.CPUTopology{
+		NumCPUs:      6,
+		NumSockets:   2,
+		NumNUMANodes: 2,
+		NumCores:     6,
+		CPUDetails: map[int]topology.CPUInfo{
+			0: {CoreID: 0, SocketID: 0, NUMANodeID: 0},
+			1: {CoreID: 1, SocketID: 0, NUMANodeID: 0},
+			2: {CoreID: 0, SocketID: 1, NUMANodeID: 1},
+			3: {CoreID: 1, SocketID: 1, NUMANodeID: 1},
+			4: {CoreID: 2, SocketID: 1, NUMANodeID: 1},
+			5: {CoreID: 3, SocketID: 1, NUMANodeID: 1},
+		},
+	}
+
+	topoRepeatedCoreIDs = &topology.CPUTopology{
+		NumCPUs:      4,
+		NumSockets:   2,
+		NumNUMANodes: 2,
+		NumCores:     2,
+		CPUDetails: map[int]topology.CPUInfo{
+			0: {CoreID: 0, SocketID: 0, NUMANodeID: 0},
+			1: {CoreID: 0, SocketID: 0, NUMANodeID: 0},
+			2: {CoreID: 0, SocketID: 1, NUMANodeID: 1},
+			3: {CoreID: 0, SocketID: 1, NUMANodeID: 1},
+		},
+	}
+
+	topoAsymmetricUncoreSMT = &topology.CPUTopology{
+		NumCPUs:        6,
+		NumSockets:     1,
+		NumCores:       3,
+		NumUncoreCache: 2,
+		CPUDetails: map[int]topology.CPUInfo{
+			0: {CoreID: 0, SocketID: 0, NUMANodeID: 0, UncoreCacheID: 0},
+			1: {CoreID: 1, SocketID: 0, NUMANodeID: 0, UncoreCacheID: 0},
+			2: {CoreID: 2, SocketID: 0, NUMANodeID: 0, UncoreCacheID: 1},
+			3: {CoreID: 0, SocketID: 0, NUMANodeID: 0, UncoreCacheID: 0},
+			4: {CoreID: 1, SocketID: 0, NUMANodeID: 0, UncoreCacheID: 0},
+			5: {CoreID: 2, SocketID: 0, NUMANodeID: 0, UncoreCacheID: 1},
+		},
+	}
+
 	topoUncoreDualSocketNoSMT = &topology.CPUTopology{
 		NumCPUs:        16,
 		NumSockets:     2,
