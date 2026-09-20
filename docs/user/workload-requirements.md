@@ -160,7 +160,7 @@ When exclusive CPUs are assigned via DRA claims, declaring `limits.cpu` in `pod.
 
 > For an in-depth technical explanation of Linux cgroup v2, Kubelet cgroup managers, and CFS quota mechanics, see the [Kubelet Cgroups and QoS Deep Dive](../dev/kubelet-cgroups-and-qos.md).
 
-**Reserved environment variables:** the `DRA_CPUSET_*` environment variable prefix is reserved for the driver's CDI injection — do not set variables with this prefix; containers with malformed `DRA_CPUSET_*` values are rejected during creation. See [How it Works](how-it-works.md).
+**Reserved environment variables:** the `DRA_CPUSET_` environment-variable prefix is reserved for the driver's CDI injection — do not set variables with this prefix; containers with malformed `DRA_CPUSET_` values are rejected during creation. See [How it Works](how-it-works.md).
 
 ## Extended Resource Claim Status integrations
 
