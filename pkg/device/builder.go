@@ -365,11 +365,10 @@ func createGroupedCPUDeviceSlices(layout Layout, deviceInfos []groupedCPUDeviceI
 				AttributeSMTEnabled: {BoolValue: new(topo.SMTEnabled)},
 				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
 			}
-			// DRA standard attributes, published through the upstream helpers
+			addCompatibilityAttributes(deviceAttrs, int64(deviceInfo.numaNodeID))
 			if err := addNUMANodeAttribute(deviceAttrs, deviceInfo.numaNodeID); err != nil {
 				return nil, err
 			}
-			addCompatibilityAttributes(deviceAttrs, int64(deviceInfo.numaNodeID))
 			if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...); err != nil {
 				return nil, err
 			}
@@ -436,11 +435,10 @@ func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PC
 			AttributeCPUID:      {IntValue: new(int64(cpu.CpuID))},
 		}
 
-		// DRA standard attributes, published through the upstream helpers
+		addCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID))
 		if err := addNUMANodeAttribute(deviceAttrs, cpu.NUMANodeID); err != nil {
 			return nil, err
 		}
-		addCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID))
 		if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, cpu.CpuID); err != nil {
 			return nil, err
 		}
@@ -454,19 +452,6 @@ func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PC
 		allDevices = append(allDevices, cpuDevice)
 	}
 	return allDevices, nil
-}
-
-// addNUMANodeAttribute publishes the standard "numaNode" device attribute, in
-// scalar form, for a device bound to a single NUMA node. The value is built by
-// the upstream deviceattribute helpers (see numaattribute_linux.go), so the
-// attribute name, its type and the validation are owned by the DRA library.
-func addNUMANodeAttribute(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, numaNodeID int) error {
-	value, err := numaNodeAttributeValue(numaNodeID)
-	if err != nil {
-		return fmt.Errorf("cannot publish the numaNode attribute for NUMA node %d: %w", numaNodeID, err)
-	}
-	attrs[deviceattribute.StandardDeviceAttributeNUMANode] = value
-	return nil
 }
 
 func addPCIeRootsAttribute(pcieRootMapper *store.PCIeRootMapper, attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, cpuIDs ...int) error {

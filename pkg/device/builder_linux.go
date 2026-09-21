@@ -19,20 +19,19 @@ limitations under the License.
 package device
 
 import (
+	"fmt"
+
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/dynamic-resource-allocation/deviceattribute"
 )
 
-// numaNodeAttributeValue returns the value of the standard "numaNode" device
-// attribute for a device bound to a single NUMA node, in scalar form.
-//
-// The value is built by the upstream deviceattribute helpers so the attribute
-// name, its type and the validation (a NUMA node must be non-negative) are
-// owned by the DRA library instead of being re-implemented here.
-func numaNodeAttributeValue(numaNodeID int) (resourceapi.DeviceAttribute, error) {
+// addNUMANodeAttribute publishes the standard "numaNode" device attribute in
+// scalar form, using the upstream helper for its validation and value shape.
+func addNUMANodeAttribute(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, numaNodeID int) error {
 	attr, err := deviceattribute.GetNUMANodeAttribute(numaNodeID, deviceattribute.ScalarAttribute)
 	if err != nil {
-		return resourceapi.DeviceAttribute{}, err
+		return fmt.Errorf("cannot publish the numaNode attribute for NUMA node %d: %w", numaNodeID, err)
 	}
-	return attr.Value, nil
+	attrs[attr.Name] = attr.Value
+	return nil
 }
