@@ -360,14 +360,15 @@ func createGroupedCPUDeviceSlices(layout Layout, deviceInfos []groupedCPUDeviceI
 			})
 		case LayoutNUMANode:
 			deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				// DRA standard attributes first
-				deviceattribute.StandardDeviceAttributeNUMANode: {IntValue: new(int64(deviceInfo.numaNodeID))},
-				// Driver-specific/non-standard attributes next
+				// Driver-specific/non-standard attributes
 				AttributeSocketID:   {IntValue: new(int64(deviceInfo.socketID))},
 				AttributeSMTEnabled: {BoolValue: new(topo.SMTEnabled)},
 				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
 			}
 			addCompatibilityAttributes(deviceAttrs, int64(deviceInfo.numaNodeID))
+			if err := addNUMANodeAttribute(deviceAttrs, deviceInfo.numaNodeID); err != nil {
+				return nil, err
+			}
 			if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...); err != nil {
 				return nil, err
 			}
@@ -425,9 +426,7 @@ func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PC
 	for _, deviceInfo := range deviceInfos {
 		cpu := deviceInfo.cpu
 		deviceAttrs := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-			// DRA standard attributes first
-			deviceattribute.StandardDeviceAttributeNUMANode: {IntValue: new(int64(cpu.NUMANodeID))},
-			// Driver-specific/non-standard attributes next
+			// Driver-specific/non-standard attributes
 			AttributeSocketID:   {IntValue: new(int64(cpu.SocketID))},
 			AttributeSMTEnabled: {BoolValue: new(smtEnabled)},
 			AttributeCacheL3ID:  {IntValue: new(int64(cpu.UncoreCacheID))},
@@ -437,6 +436,9 @@ func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PC
 		}
 
 		addCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID))
+		if err := addNUMANodeAttribute(deviceAttrs, cpu.NUMANodeID); err != nil {
+			return nil, err
+		}
 		if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, cpu.CpuID); err != nil {
 			return nil, err
 		}
