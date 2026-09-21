@@ -18,6 +18,7 @@
 
 ## Not Supported
 
+- Admin Access is not supported. A ResourceClaim allocated with `adminAccess: true` for a CPU device will fail claim preparation.
 - This driver currently only manages CPU resources. Memory allocation and management are not supported.
 - While the driver is topology-aware, the grouped mode currently abstracts some of the fine-grained details within the group. Future enhancements may explore combining [consumable capacity](https://github.com/kubernetes/enhancements/blob/master/keps/sig-scheduling/5075-dra-consumable-capacity/README.md) with [partitionable devices](https://github.com/kubernetes/enhancements/blob/master/keps/sig-scheduling/4815-dra-partitionable-devices/README.md) for more hierarchical control.
 
