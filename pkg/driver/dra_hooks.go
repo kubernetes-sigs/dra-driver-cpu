@@ -75,18 +75,18 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 	defer logger.V(4).Info("end: preparing resource claims", "numClaims", len(claims))
 
 	result := make(map[types.UID]kubeletplugin.PrepareResult)
-
-	if len(claims) == 0 {
-		return result, nil
-	}
-
 	for _, claim := range claims {
 		start := time.Now()
 		cLogger := logger.WithValues("claim", ctxlog.KObj(claim), "claimUID", claim.UID)
-		if cp.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
-			result[claim.UID] = cp.prepareGroupedResourceClaim(cLogger, claim)
+
+		if err := cp.checkAdminAccess(claim); err != nil {
+			result[claim.UID] = kubeletplugin.PrepareResult{Err: err}
 		} else {
-			result[claim.UID] = cp.prepareResourceClaim(cLogger, claim)
+			if cp.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
+				result[claim.UID] = cp.prepareGroupedResourceClaim(cLogger, claim)
+			} else {
+				result[claim.UID] = cp.prepareResourceClaim(cLogger, claim)
+			}
 		}
 		prepareResult := cpumetrics.ResultSuccess
 		if result[claim.UID].Err != nil {
@@ -99,6 +99,21 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 
 func getCDIDeviceName(uid types.UID) string {
 	return fmt.Sprintf("claim-%s", uid)
+}
+
+func (cp *CPUDriver) checkAdminAccess(claim *resourceapi.ResourceClaim) error {
+	if claim.Status.Allocation == nil {
+		return nil // nothing to do
+	}
+	for _, alloc := range claim.Status.Allocation.Devices.Results {
+		if alloc.Driver != cp.driverName {
+			continue
+		}
+		if alloc.AdminAccess != nil && *alloc.AdminAccess {
+			return fmt.Errorf("admin access is not supported for device %q", alloc.Device)
+		}
+	}
+	return nil
 }
 
 // reserveResourceClaimAllocation records a new claim allocation while applying

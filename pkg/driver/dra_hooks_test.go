@@ -908,6 +908,130 @@ func TestPrepareResourceClaimsRejectsExhaustingSharedPool(t *testing.T) {
 	}
 }
 
+func TestPrepareResourceClaimsRejectAdminAccess(t *testing.T) {
+	baseCPUDriver := func(t *testing.T) *CPUDriver {
+		t.Helper()
+		prov := Providers{
+			CPUInfo: &cpuinfo.MockCPUInfoProvider{
+				CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
+			},
+			SysFS: testSysFS(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
+		}
+		conf := Config{
+			DriverName: testDriverName,
+			NodeName:   testNodeName,
+		}
+		cp, err := New(testr.New(t), prov, &conf)
+		require.NoError(t, err)
+		return cp
+	}
+
+	claimUID := types.UID("claim-1")
+	cdiDeviceName := getCDIDeviceName(claimUID)
+	cdiQualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, cdiDeviceName)
+
+	testCases := []struct {
+		name                    string
+		setupDriver             func(t *testing.T) *CPUDriver
+		claims                  []*resourceapi.ResourceClaim
+		expectedError           string
+		expectedPreparedDevices []kubeletplugin.Device
+	}{
+		{
+			name:        "sanity - claim NOT requiring admin access is accepted",
+			setupDriver: baseCPUDriver,
+			claims: []*resourceapi.ResourceClaim{
+				{
+					ObjectMeta: metav1.ObjectMeta{UID: claimUID, Name: "my-claim"},
+					Status: resourceapi.ResourceClaimStatus{
+						Allocation: &resourceapi.AllocationResult{
+							Devices: resourceapi.DeviceAllocationResult{
+								Results: []resourceapi.DeviceRequestAllocationResult{
+									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev000", AdminAccess: new(false)},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedPreparedDevices: []kubeletplugin.Device{
+				{PoolName: testNodeName, DeviceName: "cpudev000", CDIDeviceIDs: []string{cdiQualifiedName},
+					Metadata: metadataFromCPUInfo(cpuinfo.CPUInfo{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance}, true)},
+			},
+		},
+
+		{
+			name:        "multi-driver claim - only our devices reject admin access",
+			setupDriver: baseCPUDriver,
+			claims: []*resourceapi.ResourceClaim{
+				{
+					ObjectMeta: metav1.ObjectMeta{UID: claimUID, Name: "my-claim"},
+					Status: resourceapi.ResourceClaimStatus{
+						Allocation: &resourceapi.AllocationResult{
+							Devices: resourceapi.DeviceAllocationResult{
+								Results: []resourceapi.DeviceRequestAllocationResult{
+									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev000"},
+									{Driver: "other-driver", Pool: testNodeName, Device: "other-device", AdminAccess: new(true)},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedPreparedDevices: []kubeletplugin.Device{
+				{PoolName: testNodeName, DeviceName: "cpudev000", CDIDeviceIDs: []string{cdiQualifiedName},
+					Metadata: metadataFromCPUInfo(cpuinfo.CPUInfo{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance}, true)},
+			},
+		},
+		{
+			name:        "multi-driver claim - just one device asking admin access makes claim preparation fail",
+			setupDriver: baseCPUDriver,
+			claims: []*resourceapi.ResourceClaim{
+				{
+					ObjectMeta: metav1.ObjectMeta{UID: claimUID, Name: "my-claim"},
+					Status: resourceapi.ResourceClaimStatus{
+						Allocation: &resourceapi.AllocationResult{
+							Devices: resourceapi.DeviceAllocationResult{
+								Results: []resourceapi.DeviceRequestAllocationResult{
+									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev000", AdminAccess: new(true)},
+									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev001"},
+									{Driver: "other-driver", Pool: testNodeName, Device: "other-device", AdminAccess: new(true)},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedError: "admin access is not supported for device \"cpudev000\"",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			driver := tc.setupDriver(t)
+			mockCdiMgr := newMockCdiMgr()
+			driver.cdiMgr = mockCdiMgr
+
+			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
+			require.NoError(t, err)
+			require.Len(t, preparedClaims, 1)
+			prep, found := preparedClaims[claimUID]
+			require.True(t, found)
+
+			if tc.expectedError != "" {
+				require.ErrorContains(t, prep.Err, tc.expectedError)
+				require.Empty(t, prep.Devices)
+				require.Empty(t, mockCdiMgr.devices)
+				_, allocated := driver.cpuAllocationStore.GetResourceClaimAllocation(claimUID)
+				require.False(t, allocated, "rejected claim must not be recorded")
+			} else {
+				require.NoError(t, prep.Err)
+				require.ElementsMatch(t, tc.expectedPreparedDevices, prep.Devices)
+			}
+		})
+	}
+}
+
 func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) {
 	logger := testr.New(t)
 	claimUID := types.UID("claim-cdi-fails")
