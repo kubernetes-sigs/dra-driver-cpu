@@ -81,7 +81,7 @@ args:
   groupBy: "" # @schema enum:["",numanode,socket,machine];required:true
   # -- **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.reservedCPUs` instead. CPUs reserved for the OS and kubelet, excluded from DRA management (e.g. `"0-1"`).
   reservedCPUs: ""
-  # -- **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.hostnameOverride` instead. Overrides the node name the driver registers under.
+  # -- **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.hostnameOverride` instead. Overrides the node name the driver registers under. When unset in both `args` and `driverConfig`, the chart passes `--hostname-override=$(NODE_NAME)` via the downward API so each node registers under its Node object name even if the kernel hostname differs.
   hostnameOverride: ""
   # -- Discover and expose PCIe roots as device attributes. Requires the `DRAListTypeAttributes=true` feature gate in the cluster. Not configurable via `driverConfig`; use this flag instead
   exposePCIeRoots: false # @schema type:boolean

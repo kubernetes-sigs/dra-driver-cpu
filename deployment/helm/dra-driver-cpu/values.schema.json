@@ -38,7 +38,7 @@
           ]
         },
         "hostnameOverride": {
-          "description": "**Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.hostnameOverride` instead. Overrides the node name the driver registers under.",
+          "description": "**Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.hostnameOverride` instead. Overrides the node name the driver registers under. When unset in both `args` and `driverConfig`, the chart passes `--hostname-override=$(NODE_NAME)` via the downward API so each node registers under its Node object name even if the kernel hostname differs.",
           "type": "string"
         },
         "logLevel": {
