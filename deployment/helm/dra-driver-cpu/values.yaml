@@ -75,7 +75,7 @@ affinity: {}
 args:
   # -- Log verbosity level passed as `--v`
   logLevel: 4 # @schema type:integer;minimum:0;required:true
-  # -- **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.cpuDeviceMode` instead. CPU exposure mode: `grouped` (expose NUMA nodes or sockets as devices) or `individual` (expose each CPU as a device); defaults to `grouped` when empty.
+  # -- **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.cpuDeviceMode` instead. `individual` CPU device mode is deprecated; use grouped mode. See [migration guidance](../../../docs/user/opaque-cpuset-overrides.md#migrate-from-individual-mode) when exact CPU selection is needed. Defaults to `grouped` when empty.
   cpuDeviceMode: "" # @schema enum:["",grouped,individual];required:true
   # -- **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.groupBy` instead. Grouping criteria when `cpuDeviceMode=grouped`: `numanode`, `socket` or `machine`; defaults to `numanode` when empty.
   groupBy: "" # @schema enum:["",numanode,socket,machine];required:true

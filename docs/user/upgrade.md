@@ -45,6 +45,11 @@ exact or fistAvailable device request count to 1. Different request counts will
 cause the driver to fail at claim preparation stage.
 This constraint was previously implicit prior to 0.3.0 and it is now explicit.
 
+#### Configuration: individual mode
+
+Individual mode is deprecated. For scheduler-controlled selection of exact CPUs, follow
+[Migrating from individual mode](opaque-cpuset-overrides.md#migrate-from-individual-mode).
+
 ### Action recommended
 
 #### Previous installations using `install.yaml`

@@ -15,7 +15,7 @@
       ],
       "properties": {
         "cpuDeviceMode": {
-          "description": "**Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.cpuDeviceMode` instead. CPU exposure mode: `grouped` (expose NUMA nodes or sockets as devices) or `individual` (expose each CPU as a device); defaults to `grouped` when empty.",
+          "description": "**Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.cpuDeviceMode` instead. `individual` CPU device mode is deprecated; use grouped mode. See [migration guidance](../../../docs/user/opaque-cpuset-overrides.md#migrate-from-individual-mode) when exact CPU selection is needed. Defaults to `grouped` when empty.",
           "type": "string",
           "enum": [
             "",
