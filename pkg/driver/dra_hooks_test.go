@@ -1346,6 +1346,23 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			expectedCPUSet: cpuset.New(0, 2),
 		},
 		{
+			name:     "SocketGrouped_SingleSocketHT_UnqualifiedCPUCapacity",
+			cpuInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
+			groupBy:  devattr.GROUP_BY_SOCKET,
+			claims: []*resourceapi.ResourceClaim{
+				testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{
+					{
+						Driver:           testDriverName,
+						Pool:             testNodeName,
+						Device:           "cpudevsocket000",
+						Request:          "req-0",
+						ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{devattr.CPUResourceName: *resource.NewQuantity(2, resource.DecimalSI)},
+					},
+				}),
+			},
+			expectedCPUSet: cpuset.New(0, 2),
+		},
+		{
 			name:               "SocketGrouped_SingleSocketHT_FullAlloc_Socket",
 			cpuInfos:           mockCPUInfos_SingleSocket_4CPUS_HT,
 			groupBy:            devattr.GROUP_BY_SOCKET,
@@ -1472,7 +1489,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 						smtEnabled := driver.topology.CPUTopology.SMTEnabled
 						for _, res := range tc.claims[0].Status.Allocation.Devices.Results {
 							var allocatedCPUs int64
-							if q, ok := res.ConsumedCapacity[devattr.CPUResourceQualifiedName]; ok {
+							if q, ok := devattr.LookupConsumedCapacity(res.ConsumedCapacity, testDriverName); ok {
 								allocatedCPUs = q.Value()
 							}
 							expectedPreparedDevices = append(expectedPreparedDevices, kubeletplugin.Device{

@@ -512,6 +512,37 @@ func TestExternalGetPreferredCPUs(t *testing.T) {
 			},
 			expectErr: true,
 		},
+		{
+			name:        "unqualified cpu capacity key: opaque size matches request total",
+			managedCPUs: cpuset.New(0, 1, 2, 3),
+			allocation: &resourceapi.AllocationResult{
+				Devices: resourceapi.DeviceAllocationResult{
+					Config: []resourceapi.DeviceAllocationConfiguration{
+						{
+							Source:   resourceapi.AllocationConfigSourceClaim,
+							Requests: []string{"req"},
+							DeviceConfiguration: resourceapi.DeviceConfiguration{
+								Opaque: &resourceapi.OpaqueDeviceConfiguration{
+									Driver:     "dra.cpu",
+									Parameters: runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1alpha1","cpuConfig":{"cpuset":"1,3"}}`)},
+								},
+							},
+						},
+					},
+					Results: []resourceapi.DeviceRequestAllocationResult{
+						{
+							Request: "req",
+							Driver:  "dra.cpu",
+							Device:  "cpudev0",
+							ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{
+								resourceapi.QualifiedName(device.CPUResourceName): *resource.NewQuantity(2, resource.DecimalSI),
+							},
+						},
+					},
+				},
+			},
+			expectedCPUs: cpuset.New(1, 3),
+		},
 	}
 
 	logger := testr.New(t)
