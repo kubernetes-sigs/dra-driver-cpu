@@ -290,3 +290,60 @@ func countAttributeValues(attrs map[resourceapi.QualifiedName]resourceapi.Device
 	}
 	return count
 }
+
+func TestLookupConsumedCapacity(t *testing.T) {
+	qty1 := *resource.NewQuantity(1, resource.DecimalSI)
+	qty2 := *resource.NewQuantity(2, resource.DecimalSI)
+
+	tests := []struct {
+		name             string
+		consumedCapacity map[resourceapi.QualifiedName]resource.Quantity
+		driverName       string
+		wantQuantity     resource.Quantity
+		wantOK           bool
+	}{
+		{
+			name:             "fully-qualified with driver name",
+			consumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{"dra.cpu/cpu": qty1},
+			driverName:       "dra.cpu",
+			wantQuantity:     qty1,
+			wantOK:           true,
+		},
+		{
+			name:             "unqualified cpu key",
+			consumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{"cpu": qty2},
+			driverName:       "dra.cpu",
+			wantQuantity:     qty2,
+			wantOK:           true,
+		},
+		{
+			name:             "fallback to dra.cpu/cpu for quantity when driverName differs",
+			consumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{"dra.cpu/cpu": qty1},
+			driverName:       "dra-driver-cpu.k8s.io",
+			wantQuantity:     qty1,
+			wantOK:           true,
+		},
+		{
+			name:             "missing cpu capacity",
+			consumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{"memory": qty1},
+			driverName:       "dra.cpu",
+			wantOK:           false,
+		},
+		{
+			name:             "empty map",
+			consumedCapacity: nil,
+			driverName:       "dra.cpu",
+			wantOK:           false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := device.LookupConsumedCapacity(tc.consumedCapacity, tc.driverName)
+			require.Equal(t, tc.wantOK, ok)
+			if tc.wantOK {
+				require.Equal(t, tc.wantQuantity, got)
+			}
+		})
+	}
+}
