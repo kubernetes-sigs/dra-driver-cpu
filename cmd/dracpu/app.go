@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	dracpuapi "github.com/kubernetes-sigs/dra-driver-cpu/api"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/buildinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
@@ -47,7 +48,6 @@ import (
 )
 
 const (
-	driverName     = "dra.cpu"
 	configFlagHelp = "Path to a YAML driver configuration file. Configuration values are applied in order: " +
 		"built-in defaults, then file values, then explicit CLI flags. " +
 		"Only values explicitly set on the command line override earlier layers. " +
@@ -209,7 +209,7 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 	defer stop()
 
 	driverConfig := driver.Config{
-		DriverName:                            driverName,
+		DriverName:                            dracpuapi.DriverName,
 		NodeName:                              nodeName,
 		ReservedCPUs:                          reservedCPUSet,
 		CPUDeviceMode:                         cfg.CPUDeviceMode,
