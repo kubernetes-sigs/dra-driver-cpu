@@ -43,7 +43,6 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	cpuAllocationStore := store.NewCPUAllocation(cp.topology.CPUTopology, cp.topology.ReservedCPUs)
 	podConfigStore := store.NewPodConfig()
 	claimTracker := store.NewClaimTracker()
-	var containerUpdates []*api.ContainerUpdate
 	cdiCacheRefreshAttempted := false
 
 	for _, pod := range pods {
@@ -114,7 +113,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 					ContainerId: container.GetId(),
 				}
 				guaranteedUpdate.SetLinuxCPUSetCPUs(allGuaranteedCPUs.String())
-				containerUpdates = append(containerUpdates, guaranteedUpdate)
+				rupdates = append(rupdates, guaranteedUpdate)
 			}
 			podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
 			cLogger.V(6).Info("set container state", "claims", len(claimUIDs))
@@ -133,9 +132,9 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	if err != nil {
 		return nil, err
 	}
-	containerUpdates = append(containerUpdates, sharedContainerUpdates...)
-	logger.V(6).Info("synchronization complete", "updatesCount", len(containerUpdates))
-	return containerUpdates, nil
+	rupdates = append(rupdates, sharedContainerUpdates...)
+	logger.V(6).Info("synchronization complete", "updatesCount", len(rupdates))
+	return rupdates, nil
 }
 
 func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types.UID]cpuset.CPUSet, error) {
@@ -221,8 +220,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 	logger.V(2).Info("begin: CreateContainer")
 	defer logger.V(2).Info("end: CreateContainer")
 
-	adjust := &api.ContainerAdjustment{}
-	var updates []*api.ContainerUpdate
+	radjust = &api.ContainerAdjustment{}
 
 	claimCount := -1
 	claimAllocations, err := parseDRAEnvToClaimAllocations(logger, ctr.Env)
@@ -248,7 +246,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		cp.podConfigStore.SetContainerState(podUID, state)
 
 		logger.V(2).Info("no guaranteed CPUs found, using shared CPUs", "sharedCPUs", sharedCPUs.String())
-		adjust.SetLinuxCPUSetCPUs(sharedCPUs.String())
+		radjust.SetLinuxCPUSetCPUs(sharedCPUs.String())
 	} else {
 		// NRI invokes CreateContainer for all containers. Only trust DRA env
 		// entries that match a claim prepared by this driver.
@@ -268,13 +266,13 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		}
 		logger.V(2).Info("guaranteed CPUs found", "cpus", guaranteedCPUs.String())
 		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs...)
-		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
+		radjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
 		// A new owner means this is the first CreateContainer after Prepare, so
 		// existing shared containers must be moved off the newly claimed CPUs.
 		// On restart the owner already exists and no shared-container updates are
 		// needed.
 		if len(newOwners) > 0 {
-			updates, err = cp.getSharedContainerUpdates(logger, containerId)
+			rupdates, err = cp.getSharedContainerUpdates(logger, containerId)
 			if err != nil {
 				cp.claimTracker.Cleanup(newOwners...)
 				return nil, nil, err
@@ -283,7 +281,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		cp.podConfigStore.SetContainerState(podUID, state)
 	}
 
-	return adjust, updates, nil
+	return radjust, rupdates, nil
 }
 
 // StopContainer removes runtime container state without changing DRA-owned allocations.
