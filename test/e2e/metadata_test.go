@@ -130,11 +130,11 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 				},
 				Spec: makeResourceClaimSpec(numCPUs, isConsumable),
 			}
-			_, err := fxt.K8SClientset.ResourceV1().ResourceClaims(fxt.Namespace.Name).Create(ctx, claim, metav1.CreateOptions{})
+			createdClaim, err := fxt.K8SClientset.ResourceV1().ResourceClaims(fxt.Namespace.Name).Create(ctx, claim, metav1.CreateOptions{})
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 			ginkgo.By("creating a pod that references the claim")
-			pod := makeTesterPodWithNamedClaim(fxt.Namespace.Name, dracpuTesterImage, claimName, targetNode.Name, nodeAllocMapping)
+			pod := makeTesterPodWithNamedClaim(fxt.Namespace.Name, dracpuTesterImage, targetNode.Name, nodeAllocMapping, createdClaim)
 			pod, err = e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 

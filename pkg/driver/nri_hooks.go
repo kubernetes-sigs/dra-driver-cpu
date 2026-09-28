@@ -24,6 +24,7 @@ import (
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/go-logr/logr"
+	dracpuapi "github.com/kubernetes-sigs/dra-driver-cpu/api"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"k8s.io/apimachinery/pkg/types"
@@ -140,15 +141,20 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types.UID]cpuset.CPUSet, error) {
 	allocations := make(map[types.UID]cpuset.CPUSet)
 	for _, env := range envs {
-		if !strings.HasPrefix(env, cdiEnvVarPrefix) {
+		key, value, hasValue := strings.Cut(env, "=")
+		// We won't have a conflict by constructions with the vars we inject from DRA side
+		// and consume from NRI side, but still we add a defensive check.
+		// So this is the explicit skip for well-known public environment variable.
+		if key == dracpuapi.EnvVarExclusiveAssignedCPUSet {
+			continue
+		}
+		if !strings.HasPrefix(key, cdiEnvVarPrefix) {
 			continue
 		}
 		logger.V(4).Info("parsing DRA env entry", "env", env)
-		parts := strings.SplitN(env, "=", 2)
-		if len(parts) != 2 {
+		if !hasValue {
 			return nil, fmt.Errorf("malformed DRA env entry %q", env)
 		}
-		key, value := parts[0], parts[1]
 		var claimUID types.UID
 		if after, ok := strings.CutPrefix(key, cdiEnvVarPrefix+"_"); ok {
 			uidStr := after
@@ -264,9 +270,11 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 			cp.claimTracker.Cleanup(newOwners...)
 			return nil, nil, err
 		}
-		logger.V(2).Info("guaranteed CPUs found", "cpus", guaranteedCPUs.String())
+		cpuString := guaranteedCPUs.String()
+		logger.V(2).Info("guaranteed CPUs found", "cpus", cpuString)
 		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs...)
-		radjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
+		radjust.SetLinuxCPUSetCPUs(cpuString)
+		radjust.AddEnv(dracpuapi.EnvVarExclusiveAssignedCPUSet, cpuString)
 		// A new owner means this is the first CreateContainer after Prepare, so
 		// existing shared containers must be moved off the newly claimed CPUs.
 		// On restart the owner already exists and no shared-container updates are

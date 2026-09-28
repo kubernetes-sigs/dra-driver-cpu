@@ -18,4 +18,7 @@ package api
 
 const (
 	DriverName = "dra.cpu"
+
+	// exposed to containers, part of the API contract
+	EnvVarExclusiveAssignedCPUSet = "DRA_EXCLUSIVE_ASSIGNED_CPUSET"
 )

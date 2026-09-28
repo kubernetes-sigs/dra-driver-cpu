@@ -17,12 +17,20 @@ limitations under the License.
 package discovery
 
 import (
+	"errors"
+	"fmt"
 	"maps"
+	"os"
 	"slices"
 
+	dracpuapi "github.com/kubernetes-sigs/dra-driver-cpu/api"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/buildinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"k8s.io/utils/cpuset"
+)
+
+var (
+	ErrNotFound = errors.New("not found")
 )
 
 type DRACPUBuildinfo struct {
@@ -35,8 +43,44 @@ type DRACPUAllocation struct {
 	CPUs string `json:"cpus"`
 }
 
+type DRACPUEnvVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type DRACPUEnvironment struct {
+	Vars []DRACPUEnvVar `json:"vars"`
+}
+
+func (env DRACPUEnvironment) AssignedCPUSet() (cpuset.CPUSet, error) {
+	for _, ev := range env.Vars {
+		if ev.Name == dracpuapi.EnvVarExclusiveAssignedCPUSet {
+			cpus, err := cpuset.Parse(ev.Value)
+			if err != nil {
+				return cpuset.New(), fmt.Errorf("invalid variable: %w", err)
+			}
+			return cpus, nil
+		}
+	}
+	return cpuset.New(), ErrNotFound
+}
+
+func FromEnviron() DRACPUEnvironment {
+	ret := DRACPUEnvironment{
+		Vars: []DRACPUEnvVar{},
+	}
+	if val, ok := os.LookupEnv(dracpuapi.EnvVarExclusiveAssignedCPUSet); ok {
+		ret.Vars = append(ret.Vars, DRACPUEnvVar{
+			Name:  dracpuapi.EnvVarExclusiveAssignedCPUSet,
+			Value: val,
+		})
+	}
+	return ret
+}
+
 type DRACPURuntimeinfo struct {
-	CPUAffinity string `json:"affinity"`
+	CPUAffinity string            `json:"affinity"`
+	Environ     DRACPUEnvironment `json:"environ"`
 }
 
 type DRACPUInfo struct {
