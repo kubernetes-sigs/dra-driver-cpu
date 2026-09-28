@@ -165,7 +165,7 @@ func requestTotalCPUs(allocation *resourceapi.AllocationResult, driverName, requ
 		if r.Driver != driverName || r.Request != request {
 			continue
 		}
-		q, ok := r.ConsumedCapacity[device.CPUResourceQualifiedName]
+		q, ok := device.LookupConsumedCapacity(r.ConsumedCapacity, driverName)
 		if !ok {
 			return 0, fmt.Errorf("CPU capacity %q for device %q is missing", device.CPUResourceQualifiedName, r.Device)
 		}

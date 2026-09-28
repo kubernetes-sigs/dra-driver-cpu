@@ -30,6 +30,7 @@ import (
 )
 
 const (
+	CPUResourceName          = "cpu"
 	CPUResourceQualifiedName = "dra.cpu/cpu"
 
 	CPUDevicePrefix              = "cpudev"
@@ -513,4 +514,14 @@ func addSMTLayoutAttribute(attrs map[resourceapi.QualifiedName]resourceapi.Devic
 	}
 	attrs[AttributeSMTLayout] = resourceapi.DeviceAttribute{StringValue: new(smtLayout)}
 	return nil
+}
+
+// LookupConsumedCapacity retrieves CPU capacity for driverName, falling back to CPUResourceQualifiedName for compatibility.
+func LookupConsumedCapacity(consumedCapacity map[resourceapi.QualifiedName]resource.Quantity, driverName string) (resource.Quantity, bool) {
+	if driverName != "" {
+		if q, ok := LookupByQualifiedName(consumedCapacity, resourceapi.QualifiedName(driverName+"/"+CPUResourceName), driverName); ok {
+			return q, true
+		}
+	}
+	return LookupByQualifiedName(consumedCapacity, CPUResourceQualifiedName, driverName)
 }

@@ -159,7 +159,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 		if alloc.Driver != cp.driverName {
 			continue
 		}
-		quantity, ok := alloc.ConsumedCapacity[device.CPUResourceQualifiedName]
+		quantity, ok := device.LookupConsumedCapacity(alloc.ConsumedCapacity, cp.driverName)
 		if !ok {
 			return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity %q for device %q is missing", device.CPUResourceQualifiedName, alloc.Device)}
 		}
@@ -330,7 +330,7 @@ func (cp *CPUDriver) prepareDevices(logger logr.Logger, claim *resourceapi.Resou
 			for k, v := range attrs {
 				metadataAttrs[string(k)] = v
 			}
-			if quantity, ok := allocResult.ConsumedCapacity[device.CPUResourceQualifiedName]; ok {
+			if quantity, ok := device.LookupConsumedCapacity(allocResult.ConsumedCapacity, cp.driverName); ok {
 				allocatedCount := quantity.Value()
 				metadataAttrs[string(device.AttributeAllocatedNumCPUs)] = resourceapi.DeviceAttribute{
 					IntValue: &allocatedCount,
