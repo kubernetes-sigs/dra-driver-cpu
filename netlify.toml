@@ -1,0 +1,32 @@
+# Netlify build configuration for https://dra-driver-cpu.sigs.k8s.io
+#
+# The site is a Hugo (extended) + Docsy build rooted in site/. The pages under
+# site/content/ hold the navigation and pull the prose in from docs/ with the
+# include-file shortcode, so the documentation stays at docs/ and is published
+# as-is.
+#
+# The site itself is created and hosted by the Kubernetes infrastructure team,
+# which also reconciles the domain and its TLS certificate. See the
+# "REQUEST: Netlify site for dra-driver-cpu" issue in kubernetes/org.
+
+[build]
+  base = "site"
+  publish = "public"
+  command = "npm ci && hugo --gc --minify"
+
+# Hugo 0.161 and later run PostCSS with Node's --permission flag and need Node
+# 22 or later, and 0.158 and later deprecate an API that Docsy v0.15.0 still
+# uses. Pin the last version that builds on the Node below; see site/README.md.
+[build.environment]
+  HUGO_VERSION = "0.157.0"
+  GO_VERSION = "1.25.0"
+  NODE_VERSION = "20"
+  GIT_DEPTH = "0"
+
+# Deploy previews and branch deploys build against their own URL so that
+# internal links point at the preview instead of production.
+[context.deploy-preview]
+  command = "npm ci && hugo --gc --minify --buildDrafts --buildFuture --baseURL $DEPLOY_PRIME_URL"
+
+[context.branch-deploy]
+  command = "npm ci && hugo --gc --minify --buildDrafts --buildFuture --baseURL $DEPLOY_PRIME_URL"
