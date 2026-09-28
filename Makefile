@@ -317,3 +317,25 @@ helm-package: install-helm ## package helm chart for release
 .PHONY: helm-push
 helm-push: helm-package ## push helm chart to OCI registry
 	$(HELM) push $(OUT_DIR)/dra-driver-cpu-$(CHART_VERSION).tgz oci://$(CHART_REGISTRY)
+
+# The documentation site is built from site/ with Hugo extended and Docsy. The
+# Markdown itself stays in docs/ and is pulled in by the site, so the two are
+# never out of sync; see site/README.md. netlify.toml pins Hugo 0.157.0 and
+# Node 20, because Hugo 0.161 and later need Node 22 or later.
+SITE_DIR := $(REPO_ROOT)/site
+
+.PHONY: site-build
+site-build: site-deps ## build the documentation site into site/public
+	cd $(SITE_DIR) && hugo --gc --minify
+
+.PHONY: site-serve
+site-serve: site-deps ## serve the documentation site at http://localhost:1313
+	cd $(SITE_DIR) && hugo server
+
+.PHONY: site-deps
+site-deps: $(SITE_DIR)/node_modules ## install the Node.js dependencies of the documentation site
+
+# Docsy compiles its styles with PostCSS, which comes from the Node.js
+# dependencies. Refresh them when package.json or the lock file changes.
+$(SITE_DIR)/node_modules: $(SITE_DIR)/package.json $(SITE_DIR)/package-lock.json
+	cd $(SITE_DIR) && npm ci

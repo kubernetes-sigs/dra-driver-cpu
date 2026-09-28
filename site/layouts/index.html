@@ -1,0 +1,13 @@
+{{/*
+Home page template.
+
+The home page is a redirect to the Overview page, which publishes the repository
+README, so it does not carry a title of its own. Render the content inside
+.td-content like the rest of the site, so the redirect stub keeps the site
+chrome in the moment before it navigates away.
+*/}}
+{{ define "main" }}
+<div class="td-content">
+  {{ .Content }}
+</div>
+{{ end }}
