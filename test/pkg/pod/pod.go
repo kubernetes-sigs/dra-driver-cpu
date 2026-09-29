@@ -36,7 +36,7 @@ import (
 )
 
 const (
-	PollInterval = time.Second * 10
+	PollInterval = time.Second
 	PollTimeout  = time.Minute * 2
 )
 

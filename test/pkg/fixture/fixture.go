@@ -101,7 +101,7 @@ func (fxt *Fixture) Teardown(ctx context.Context) error {
 }
 
 const (
-	nsPollInterval = time.Second * 10
+	nsPollInterval = time.Second
 	nsPollTimeout  = time.Minute * 2
 )
 

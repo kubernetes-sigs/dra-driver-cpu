@@ -67,7 +67,7 @@ func PickWorker(ctx context.Context, cs kubernetes.Interface, interval, timeout 
 
 	// random pick
 	var node *v1.Node
-	immediate := false // shortcut to make the call more readable
+	immediate := true // check immediately when a worker is already ready
 	err := k8swait.PollUntilContextTimeout(ctx, interval, timeout, immediate, func(ctx context.Context) (bool, error) {
 		workerNodes, err := FindWorkers(ctx, cs)
 		if err != nil {
