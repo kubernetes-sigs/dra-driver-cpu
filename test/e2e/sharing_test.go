@@ -21,6 +21,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	cpusetmatchers "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/matchers/cpuset"
@@ -109,7 +110,7 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 		var claim *resourcev1.ResourceClaim
 
 		ginkgo.BeforeEach(func(ctx context.Context) {
-			if cpuDeviceMode == "grouped" && groupBy == "machine" {
+			if cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED && groupBy == device.GROUP_BY_MACHINE {
 				ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
 			}
 			fxt = rootFxt.WithPrefix("sharingcpu")

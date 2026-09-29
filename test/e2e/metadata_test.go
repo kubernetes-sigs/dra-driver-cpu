@@ -105,7 +105,7 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 
 		ginkgo.BeforeEach(func() {
 			fxt = rootFxt.WithPrefix("metadata")
-			if groupBy == device.GROUP_BY_MACHINE {
+			if cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED && groupBy == device.GROUP_BY_MACHINE {
 				ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
 			}
 		})

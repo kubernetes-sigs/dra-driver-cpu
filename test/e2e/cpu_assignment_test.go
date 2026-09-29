@@ -23,6 +23,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	cpusetmatchers "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/matchers/cpuset"
@@ -200,7 +201,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 						Name: fmt.Sprintf("cpu-request-%d-excl", cpusPerClaim),
 					},
 					Spec: resourcev1.ResourceClaimTemplateSpec{
-						Spec: makeResourceClaimSpec(cpusPerClaim, cpuDeviceMode == "grouped"),
+						Spec: makeResourceClaimSpec(cpusPerClaim, cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED),
 					},
 				}
 				createdClaimTemplate, err := fxt.K8SClientset.ResourceV1().ResourceClaimTemplates(fxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
@@ -266,7 +267,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					for _, cpu := range targetNodeCPUInfo.CPUs {
 						if availableCPUs.Contains(cpu.CpuID) {
 							groupID := cpu.NUMANodeID
-							if groupBy == "socket" {
+							if groupBy == device.GROUP_BY_SOCKET {
 								groupID = cpu.SocketID
 							}
 							byGroup[groupID]++
@@ -294,7 +295,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 							Name: fmt.Sprintf("cpu-request-all-excl-%d", i),
 						},
 						Spec: resourcev1.ResourceClaimTemplateSpec{
-							Spec: makeResourceClaimSpec(claimSize, cpuDeviceMode == "grouped"),
+							Spec: makeResourceClaimSpec(claimSize, cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED),
 						},
 					}
 					createdClaimTemplate, err := fxt.K8SClientset.ResourceV1().ResourceClaimTemplates(fxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
@@ -345,7 +346,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 			})
 
 			ginkgo.It("should allocate non-overlapping CPUs for multiple requests in the same grouped claim", func(ctx context.Context) {
-				if cpuDeviceMode != "grouped" {
+				if cpuDeviceMode != device.CPU_DEVICE_MODE_GROUPED {
 					ginkgo.Skip("this test only applies to grouped CPU device mode")
 				}
 				if groupBy == "machine" {
@@ -413,7 +414,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 			})
 
 			ginkgo.It("should allocate non-overlapping CPUs for request with count > 1 in the same grouped claim", func(ctx context.Context) {
-				if cpuDeviceMode != "grouped" {
+				if cpuDeviceMode != device.CPU_DEVICE_MODE_GROUPED {
 					ginkgo.Skip("this test only applies to grouped CPU device mode")
 				}
 				if groupBy == "machine" {
@@ -424,11 +425,11 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				// seems to scan the resource inventory only forward, so if the ResourceSlice only expose one device,
 				// the allocator can't circle back regardless of shareability.
 				// Seems to work fine with multiple devices though.
-				if groupBy == "socket" && len(targetNodeCPUInfo.BySocket()) < desiredTotalCPUs {
+				if groupBy == device.GROUP_BY_SOCKET && len(targetNodeCPUInfo.BySocket()) < desiredTotalCPUs {
 					// we need at least desiredTotalCPUs distinct socket devices
 					ginkgo.Skip("skipping this test because it requires at least 2 distinct socket devices")
 				}
-				if groupBy == "numanode" && len(targetNodeCPUInfo.ByNUMANode()) < desiredTotalCPUs {
+				if groupBy == device.GROUP_BY_NUMA_NODE && len(targetNodeCPUInfo.ByNUMANode()) < desiredTotalCPUs {
 					// same scheduler limitation as above, applied to NUMA-node grouped devices
 					ginkgo.Skip("skipping this test because it requires at least 2 distinct NUMA-node devices")
 				}
@@ -477,10 +478,10 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 			})
 
 			ginkgo.It("should reuse the same grouped device for request with count > 1 when only one device matches", func(ctx context.Context) {
-				if cpuDeviceMode != "grouped" {
+				if cpuDeviceMode != device.CPU_DEVICE_MODE_GROUPED {
 					ginkgo.Skip("this test only applies to grouped CPU device mode")
 				}
-				if groupBy != "numanode" {
+				if groupBy != device.GROUP_BY_NUMA_NODE {
 					// TODO: extend this test to support socket grouping as well.
 					ginkgo.Skip("this test currently only applies to NUMA-node grouping")
 				}
@@ -558,10 +559,10 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 			})
 
 			ginkgo.It("should allocate non-overlapping CPUs for request with count > 1 in the same grouped claim forcing spread", func(ctx context.Context) {
-				if cpuDeviceMode != "grouped" {
+				if cpuDeviceMode != device.CPU_DEVICE_MODE_GROUPED {
 					ginkgo.Skip("this test only applies to grouped CPU device mode")
 				}
-				if groupBy != "numanode" {
+				if groupBy != device.GROUP_BY_NUMA_NODE {
 					ginkgo.Skip("skipping this test because it requires grouping by NUMA node")
 				}
 				desiredTotalCPUs := 2
