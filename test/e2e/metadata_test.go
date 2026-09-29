@@ -103,8 +103,13 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 	ginkgo.Context("when a pod with a CPU claim is running", func() {
 		var fxt *fixture.Fixture
 
-		ginkgo.BeforeEach(func(ctx context.Context) {
+		ginkgo.BeforeEach(func() {
 			fxt = rootFxt.WithPrefix("metadata")
+			if cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED && groupBy == device.GROUP_BY_MACHINE {
+				ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
+			}
+		})
+		ginkgo.JustBeforeEach(func(ctx context.Context) {
 			gomega.Expect(fxt.Setup(ctx)).To(gomega.Succeed())
 		})
 
@@ -113,10 +118,6 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 		})
 
 		ginkgo.It("should publish device attributes as KEP-5304 metadata files", func(ctx context.Context) {
-			if groupBy == device.GROUP_BY_MACHINE {
-				ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
-			}
-
 			const numCPUs = 2
 			isConsumable := cpuDeviceMode != device.CPU_DEVICE_MODE_INDIVIDUAL
 
