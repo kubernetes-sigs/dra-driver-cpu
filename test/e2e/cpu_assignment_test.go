@@ -138,6 +138,11 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 		ginkgo.BeforeEach(func(ctx context.Context) {
 			fxt = rootFxt.WithPrefix("with-claims")
+		})
+
+		// do expensive setup at the last available time,
+		// enabling per-spec skip logic
+		ginkgo.JustBeforeEach(func(ctx context.Context) {
 			gomega.Expect(fxt.Setup(ctx)).To(gomega.Succeed())
 		})
 
@@ -162,7 +167,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		ginkgo.Context("for exclusive CPU allocation", func() {
 			// TODO: check and ensure cpumanager configuration?
 
-			ginkgo.JustBeforeEach(func(ctx context.Context) {
+			ginkgo.BeforeEach(func(ctx context.Context) {
 				fixture.By("checking the target nodes has at least %d allocatable cpus", minCPUsAvailableForPodAllocation)
 				if availableCPUs.Size() < minCPUsAvailableForPodAllocation {
 					ginkgo.Skip(fmt.Sprintf("exclusive allocation tests require at least %d cpus in the worker node", minCPUsAvailableForPodAllocation))
