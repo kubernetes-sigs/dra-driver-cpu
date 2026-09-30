@@ -9,6 +9,23 @@ invariant](how-it-works.md#how-it-works).
 An upgrade may temporarily leave a node without an active driver, but it must
 not create overlapping active owners.
 
+## Upgrade from 0.3.0 to 0.4.0 (EARLY WARNING)
+
+Before the driver enters beta stage, a batch of **breaking** changes are planned.
+The idea is to coalesce together all the known backward incompatible changes in release 0.4.0.
+We advice users wishing to prepare early to track the linked issues.
+
+Anticipated breaking or possibly breaking changes are:
+
+- breaking: memory support (https://github.com/kubernetes-sigs/dra-driver-cpu/issues/36)
+  reason: requires repo and artifact rename; requires configuration file changes.
+- breaking: driver identity change (https://github.com/kubernetes-sigs/dra-driver-cpu/issues/327)
+  reason: identity change require existing object removal.
+- possibly breaking: configuration format change (https://github.com/kubernetes-sigs/dra-driver-cpu/issues/302)
+  reason: configuration overhaul. Some combination of options may need fixing.
+- possibly breaking: driver persistence (https://github.com/kubernetes-sigs/dra-driver-cpu/issues/258)
+  reason: implementation dependent.
+
 ## Upgrade from 0.2.0 to 0.3.0
 
 ### Action required
