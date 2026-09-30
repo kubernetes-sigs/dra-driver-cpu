@@ -1,12 +1,38 @@
 # Custom Opaque CPUSet Allocation Overrides
 
+## Migrate from individual mode
+
+To keep scheduler-controlled selection of exact CPUs that the deprecated `Individual` mode enabled,
+use grouped mode with the external allocator.
+Note that also NUMA-node or Socket grouping supports external allocator like the Machine grouping.
+All grouping modes publish the external-allocator attributes, but the NUMA-node or Socket grouping
+also retain a useful topology boundary:
+
+```yaml
+driverConfig:
+  cpuDeviceMode: grouped
+  groupBy: numanode # or socket
+  allocator: external
+```
+
+The external allocator reads the selected grouped device's
+[external-allocator attributes](device-attributes.md#external-allocator-attributes), selects
+CPUs from that group, and writes the cpuset in the opaque configuration described below. The
+driver validates and enforces the selection. `groupBy: machine` is also supported, but is less
+preferred because it removes that topology boundary; use it only when the allocator must select
+from the entire node.
+
 > [!NOTE]
 > **Audience: scheduler-plugin authors and platform integrators**, not workload authors. This
 > page documents an integration contract for external schedulers; no in-tree scheduler
 > implements it today. Regular workloads should use the default `numanode`/`socket` grouping
 > instead.
 
-When using `grouped` device mode with the `groupBy: machine` configuration, the DRA driver does not perform automatic topology-aware CPU allocation. Instead, an explicit core assignment must be provided via the `cpuset` field in the claim's opaque configuration parameters.
+When using the external allocator with grouped mode (`numanode`, `socket`, or `machine`), the
+DRA driver does not perform automatic topology-aware CPU allocation. Instead, an explicit core
+assignment must be provided via the `cpuset` field in the claim's opaque configuration
+parameters. With `numanode` or `socket`, the cpuset must belong to the group selected for the
+request.
 
 The Kubelet driver parses this configuration at prepare time from the claim's allocation status (`status.allocation.devices.config`). The control plane (typically scheduling plugin) is responsible for injecting this configuration block into the allocation result when binding the claim.
 
@@ -35,7 +61,9 @@ spec:
     - name: cpu-request-1
       exactly:
         deviceClassName: dra.cpu
-        count: 4
+        capacity:
+          requests:
+            dra.cpu/cpu: "4"
 status:
   allocation:
     devices:
@@ -43,7 +71,7 @@ status:
       - request: cpu-request-1
         driver: dra.cpu
         pool: test-node
-        device: cpudevmachine
+        device: cpudevnuma000
         consumedCapacity:
           dra.cpu/cpu: "4"
       config:  # Added by external scheduler

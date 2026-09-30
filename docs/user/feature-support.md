@@ -9,11 +9,9 @@
   - NUMA aware best-fit allocation.
   - Packing or spreading CPUs across cores.
   - Preference for aligning allocations to UncoreCache boundaries.
-- **Multiple Device Exposure Modes**: `individual` (one device per CPU, fine-grained
-  attribute-based selection — ideal for HPC and performance-critical workloads) or `grouped`
-  (NUMA/socket/machine aggregates exposed as consumable capacity — fewer API objects, scales
-  to large systems). See [Configuration](configuration.md#driver-configuration) for the
-  full description and how to choose.
+- **Grouped Device Exposure**: NUMA/socket/machine aggregates are exposed as consumable
+  capacity, reducing API objects and scaling to large systems. The driver also support a `individual` device exposure mode which is
+  **deprecated**; see [Migrating from individual mode](opaque-cpuset-overrides.md#migrate-from-individual-mode).
 - **Device Health Reporting**: The driver reports per-device health to the kubelet via the DRA `WatchHealthStatus` gRPC API, reflected in `pod.status.containerStatuses[].allocatedResourcesStatus`. Devices are reported `Healthy` and go `Unknown` if the driver stops sending updates. `Unhealthy` is reserved for future use. See [Device Health Reporting](workload-requirements.md#device-health-reporting).
 
 ## Not Supported

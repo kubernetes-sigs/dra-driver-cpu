@@ -19,8 +19,7 @@ To override values at install time:
 
 ```bash
 helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu --version 0.2.0 -n kube-system \
-  --set args.cpuDeviceMode=individual \
-  --set args.reservedCPUs="0-1"
+  --set driverConfig.reservedCPUs="0-1"
 ```
 
 Parameters can be set at install time using `--set` or a custom values file:

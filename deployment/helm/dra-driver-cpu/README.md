@@ -19,8 +19,7 @@ To override values at install time:
 
 ```bash
 helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu --version 0.2.0 -n kube-system \
-  --set args.cpuDeviceMode=individual \
-  --set args.reservedCPUs="0-1"
+  --set driverConfig.reservedCPUs="0-1"
 ```
 
 Parameters can be set at install time using `--set` or a custom values file:
@@ -35,7 +34,7 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | affinity | object | `{}` | Affinity rules for scheduling the DaemonSet pods |
-| args.cpuDeviceMode | string | `""` | **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.cpuDeviceMode` instead. CPU exposure mode: `grouped` (expose NUMA nodes or sockets as devices) or `individual` (expose each CPU as a device); defaults to `grouped` when empty. |
+| args.cpuDeviceMode | string | `""` | **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.cpuDeviceMode` instead. `individual` CPU device mode is deprecated; use grouped mode. See [migration guidance](../../../docs/user/opaque-cpuset-overrides.md#migrate-from-individual-mode) when exact CPU selection is needed. Defaults to `grouped` when empty. |
 | args.exposePCIeRoots | bool | `false` | Discover and expose PCIe roots as device attributes. Requires the `DRAListTypeAttributes=true` feature gate in the cluster. Not configurable via `driverConfig`; use this flag instead |
 | args.groupBy | string | `""` | **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.groupBy` instead. Grouping criteria when `cpuDeviceMode=grouped`: `numanode`, `socket` or `machine`; defaults to `numanode` when empty. |
 | args.hostnameOverride | string | `""` | **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.hostnameOverride` instead. Overrides the node name the driver registers under. When unset in both `args` and `driverConfig`, the chart passes `--hostname-override=$(NODE_NAME)` via the downward API so each node registers under its Node object name even if the kernel hostname differs. |
