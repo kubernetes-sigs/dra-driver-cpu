@@ -19,6 +19,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -161,8 +162,12 @@ func makeCPUSetFromDiscoveredCPUInfo(cpuInfo discovery.DRACPUInfo) cpuset.CPUSet
 }
 
 type CPUAllocation struct {
+	// CPUAssigned is the CPUSet reported by cgroups
 	CPUAssigned cpuset.CPUSet
+	// CPUAffinity is the CPUSet matching the tester affinity
 	CPUAffinity cpuset.CPUSet
+	// CPUReported is the CPUSet reported by the environment variables
+	CPUReported cpuset.CPUSet
 }
 
 func unmarshalLatestReport(data string, v any) error {
@@ -192,6 +197,10 @@ func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod
 	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse assigned cpuset: %q", testerInfo.Allocation.CPUs)
 	ret.CPUAffinity, err = cpuset.Parse(testerInfo.Runtimeinfo.CPUAffinity)
 	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse affinity cpuset: %q", testerInfo.Runtimeinfo.CPUAffinity)
+	ret.CPUReported, err = testerInfo.Runtimeinfo.Environ.AssignedCPUSet()
+	if !errors.Is(err, discovery.ErrNotFound) { // no exclusive claims reports NotFound
+		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot parse assigned cpuset env var")
+	}
 	return ret
 }
 
@@ -361,9 +370,9 @@ func getDriverConfigValues(ctx context.Context, client kubernetes.Interface, nam
 	return values, nil
 }
 
-func makeTesterPodWithNamedClaim(ns, image, claimName string, nodeName string, nodeAllocatableMapping bool) *v1.Pod {
+func makeTesterPodWithNamedClaim(ns, image, nodeName string, nodeAllocatableMapping bool, claims ...*resourcev1.ResourceClaim) *v1.Pod {
 	ginkgo.GinkgoHelper()
-	requests, limits := claimContainerResources(2, nodeAllocatableMapping)
+	requests, limits := claimContainerResources(countRequestedCPUs(claims), nodeAllocatableMapping)
 
 	pod := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -379,20 +388,21 @@ func makeTesterPodWithNamedClaim(ns, image, claimName string, nodeName string, n
 					Resources: v1.ResourceRequirements{
 						Requests: requests,
 						Limits:   limits,
-						Claims: []v1.ResourceClaim{
-							{Name: "cpu-claim"},
-						},
 					},
-				},
-			},
-			ResourceClaims: []v1.PodResourceClaim{
-				{
-					Name:              "cpu-claim",
-					ResourceClaimName: new(claimName),
 				},
 			},
 			RestartPolicy: v1.RestartPolicyAlways,
 		},
+	}
+	for idx, claim := range claims {
+		claimName := claim.Name
+		pod.Spec.Containers[0].Resources.Claims = append(pod.Spec.Containers[0].Resources.Claims, v1.ResourceClaim{
+			Name: fmt.Sprintf("cpu-claim-%d", idx),
+		})
+		pod.Spec.ResourceClaims = append(pod.Spec.ResourceClaims, v1.PodResourceClaim{
+			Name:              fmt.Sprintf("cpu-claim-%d", idx),
+			ResourceClaimName: &claimName,
+		})
 	}
 	return e2epod.PinToNode(pod, nodeName)
 }
@@ -459,4 +469,37 @@ func makeResourceClaimSpecWithOpaqueConfig(cpus int, isConsumable bool, cpusetSt
 		}
 	}
 	return spec
+}
+
+// countRequestedCPUs computes the CPU count for the exact CPU requests used by these tests.
+func countRequestedCPUs(claims []*resourcev1.ResourceClaim) int64 {
+	ginkgo.GinkgoHelper()
+
+	var total int64
+	for _, claim := range claims {
+		gomega.Expect(claim).ToNot(gomega.BeNil(), "nil CPU claim")
+		for _, request := range claim.Spec.Devices.Requests {
+			gomega.Expect(request.Exactly).ToNot(gomega.BeNil(), "claim %s has unsupported request %s", claim.Name, request.Name)
+			gomega.Expect(request.Exactly.AllocationMode).To(gomega.BeElementOf(resourcev1.DeviceAllocationMode(""), resourcev1.DeviceAllocationModeExactCount), "claim %s request %s has unsupported allocation mode", claim.Name, request.Name)
+
+			count := request.Exactly.Count
+			if count == 0 {
+				count = 1 // ExactCount defaults to one device.
+			}
+			gomega.Expect(count).To(gomega.BeNumerically(">", 0), "claim %s request %s has invalid device count", claim.Name, request.Name)
+
+			cpusPerDevice := int64(1) // In these tests, omitted capacity means one individual CPU device.
+			if request.Exactly.Capacity != nil {
+				// These e2e tests control the claim specs and always use the recommended fully qualified capacity name.
+				quantity, found := request.Exactly.Capacity.Requests[resourcev1.QualifiedName("dra.cpu/cpu")]
+				gomega.Expect(found).To(gomega.BeTrue(), "claim %s request %s has no CPU capacity", claim.Name, request.Name)
+				cpusPerDevice = quantity.Value()
+				gomega.Expect(quantity.CmpInt64(cpusPerDevice)).To(gomega.Equal(0), "claim %s request %s has fractional CPU capacity", claim.Name, request.Name)
+				gomega.Expect(cpusPerDevice).To(gomega.BeNumerically(">", 0), "claim %s request %s has invalid CPU capacity", claim.Name, request.Name)
+			}
+			total += count * cpusPerDevice
+		}
+	}
+	gomega.Expect(total).To(gomega.BeNumerically(">", 0), "CPU claims request no CPUs")
+	return total
 }

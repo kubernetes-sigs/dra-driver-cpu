@@ -108,6 +108,7 @@ func main() {
 			},
 			Runtimeinfo: discovery.DRACPURuntimeinfo{
 				CPUAffinity: cpuAff.String(),
+				Environ:     discovery.FromEnviron(),
 			},
 		}
 		err = json.NewEncoder(os.Stdout).Encode(info)

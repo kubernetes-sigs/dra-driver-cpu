@@ -23,6 +23,7 @@ import (
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/go-logr/logr/testr"
+	dracpuapi "github.com/kubernetes-sigs/dra-driver-cpu/api"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
@@ -57,6 +58,16 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 			expectedAllocations: map[types.UID]cpuset.CPUSet{
 				"claim-uid-1": cpuset.New(0, 1),
 				"claim-uid-2": cpuset.New(2, 3),
+			},
+		},
+		{
+			name: "container-wide assigned cpuset is not a claim",
+			envs: []string{
+				fmt.Sprintf("%s_claim-uid-1=0-1", cdiEnvVarPrefix),
+				dracpuapi.EnvVarExclusiveAssignedCPUSet + "=0-1",
+			},
+			expectedAllocations: map[types.UID]cpuset.CPUSet{
+				"claim-uid-1": cpuset.New(0, 1),
 			},
 		},
 		{
@@ -148,6 +159,7 @@ func TestCreateContainer(t *testing.T) {
 			claimTracker: store.NewClaimTracker(),
 			container:    newTestContainer(claimUID, "0-3"),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
+				Env:   []*api.KeyValue{{Key: dracpuapi.EnvVarExclusiveAssignedCPUSet, Value: "0-3"}},
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-3"}}},
 			},
 			expectedContainerUpdates: []*api.ContainerUpdate{},
@@ -206,6 +218,7 @@ func TestCreateContainer(t *testing.T) {
 			claimTracker: store.NewClaimTracker(),
 			container:    newTestContainer(claimUID, "2-3"),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
+				Env:   []*api.KeyValue{{Key: dracpuapi.EnvVarExclusiveAssignedCPUSet, Value: "2-3"}},
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-3"}}},
 			},
 			expectedContainerUpdates: []*api.ContainerUpdate{
@@ -246,6 +259,7 @@ func TestCreateContainer(t *testing.T) {
 			claimTracker: store.NewClaimTracker(),
 			container:    newTestContainer(claimUID, "0-7"),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
+				Env:   []*api.KeyValue{{Key: dracpuapi.EnvVarExclusiveAssignedCPUSet, Value: "0-7"}},
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
 			},
 			expectedContainerUpdates: []*api.ContainerUpdate{},
