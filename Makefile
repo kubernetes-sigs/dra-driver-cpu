@@ -147,10 +147,11 @@ build-image: ## build image
 
 # no need to push the test image
 # never push the CI image! it intentionally refers to a non-existing registry
+# a failed push must fail the target.
 push-image: ## build and push image directly to registry (supports multi-arch)
 	-docker buildx create --name dracpu-builder
 	docker buildx use dracpu-builder
-	-docker buildx build . \
+	docker buildx build . \
 		--platform="${PLATFORMS}" \
 		--tag="${IMAGE}" \
 		--tag="${IMAGE_LATEST}" \
