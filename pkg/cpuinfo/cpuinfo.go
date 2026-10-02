@@ -506,7 +506,7 @@ func readLines(sysfs fs.FS, filename string) ([]string, error) {
 }
 
 // TODO: Refactor topology representation to handle asymmetric CPU distributions.
-// The current funcs CPUsPerCore, CPUsPerSocket, CPUsPerUncore assume symmetry
+// The current func CPUsPerCore assumes symmetry
 // and would be inaccurate if CPUs are offlined asymmetrically or on heterogeneous systems.
 // See https://github.com/kubernetes-sigs/dra-driver-cpu/pull/16#discussion_r2588301122
 func (t *CPUTopology) CPUsPerCore() int {
@@ -514,21 +514,4 @@ func (t *CPUTopology) CPUsPerCore() int {
 		return 0
 	}
 	return t.NumCPUs / t.NumCores
-}
-
-func (t *CPUTopology) CPUsPerSocket() int {
-	if t.NumSockets == 0 {
-		return 0
-	}
-	return t.NumCPUs / t.NumSockets
-}
-
-func (t *CPUTopology) CPUsPerUncore() int {
-	if t.NumUncoreCache == 0 {
-		// Avoid division by zero. If there are no uncore caches, then
-		// no CPUs can be in one.
-		return 0
-	}
-	// Note: this is an approximation that assumes all uncore caches have the same number of CPUs.
-	return t.NumCPUs / t.NumUncoreCache
 }

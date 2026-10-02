@@ -66,6 +66,11 @@ func TestKeepOnly(t *testing.T) {
 			cpus: testCPUDetails.CPUs(),
 			want: testCPUDetails,
 		},
+		{
+			name: "superset",
+			cpus: testCPUDetails.CPUs().Union(cpuset.New(8, 9, 10, 11)),
+			want: testCPUDetails,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -154,4 +159,41 @@ func TestCoresInUncoreCache(t *testing.T) {
 	assert.True(t, cpuset.New(0, 1).Equals(testCPUDetails.coresInUncoreCache(0)))
 	assert.True(t, cpuset.New(2, 3).Equals(testCPUDetails.coresInUncoreCache(1)))
 	assert.True(t, cpuset.New().Equals(testCPUDetails.coresInUncoreCache(2)))
+}
+
+// Copied from TestCPUDetailsAreNUMANodesInSameSocket in
+// https://github.com/kubernetes/kubernetes/blob/v1.38.0-alpha.2/pkg/kubelet/cm/cpumanager/topology/topology_test.go
+func TestAreNUMANodesInSameSocket(t *testing.T) {
+	details := CPUDetails{
+		0: {CoreID: 0, SocketID: 0, NUMANodeID: 0},
+		4: {CoreID: 4, SocketID: 0, NUMANodeID: 0},
+		1: {CoreID: 1, SocketID: 1, NUMANodeID: 1},
+		5: {CoreID: 5, SocketID: 1, NUMANodeID: 1},
+		2: {CoreID: 2, SocketID: 0, NUMANodeID: 2},
+		6: {CoreID: 6, SocketID: 0, NUMANodeID: 2},
+		3: {CoreID: 3, SocketID: 1, NUMANodeID: 3},
+		7: {CoreID: 7, SocketID: 1, NUMANodeID: 3},
+	}
+
+	tests := []struct {
+		name      string
+		NUMANodes []int
+		want      bool
+	}{
+		{name: "empty NUMANodes in same socket", NUMANodes: []int{}, want: true},
+		{name: "1 NUMANode in same socket", NUMANodes: []int{3}, want: true},
+		{name: "same NUMANodes in same socket", NUMANodes: []int{2, 2}, want: true},
+		{name: "two NUMANodes in same socket", NUMANodes: []int{0, 2}, want: true},
+		{name: "two NUMANodes not in same socket", NUMANodes: []int{0, 1}, want: false},
+		{name: "all NUMANodes not in same socket", NUMANodes: []int{0, 1, 2, 3}, want: false},
+		{name: "NUMANodes out of range not in same socket", NUMANodes: []int{0, 2, 5}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := details.AreNUMANodesInSameSocket(tt.NUMANodes)
+			if got != tt.want {
+				t.Errorf("AreNUMANodesInSameSocket() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
