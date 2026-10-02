@@ -80,7 +80,7 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 		cLogger := logger.WithValues("claim", ctxlog.KObj(claim), "claimUID", claim.UID)
 
 		cp.stateMu.Lock()
-		if err := ctx.Err(); err != nil {
+		if err := cp.prepareReady(ctx); err != nil {
 			result[claim.UID] = kubeletplugin.PrepareResult{Err: err}
 		} else if err := cp.checkAdminAccess(claim); err != nil {
 			result[claim.UID] = kubeletplugin.PrepareResult{Err: err}
