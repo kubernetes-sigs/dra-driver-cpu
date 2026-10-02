@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/containerd/nri/pkg/stub"
@@ -111,6 +112,11 @@ type CPUAllocator interface {
 
 // CPUDriver is the structure that holds all the driver runtime information.
 type CPUDriver struct {
+	// stateMu protects the store pointers and complete DRA/NRI state operations.
+	// Acquire it before store locks; never call into the runtime while holding it.
+	stateMu         sync.Mutex
+	hasSynchronized bool
+
 	driverName              string
 	nodeName                string
 	kubeClient              kubernetes.Interface
