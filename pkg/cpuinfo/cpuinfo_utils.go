@@ -23,7 +23,7 @@ import (
 // The functions in this file provide an interface for pkg/cpumanager/cpu_assignment.go
 // to query CPU topology information. These methods are adapted from the topology management in Kubernetes.
 // Original source: https://github.com/kubernetes/kubernetes/blob/9998041e0ffe0dd3f2abab3b9f95505c4402bf14/pkg/kubelet/cm/cpumanager/topology/topology.go
-// Based on commit: https://github.com/kubernetes/kubernetes/commit/fd5b2efa76e44c5ef523cd0711f5ed23eb7e6b1a
+// Based on tag v1.37.1: https://github.com/kubernetes/kubernetes/commit/f78e722310e50bcaca9276be22276d9e91d91308
 // TODO(pravk03): use the same file name and directory structure as kubelet for easier backports.
 
 // CPUDetails is a map from CPU ID to Core ID, Socket ID, and NUMA ID.
@@ -78,6 +78,18 @@ func (d CPUDetails) CPUsInCores(ids ...int) cpuset.CPUSet {
 		}
 	}
 	return cpuset.New(cpuIDs...)
+}
+
+// AreNUMANodesInSameSocket returns true for all NUMANodes in the same socket
+func (d CPUDetails) AreNUMANodesInSameSocket(numaNodes []int) bool {
+	allNUMAs := d.NUMANodes()
+	for _, id := range numaNodes {
+		if !allNUMAs.Contains(id) {
+			// return false if any NUMANode is out of range
+			return false
+		}
+	}
+	return d.SocketsInNUMANodes(numaNodes...).Size() <= 1
 }
 
 // CPUsInSockets returns all of the logical CPU IDs associated with the given
