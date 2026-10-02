@@ -30,6 +30,8 @@ The automation will:
 
 After the release tag is pushed, the images must be built, pushed to staging, and then promoted to the official registry.
 
+The Prow image push job also publishes the Helm chart to `oci://us-central1-docker.pkg.dev/k8s-staging-images/dra-driver-cpu/charts` for release tag builds. Cloud Build maps Prow's `_PULL_BASE_REF` substitution to `BUILD_REF` for the publishing script; native Cloud Build tag triggers use `TAG_NAME`. Branch builds do not publish charts, even when the commit also has a release tag.
+
 ### A. Verify Staging Images
 
 - Monitor the image push job status on [Testgrid (sig-node-image-pushes)](https://testgrid.k8s.io/sig-node-image-pushes#post-dra-driver-cpu-push-images).
