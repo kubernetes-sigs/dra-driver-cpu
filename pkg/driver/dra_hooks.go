@@ -79,7 +79,10 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 		start := time.Now()
 		cLogger := logger.WithValues("claim", ctxlog.KObj(claim), "claimUID", claim.UID)
 
-		if err := cp.checkAdminAccess(claim); err != nil {
+		cp.stateMu.Lock()
+		if err := ctx.Err(); err != nil {
+			result[claim.UID] = kubeletplugin.PrepareResult{Err: err}
+		} else if err := cp.checkAdminAccess(claim); err != nil {
 			result[claim.UID] = kubeletplugin.PrepareResult{Err: err}
 		} else {
 			if cp.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
@@ -88,6 +91,7 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 				result[claim.UID] = cp.prepareResourceClaim(cLogger, claim)
 			}
 		}
+		cp.stateMu.Unlock()
 		prepareResult := cpumetrics.ResultSuccess
 		if result[claim.UID].Err != nil {
 			prepareResult = cpumetrics.ResultError
@@ -368,7 +372,11 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 		cLogger := logger.WithValues("claim", claim.String(), "claimUID", claim.UID)
 		cLogger.V(2).Info("unpreparing resource claim")
 		start := time.Now()
-		err := cp.unprepareResourceClaim(cLogger, claim)
+		cp.stateMu.Lock()
+		err := ctx.Err()
+		if err == nil {
+			err = cp.unprepareResourceClaim(cLogger, claim)
+		}
 		result[claim.UID] = err
 		if err != nil {
 			cLogger.Error(err, "error unpreparing resources for claim")
@@ -377,6 +385,7 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 			cp.metrics.RecordUnprepare(cpumetrics.ResultSuccess, time.Since(start))
 			cp.refreshAllocationMetrics()
 		}
+		cp.stateMu.Unlock()
 	}
 	return result, nil
 }
