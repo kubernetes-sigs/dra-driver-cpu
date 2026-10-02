@@ -41,11 +41,16 @@ if [[ -z ${CHART_VERSION} ]]; then
 fi
 echo "Using CHART_VERSION=${CHART_VERSION}"
 
-# Pass the Cloud Build variables to the Makefile and enable multi-arch
+# Pass the Cloud Build variables to the Makefile and enable multi-arch.
+# REGISTRY must be set explicitly: the Makefile default is the read-only
+# production registry, and the Makefile appends /dra-driver-cpu/dra-driver-cpu.
 make push-image \
-	STAGING_IMAGE_NAME="${IMG_PREFIX}/dra-driver-cpu" \
+	REGISTRY="${IMG_PREFIX%/dra-driver-cpu}" \
 	TAG="${IMG_TAG}" \
 	PLATFORMS="linux/amd64,linux/arm64"
+
+# Verify the image actually landed in the registry.
+docker buildx imagetools inspect "${IMG_PREFIX}/dra-driver-cpu:${IMG_TAG}" >/dev/null
 
 # Only publish the helm chart for tagged releases. Branch-push builds produce
 # a dev image but should not publish a chart to the release registry.
