@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -32,6 +33,7 @@ import (
 	"github.com/containerd/ttrpc"
 	"github.com/stretchr/testify/require"
 	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	registerapi "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
 )
@@ -357,4 +359,107 @@ func TestNRIStubReadinessProtocol(t *testing.T) {
 		t.Fatal("NRI runner did not stop")
 	}
 	require.Error(t, d.prepareReady(t.Context()))
+}
+
+func TestStartPluginsDisconnectBeforeDRARegistration(t *testing.T) {
+	d, _ := newMetricsTestDriver(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	defer d.Stop()
+	firstAttempt := make(chan *nriAttempt, 1)
+	reconnect := make(chan struct{})
+	resynchronized := make(chan error, 1)
+	attempts := 0
+	dra := &stoppedKubeletPlugin{mockKubeletPlugin: mockKubeletPlugin{statusFunc: func(int32) *registerapi.RegistrationStatus {
+		return &registerapi.RegistrationStatus{PluginRegistered: true}
+	}}}
+	err := d.startPlugins(ctx, func(a *nriAttempt) (nriPlugin, error) {
+		attempts++
+		first := attempts == 1
+		if first {
+			firstAttempt <- a
+		}
+		return &fakeNRIPlugin{run: func(ctx context.Context) error {
+			if !first {
+				select {
+				case <-reconnect:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			_, err := (&nriAttemptHandler{CPUDriver: d, attempt: a}).Synchronize(ctx, nil, nil)
+			if !first {
+				resynchronized <- err
+			}
+			if err != nil {
+				return err
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		}}, nil
+	}, func(context.Context) (KubeletPlugin, error) {
+		// waitReady has returned, but DRA has not registered yet.
+		d.nri.closeAttempt(<-firstAttempt)
+		return dra, nil
+	})
+	require.NoError(t, err)
+	claim := individualMetricsClaim("a", "cpudev0")
+	prepared, err := d.PrepareResourceClaims(ctx, []*resourceapi.ResourceClaim{claim})
+	require.NoError(t, err)
+	require.ErrorContains(t, prepared[claim.UID].Err, "not synchronized")
+	// A rejected Prepare must not leave a usable allocation behind.
+	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod"}
+	container := &api.Container{Id: "app", Name: "app", PodSandboxId: pod.Id, Env: []string{"DRA_CPUSET_a=0"}}
+	close(reconnect)
+	select {
+	case err = <-resynchronized:
+		require.NoError(t, err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	_, _, err = d.CreateContainer(ctx, pod, container)
+	require.Error(t, err)
+	prepared, err = d.PrepareResourceClaims(ctx, []*resourceapi.ResourceClaim{claim})
+	require.NoError(t, err)
+	require.NoError(t, prepared[claim.UID].Err)
+	adjustment, _, err := d.CreateContainer(ctx, pod, container)
+	require.NoError(t, err)
+	require.Equal(t, "0", adjustment.Linux.Resources.Cpu.Cpus)
+	d.Stop()
+	require.Equal(t, int32(1), dra.stops.Load())
+}
+
+func TestStartPluginsCancellationAtKubeletStart(t *testing.T) {
+	// Keep Unix socket paths below the platform limit, including on macOS.
+	dir, err := os.MkdirTemp("", "dra-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
+	d, _ := newMetricsTestDriver(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	defer d.Stop()
+	err = d.startPlugins(ctx, func(a *nriAttempt) (nriPlugin, error) {
+		return &fakeNRIPlugin{run: func(ctx context.Context) error {
+			_, err := (&nriAttemptHandler{CPUDriver: d, attempt: a}).Synchronize(ctx, nil, nil)
+			if err != nil {
+				return err
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		}}, nil
+	}, func(ctx context.Context) (KubeletPlugin, error) {
+		cancel()
+		return kubeletplugin.Start(ctx, d,
+			kubeletplugin.DriverName("dra"),
+			kubeletplugin.KubeClient(fake.NewClientset()),
+			kubeletplugin.HealthService(false),
+			kubeletplugin.RegistrarDirectoryPath(dir),
+			kubeletplugin.PluginDataDirectoryPath(dir),
+		)
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	d.Stop()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Empty(t, entries, "cancellation must not leave DRA sockets behind")
 }
