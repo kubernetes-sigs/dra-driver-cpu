@@ -2,9 +2,12 @@
 
 options:
   substitutionOption: ALLOW_LOOSE
+substitutions:
+  _PULL_BASE_REF: ""
 steps:
   - name: registry.k8s.io/releng/gcb-docker-gcloud:v20260806
     entrypoint: ./scripts/build-and-publish-image.sh
     env:
     - IMG_PREFIX=us-central1-docker.pkg.dev/k8s-staging-images/dra-driver-cpu
-    - IMG_TAG=$TAG_NAME
+    - BUILD_REF=$_PULL_BASE_REF
+    - TAG_NAME=$TAG_NAME
