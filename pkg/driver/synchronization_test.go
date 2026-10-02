@@ -291,3 +291,119 @@ func TestWarmSynchronizeIgnoresInvalidEnvFromNonOwner(t *testing.T) {
 		})
 	}
 }
+
+func TestWarmSynchronizeRetainsMalformedSharedContainer(t *testing.T) {
+	d, _ := newMetricsTestDriver(t)
+	_, err := d.Synchronize(t.Context(), nil, nil)
+	require.NoError(t, err)
+	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod"}
+	shared := &api.Container{Id: "shared", Name: "sidecar", PodSandboxId: pod.Id}
+	_, _, err = d.CreateContainer(t.Context(), pod, shared)
+	require.NoError(t, err)
+	// Another NRI plugin may change the environment after our CreateContainer.
+	shared.Env = []string{"DRA_CPUSET_other=bad"}
+	_, err = d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{shared})
+	require.NoError(t, err)
+	claim := individualMetricsClaim("a", "cpudev0")
+	prepared, err := d.PrepareResourceClaims(t.Context(), []*resourceapi.ResourceClaim{claim})
+	require.NoError(t, err)
+	require.NoError(t, prepared[claim.UID].Err)
+	_, updates, err := d.CreateContainer(t.Context(), pod, &api.Container{
+		Id: "exclusive", Name: "app", PodSandboxId: pod.Id, Env: []string{"DRA_CPUSET_a=0"},
+	})
+	require.NoError(t, err)
+	require.Len(t, updates, 1)
+	require.Equal(t, "shared", updates[0].ContainerId)
+	require.Equal(t, "1-3", updates[0].Linux.Resources.Cpu.Cpus)
+}
+
+func TestWarmSynchronizeMalformedContainerIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		podUID        string
+		containerName string
+		containerID   string
+		env           []string
+		known         bool
+		present       bool
+		wantRetain    bool
+	}{
+		{name: "unknown container", podUID: "pod", containerName: "sidecar", containerID: "shared", env: []string{"DRA_CPUSET_other=bad"}, present: true},
+		{name: "same name replacement", podUID: "pod", containerName: "sidecar", containerID: "replacement", env: []string{"DRA_CPUSET_other=bad"}, known: true, present: true},
+		{name: "different pod", podUID: "other-pod", containerName: "sidecar", containerID: "shared", env: []string{"DRA_CPUSET_other=bad"}, known: true, present: true},
+		{name: "different name", podUID: "pod", containerName: "other-name", containerID: "shared", env: []string{"DRA_CPUSET_other=bad"}, known: true, present: true},
+		{name: "absent from snapshot", podUID: "pod", known: true},
+		{name: "missing equals", podUID: "pod", containerName: "sidecar", containerID: "shared", env: []string{"DRA_CPUSET_other"}, known: true, present: true, wantRetain: true},
+		{name: "malformed before valid claim", podUID: "pod", containerName: "sidecar", containerID: "shared", env: []string{"DRA_CPUSET_other=bad", "DRA_CPUSET_a=0"}, known: true, present: true, wantRetain: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, _ := newMetricsTestDriver(t)
+			_, err := d.Synchronize(t.Context(), nil, nil)
+			require.NoError(t, err)
+			pod := &api.PodSandbox{Id: "sandbox", Uid: "pod"}
+			if tc.known {
+				_, _, err = d.CreateContainer(t.Context(), pod, &api.Container{Id: "shared", Name: "sidecar", PodSandboxId: pod.Id})
+				require.NoError(t, err)
+			}
+			snapshotPod := &api.PodSandbox{Id: pod.Id, Uid: tc.podUID}
+			var containers []*api.Container
+			if tc.present {
+				containers = append(containers, &api.Container{Id: tc.containerID, Name: tc.containerName, PodSandboxId: pod.Id, Env: tc.env})
+			}
+			// A healthy container must still be recovered alongside malformed input.
+			containers = append(containers, &api.Container{Id: "healthy", Name: "healthy", PodSandboxId: pod.Id})
+			_, err = d.Synchronize(t.Context(), []*api.PodSandbox{snapshotPod}, containers)
+			require.NoError(t, err)
+			claim := individualMetricsClaim("a", "cpudev0")
+			prepared, err := d.PrepareResourceClaims(t.Context(), []*resourceapi.ResourceClaim{claim})
+			require.NoError(t, err)
+			require.NoError(t, prepared[claim.UID].Err)
+			_, updates, err := d.CreateContainer(t.Context(), snapshotPod, &api.Container{
+				Id: "exclusive", Name: "app", PodSandboxId: pod.Id, Env: []string{"DRA_CPUSET_a=0"},
+			})
+			require.NoError(t, err)
+			got := make(map[string]string)
+			for _, update := range updates {
+				got[update.ContainerId] = update.Linux.Resources.Cpu.Cpus
+			}
+			want := map[string]string{"healthy": "1-3"}
+			if tc.wantRetain {
+				want["shared"] = "1-3"
+			}
+			require.Equal(t, want, got)
+		})
+	}
+}
+
+func TestWarmSynchronizeMalformedExclusiveContainerKeepsOwnership(t *testing.T) {
+	d, _ := newMetricsTestDriver(t)
+	_, err := d.Synchronize(t.Context(), nil, nil)
+	require.NoError(t, err)
+	claim := individualMetricsClaim("a", "cpudev0")
+	prepared, err := d.PrepareResourceClaims(t.Context(), []*resourceapi.ResourceClaim{claim})
+	require.NoError(t, err)
+	require.NoError(t, prepared[claim.UID].Err)
+	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod"}
+	app := &api.Container{Id: "app", Name: "app", PodSandboxId: pod.Id, Env: []string{"DRA_CPUSET_a=0"}}
+	_, _, err = d.CreateContainer(t.Context(), pod, app)
+	require.NoError(t, err)
+	// A malformed unrelated entry must not turn an exclusive container into
+	// a shared one or make us trust a changed allocation later in the env.
+	app.Env = []string{"DRA_CPUSET_other=bad", "DRA_CPUSET_a=1"}
+	updates, err := d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{
+		app, {Id: "shared", Name: "sidecar", PodSandboxId: pod.Id},
+	})
+	require.NoError(t, err)
+	require.Len(t, updates, 1)
+	require.Equal(t, "shared", updates[0].ContainerId)
+	require.Equal(t, "1-3", updates[0].Linux.Resources.Cpu.Cpus)
+	_, _, err = d.CreateContainer(t.Context(), &api.PodSandbox{Uid: "other"}, &api.Container{
+		Id: "other-app", Name: app.Name, Env: []string{"DRA_CPUSET_a=0"},
+	})
+	require.Error(t, err, "another pod cannot take the retained claim")
+	app.Id = "replacement"
+	app.Env = []string{"DRA_CPUSET_a=0"}
+	adjustment, _, err := d.CreateContainer(t.Context(), pod, app)
+	require.NoError(t, err)
+	require.Equal(t, "0", adjustment.Linux.Resources.Cpu.Cpus)
+}

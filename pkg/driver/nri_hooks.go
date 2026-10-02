@@ -80,6 +80,18 @@ func (cp *CPUDriver) synchronize(ctx context.Context, pods []*api.PodSandbox, co
 
 			claimAllocations, err := parseDRAEnvToClaimAllocations(cLogger, container.Env)
 			if err != nil {
+				// Keep tracking a known runtime container on reconnect, especially
+				// a shared container that must receive future pool updates. Never
+				// infer allocations from malformed env or reuse a replaced ID.
+				if cp.hasSynchronized {
+					podUID := types.UID(pod.GetUid())
+					state := cp.podConfigStore.GetContainerState(podUID, container.Name)
+					if state != nil && state.MatchesContainer(container.Name, types.UID(container.GetId())) {
+						podConfigStore.SetContainerState(podUID, state)
+						cLogger.Error(err, "retaining known container state with malformed DRA env during synchronize")
+						continue
+					}
+				}
 				cLogger.Error(err, "ignoring container with malformed DRA env during synchronize")
 				continue
 			}
