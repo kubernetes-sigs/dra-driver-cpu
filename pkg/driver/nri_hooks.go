@@ -33,10 +33,24 @@ import (
 
 // Synchronize is called by the NRI to synchronize the state of the driver during bootstrap.
 func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, containers []*api.Container) (rupdates []*api.ContainerUpdate, rerr error) {
+	return cp.synchronize(ctx, pods, containers, nil)
+}
+
+func (cp *CPUDriver) synchronize(ctx context.Context, pods []*api.PodSandbox, containers []*api.Container, attempt *nriAttempt) (rupdates []*api.ContainerUpdate, rerr error) {
 	cp.stateMu.Lock()
 	defer cp.stateMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if attempt != nil {
+		cp.nri.mu.Lock()
+		if cp.nri.current != attempt || attempt.closed {
+			cp.nri.mu.Unlock()
+			return nil, fmt.Errorf("NRI connection closed before synchronization")
+		}
+		attempt.ready = false
+		cp.nri.notifyLocked()
+		cp.nri.mu.Unlock()
 	}
 	startTime := time.Now()
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen))
@@ -152,10 +166,23 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// Serialize the final connection check with disconnect, without holding
+	// the lifecycle lock during CDI I/O. Old attempts must never publish state.
+	if attempt != nil {
+		cp.nri.mu.Lock()
+		defer cp.nri.mu.Unlock()
+		if cp.nri.current != attempt || attempt.closed {
+			return nil, fmt.Errorf("NRI connection closed during synchronization")
+		}
+	}
 	cp.podConfigStore = podConfigStore
 	cp.cpuAllocationStore = cpuAllocationStore
 	cp.claimTracker = claimTracker
 	cp.hasSynchronized = true
+	if attempt != nil {
+		attempt.ready = true
+		cp.nri.notifyLocked()
+	}
 	cp.refreshAllocationMetrics()
 	logger.V(6).Info("synchronization complete", "updatesCount", len(containerUpdates))
 	return containerUpdates, nil
@@ -244,10 +271,14 @@ func sharedContainerUpdatesFor(logger logr.Logger, allocations *store.CPUAllocat
 }
 
 // CreateContainer handles container creation requests from the NRI.
-func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) (radjust *api.ContainerAdjustment, rupdates []*api.ContainerUpdate, rerr error) {
+func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
+	return cp.createContainer(ctx, pod, ctr, nil)
+}
+
+func (cp *CPUDriver) createContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container, attempt *nriAttempt) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
 	cp.stateMu.Lock()
 	defer cp.stateMu.Unlock()
-	if err := ctx.Err(); err != nil {
+	if err := cp.checkNRIRequest(ctx, attempt); err != nil {
 		return nil, nil, err
 	}
 
@@ -261,10 +292,12 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 	var updates []*api.ContainerUpdate
 
 	claimCount := -1
+	var resultErr error
 	claimAllocations, err := parseDRAEnvToClaimAllocations(logger, ctr.Env)
-	defer func() { cp.metrics.RecordNRICreateContainer(rerr, claimCount, time.Since(startTime)) }()
+	defer func() { cp.metrics.RecordNRICreateContainer(resultErr, claimCount, time.Since(startTime)) }()
 	if err != nil {
 		logger.Error(err, "error parsing DRA env for container")
+		resultErr = err
 		return nil, nil, err
 	}
 	claimCount = len(claimAllocations)
@@ -278,7 +311,8 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		if sharedCPUs.IsEmpty() && !cp.cpuAllocationStore.GetPreparedCPUs().IsEmpty() {
 			// NRI cannot represent an empty CPUSet as a ContainerAdjustment. Fail
 			// closed instead of allowing the runtime to keep its default affinity.
-			return nil, nil, fmt.Errorf("cannot create shared container: no shared CPUs available")
+			resultErr = fmt.Errorf("cannot create shared container: no shared CPUs available")
+			return nil, nil, resultErr
 		}
 		state := store.NewContainerState(ctr.GetName(), containerId)
 		cp.podConfigStore.SetContainerState(podUID, state)
@@ -296,10 +330,12 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		}
 		newOwners, err := cp.claimTracker.SetOwner(logger, podUID, ctr.Name, claimUIDs...)
 		if err != nil {
+			resultErr = err
 			return nil, nil, err
 		}
 		if err := cp.cpuAllocationStore.ValidateResourceClaimAllocations(claimAllocations); err != nil {
 			cp.claimTracker.Cleanup(newOwners...)
+			resultErr = err
 			return nil, nil, err
 		}
 		logger.V(2).Info("guaranteed CPUs found", "cpus", guaranteedCPUs.String())
@@ -314,6 +350,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 			updates, err = sharedContainerUpdatesFor(logger, cp.cpuAllocationStore, cp.podConfigStore, containerId)
 			if err != nil {
 				cp.claimTracker.Cleanup(newOwners...)
+				resultErr = err
 				return nil, nil, err
 			}
 		}
@@ -334,9 +371,13 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 //   - Synchronize rebuilds runtime container state, retaining prepared claims and owners
 //     while this process survives. Cold recovery uses running containers and CDI.
 func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) ([]*api.ContainerUpdate, error) {
+	return cp.stopContainer(ctx, pod, ctr, nil)
+}
+
+func (cp *CPUDriver) stopContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container, attempt *nriAttempt) ([]*api.ContainerUpdate, error) {
 	cp.stateMu.Lock()
 	defer cp.stateMu.Unlock()
-	if err := ctx.Err(); err != nil {
+	if err := cp.checkNRIRequest(ctx, attempt); err != nil {
 		return nil, err
 	}
 
@@ -360,9 +401,13 @@ func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr
 
 // RemoveContainer handles container removal requests from the NRI.
 func (cp *CPUDriver) RemoveContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) error {
+	return cp.removeContainer(ctx, pod, ctr, nil)
+}
+
+func (cp *CPUDriver) removeContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container, attempt *nriAttempt) error {
 	cp.stateMu.Lock()
 	defer cp.stateMu.Unlock()
-	if err := ctx.Err(); err != nil {
+	if err := cp.checkNRIRequest(ctx, attempt); err != nil {
 		return err
 	}
 
