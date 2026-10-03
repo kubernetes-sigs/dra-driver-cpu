@@ -24,9 +24,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
-	"github.com/containerd/nri/pkg/stub"
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
@@ -111,11 +111,19 @@ type CPUAllocator interface {
 
 // CPUDriver is the structure that holds all the driver runtime information.
 type CPUDriver struct {
+	// stateMu protects the store pointers and complete DRA/NRI state operations.
+	// Acquire it before store locks; never call into the runtime while holding it.
+	stateMu         sync.Mutex
+	hasSynchronized bool
+	stopOnce        sync.Once
+	healthStarted   bool
+	stopBackground  context.CancelFunc
+
 	driverName              string
 	nodeName                string
 	kubeClient              kubernetes.Interface
 	draPlugin               KubeletPlugin
-	nriPlugin               stub.Stub
+	nri                     *nriLifecycle
 	podConfigStore          *store.PodConfig
 	cpuAllocationStore      *store.CPUAllocation
 	cdiMgr                  cdiManager
@@ -319,7 +327,7 @@ func checkSocketPathFits(kubeletRootDir, driverName string) error {
 	return nil
 }
 
-// Start registers the plugin with kubelet, starts the NRI plugin, and begins
+// Start recovers NRI state, registers the plugin with kubelet, and begins
 // async resource publication. Setup must have been called first.
 func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 	ctx, logger := ctxlog.WithValues(ctx, "driver", cp.driverName)
@@ -350,54 +358,50 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 		kubeletplugin.EnableDeviceMetadata(true, []schema.GroupVersion{drametadatav1beta1.SchemeGroupVersion}),
 		kubeletplugin.HealthService(true),
 	}
-	d, err := kubeletplugin.Start(ctx, cp, kubeletOpts...)
-	if err != nil {
-		return asyncErr, fmt.Errorf("start kubelet plugin: %w", err)
-	}
-	cp.draPlugin = d
-	if err := waitForRegistration(ctx, d, registrarDir(cp.kubeletRootDir), registrationPollInterval, registrationTimeout); err != nil {
+	if err := cp.startPlugins(ctx, cp.newNRIStub, func(ctx context.Context) (KubeletPlugin, error) {
+		return kubeletplugin.Start(ctx, cp, kubeletOpts...)
+	}); err != nil {
+		cp.Stop()
 		return asyncErr, err
 	}
-
-	// register the NRI plugin
-	nriOpts := []stub.Option{
-		stub.WithPluginName(cp.driverName),
-		stub.WithPluginIdx("00"),
-		// https://github.com/containerd/nri/pull/173
-		// Otherwise it silently exits the program
-		stub.WithOnClose(func() {
-			logger.Info("NRI plugin closed")
-		}),
-	}
-	stub, err := stub.New(cp, nriOpts...)
-	if err != nil {
-		return asyncErr, fmt.Errorf("failed to create plugin stub: %w", err)
-	}
-	cp.nriPlugin = stub
-
 	go func() {
-		if err := runNRIPluginWithRetry(ctx, cp.nriPlugin, maxAttempts); err != nil && ctx.Err() == nil {
-			logger.Error(err, "NRI plugin failed to be restarted", "maxAttempts", maxAttempts)
+		<-cp.nri.done
+		if err := cp.nri.err; err != nil && ctx.Err() == nil {
 			asyncErr <- err
 		}
 	}()
+	backgroundCtx, cancel := context.WithCancel(ctx)
+	cp.stopBackground = cancel
 
 	// publish available resources
-	go cp.PublishResources(ctx)
+	go cp.PublishResources(backgroundCtx)
 
 	// periodically (every healthResendInterval) resend device health so
 	// the kubelet's lease on it does not expire (see WatchHealthStatus in
 	// health.go)
-	go cp.healthResendLoop(ctx)
+	cp.healthStarted = true
+	go cp.healthResendLoop(backgroundCtx)
 
 	return asyncErr, nil
 }
 
 // Stop stops the CPUDriver.
 func (cp *CPUDriver) Stop() {
-	cp.health.Stop()
-	cp.nriPlugin.Stop()
-	cp.draPlugin.Stop()
+	cp.stopOnce.Do(func() {
+		if cp.stopBackground != nil {
+			cp.stopBackground()
+		}
+		if cp.nri != nil {
+			cp.nri.cancel()
+			<-cp.nri.done
+		}
+		if cp.draPlugin != nil {
+			cp.draPlugin.Stop()
+		}
+		if cp.healthStarted {
+			cp.health.Stop()
+		}
+	})
 }
 
 func getDeviceAttributes(deviceSlices [][]resourceapi.Device, deviceName string) (map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, bool) {
@@ -464,6 +468,9 @@ func runNRIPluginWithRetry(ctx context.Context, plugin nriRunner, maxAttempts in
 		if ctx.Err() != nil {
 			logger.Info("NRI plugin stopped", "reason", "context cancelled")
 			return ctx.Err()
+		}
+		if errors.Is(err, errNRIUnresponsive) {
+			return err
 		}
 		if err != nil {
 			logger.Error(err, "NRI plugin failed, restarting", "attempt", i+1, "maxAttempts", maxAttempts)

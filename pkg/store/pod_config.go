@@ -143,3 +143,10 @@ func (s *PodConfig) Len() int {
 func (cs *ContainerState) HasExclusiveCPUAllocation() bool {
 	return len(cs.resourceClaimUIDs) > 0
 }
+
+// MatchesContainer reports whether the state belongs to the same runtime
+// container identity. The name alone is insufficient because a container can
+// be replaced while an old runtime event is still in flight.
+func (cs *ContainerState) MatchesContainer(name string, uid types.UID) bool {
+	return cs.containerName == name && cs.containerUID == uid
+}
