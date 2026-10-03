@@ -1,0 +1,54 @@
+{{- /*
+Include a Markdown file from elsewhere in the repository into a page.
+
+The documentation is authored in docs/ at the repository root, where it is also
+read on GitHub. The pages under site/content/ hold the navigation metadata, and
+this shortcode pulls the prose in from docs/ through the Hugo module mount that
+maps docs/ to assets/additional/docs (see site/hugo.toml). Nothing is copied,
+and docs/ stays the single copy of the documentation.
+
+Two adjustments are needed to publish a file that is written for GitHub:
+
+  * the leading level-1 heading is dropped, because the page title comes from
+    the front matter of the including page. The heading is replaced by an
+    empty anchor with the id it would have had, so that links to it, such as
+    "how-it-works.md#how-it-works", keep working;
+  * links that leave the documentation, for example
+    "../../hack/examples/pod_with_pod_level_resources.yaml", point at a file
+    that has no published page, so they are rewritten to their URL on GitHub.
+    docs/ is two levels below the repository root, which is what makes the
+    "../../" prefix mean "from the repository root".
+
+Everything else - links between documentation pages, external URLs and images -
+is left to Hugo, which resolves it in the context of the including page.
+
+README.md sits at the repository root rather than in docs/, and its links are
+written from there ("docs/user/configuration.md", "code-of-conduct.md"). Pass
+from="repo-root" for such a file: a link into docs/ is rewritten to the
+published page, and every other relative link is rewritten to its URL on
+GitHub, because it names a file that the site does not publish.
+*/ -}}
+{{- $file := .Get "file" -}}
+{{- $from := .Get "from" | default "page" -}}
+{{- with resources.Get $file -}}
+  {{- $content := .Content -}}
+  {{- $heading := "" -}}
+  {{- with findRESubmatch `(?m)^#\s+(.+?)\s*$` $content 1 -}}
+    {{- $heading = index (index . 0) 1 | anchorize -}}
+  {{- end -}}
+  {{- $content = replaceRE `(?m)^#[^\n]*\n*` "" $content 1 -}}
+  {{- with $heading -}}
+    {{- $content = printf "<span id=%q></span>\n\n%s" . $content -}}
+  {{- end -}}
+  {{- $repo := site.Params.github_repo -}}
+  {{- $branch := site.Params.github_branch | default "main" -}}
+  {{- if eq $from "repo-root" -}}
+    {{- $content = replaceRE `\]\(docs/(user|dev)/([^)#\s]+)\.md(#[^)\s]*)?\)` "](/docs/$1/$2/$3)" $content -}}
+    {{- $content = replaceRE `\]\(([^)#\s:]+\.md)(#[^)\s]*)?\)` (printf "](%s/blob/%s/$1$2)" $repo $branch) $content -}}
+  {{- else -}}
+    {{- $content = replaceRE `\]\(\.\./\.\./([^)#\s]+)(#[^)\s]*)?\)` (printf "](%s/blob/%s/$1$2)" $repo $branch) $content -}}
+  {{- end -}}
+  {{- $content | safeHTML -}}
+{{- else -}}
+  {{- errorf "include-file: %q not found; is it covered by the module mounts in site/hugo.toml?" $file -}}
+{{- end -}}
