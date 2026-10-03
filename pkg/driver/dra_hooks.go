@@ -27,6 +27,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
+	"google.golang.org/grpc"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
@@ -415,7 +416,7 @@ func (cp *CPUDriver) HandleError(ctx context.Context, err error, msg string) {
 	// For unrecoverable errors, exit immediately with a clear error message.
 	// This fail-fast behavior is intentional for early project maturity to surface
 	// issues quickly rather than silently continuing in a broken state.
-	if !errors.Is(err, kubeletplugin.ErrRecoverable) {
+	if !errors.Is(err, kubeletplugin.ErrRecoverable) && !errors.Is(err, grpc.ErrServerStopped) {
 		logger.Error(err, "fatal unrecoverable error in DRA driver, exiting",
 			"driver", cp.driverName,
 			"node", cp.nodeName,

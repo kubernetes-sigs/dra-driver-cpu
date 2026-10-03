@@ -32,6 +32,7 @@ import (
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/containerd/ttrpc"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
@@ -462,4 +463,9 @@ func TestStartPluginsCancellationAtKubeletStart(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	require.Empty(t, entries, "cancellation must not leave DRA sockets behind")
+}
+
+func TestHandleErrorIgnoresStoppedGRPCServer(t *testing.T) {
+	d, _ := newMetricsTestDriver(t)
+	d.HandleError(t.Context(), grpc.ErrServerStopped, "DRA gRPC server failed")
 }
