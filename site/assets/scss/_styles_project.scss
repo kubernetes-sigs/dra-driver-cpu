@@ -1,0 +1,14 @@
+// Project styles for the documentation site.
+//
+// The home page redirects to the Overview page, so there is no cover block to
+// style; the rest of the theme's defaults are enough.
+
+// The diagrams embedded in the documentation are wide. Let them fill the text
+// column and scale with it, so they use the whole page width at every screen
+// size.
+.td-content img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 1.5rem auto;
+}
