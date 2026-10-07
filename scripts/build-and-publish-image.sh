@@ -22,10 +22,19 @@ if [[ -z ${IMG_PREFIX:-} ]]; then
 	exit 1
 fi
 
+# Prow's image-builder passes the triggering ref as _PULL_BASE_REF, mapped to
+# BUILD_REF by cloudbuild.yaml. TAG_NAME is only set for native tag triggers.
+# Use the release automation's version format; a Git tag at HEAD alone does
+# not distinguish a tag-triggered build from a branch build at the same commit.
+release_tag=${BUILD_REF:-${TAG_NAME:-}}
+if [[ ${release_tag} =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+	IMG_TAG=${release_tag}
+else
+	release_tag=""
+fi
+
 if [[ -z ${IMG_TAG:-} ]]; then
 	# Use a tag if the current commit is a tag, otherwise use a date+git-hash tag.
-	# $TAG_NAME is set by cloud build when triggered by a tag push. Fall back to
-	# git describe for local runs, then to date+sha if neither is available.
 	if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
 		IMG_TAG=$(git describe --exact-match --tags HEAD)
 	else
@@ -52,13 +61,12 @@ make push-image \
 # Verify the image actually landed in the registry.
 docker buildx imagetools inspect "${IMG_PREFIX}/dra-driver-cpu:${IMG_TAG}" >/dev/null
 
-# Only publish the helm chart for tagged releases. Branch-push builds produce
-# a dev image but should not publish a chart to the release registry.
-if [[ -n ${TAG_NAME:-} ]]; then
+# Only publish the Helm chart for builds triggered by a release tag.
+if [[ -n ${release_tag} ]]; then
 	make helm-push \
 		CHART_REGISTRY="${IMG_PREFIX}/charts" \
 		CHART_VERSION="${CHART_VERSION}" \
 		TAG="${IMG_TAG}"
 else
-	echo "Skipping helm-push: not a tag-triggered build (TAG_NAME is not set)"
+	echo "Skipping helm-push: build was not triggered by a release tag"
 fi
