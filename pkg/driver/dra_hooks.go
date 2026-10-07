@@ -27,6 +27,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
+	"google.golang.org/grpc"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
@@ -79,7 +80,10 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 		start := time.Now()
 		cLogger := logger.WithValues("claim", ctxlog.KObj(claim), "claimUID", claim.UID)
 
-		if err := cp.checkAdminAccess(claim); err != nil {
+		cp.stateMu.Lock()
+		if err := cp.prepareReady(ctx); err != nil {
+			result[claim.UID] = kubeletplugin.PrepareResult{Err: err}
+		} else if err := cp.checkAdminAccess(claim); err != nil {
 			result[claim.UID] = kubeletplugin.PrepareResult{Err: err}
 		} else {
 			if cp.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
@@ -88,6 +92,7 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 				result[claim.UID] = cp.prepareResourceClaim(cLogger, claim)
 			}
 		}
+		cp.stateMu.Unlock()
 		prepareResult := cpumetrics.ResultSuccess
 		if result[claim.UID].Err != nil {
 			prepareResult = cpumetrics.ResultError
@@ -368,7 +373,11 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 		cLogger := logger.WithValues("claim", claim.String(), "claimUID", claim.UID)
 		cLogger.V(2).Info("unpreparing resource claim")
 		start := time.Now()
-		err := cp.unprepareResourceClaim(cLogger, claim)
+		cp.stateMu.Lock()
+		err := ctx.Err()
+		if err == nil {
+			err = cp.unprepareResourceClaim(cLogger, claim)
+		}
 		result[claim.UID] = err
 		if err != nil {
 			cLogger.Error(err, "error unpreparing resources for claim")
@@ -377,6 +386,7 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 			cp.metrics.RecordUnprepare(cpumetrics.ResultSuccess, time.Since(start))
 			cp.refreshAllocationMetrics()
 		}
+		cp.stateMu.Unlock()
 	}
 	return result, nil
 }
@@ -406,7 +416,7 @@ func (cp *CPUDriver) HandleError(ctx context.Context, err error, msg string) {
 	// For unrecoverable errors, exit immediately with a clear error message.
 	// This fail-fast behavior is intentional for early project maturity to surface
 	// issues quickly rather than silently continuing in a broken state.
-	if !errors.Is(err, kubeletplugin.ErrRecoverable) {
+	if !errors.Is(err, kubeletplugin.ErrRecoverable) && !errors.Is(err, grpc.ErrServerStopped) {
 		logger.Error(err, "fatal unrecoverable error in DRA driver, exiting",
 			"driver", cp.driverName,
 			"node", cp.nodeName,

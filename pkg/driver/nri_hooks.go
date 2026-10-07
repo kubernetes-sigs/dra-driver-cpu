@@ -33,17 +33,40 @@ import (
 
 // Synchronize is called by the NRI to synchronize the state of the driver during bootstrap.
 func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, containers []*api.Container) (rupdates []*api.ContainerUpdate, rerr error) {
+	return cp.synchronize(ctx, pods, containers, nil)
+}
+
+func (cp *CPUDriver) synchronize(ctx context.Context, pods []*api.PodSandbox, containers []*api.Container, attempt *nriAttempt) (rupdates []*api.ContainerUpdate, rerr error) {
+	cp.stateMu.Lock()
+	defer cp.stateMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if attempt != nil {
+		cp.nri.mu.Lock()
+		if cp.nri.current != attempt || attempt.closed {
+			cp.nri.mu.Unlock()
+			return nil, fmt.Errorf("NRI connection closed before synchronization")
+		}
+		attempt.ready = false
+		cp.nri.notifyLocked()
+		cp.nri.mu.Unlock()
+	}
 	startTime := time.Now()
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen))
-	// this happens once at startup and it's critical enough that we always want to see it.
+	// Recovery runs at startup and on reconnect; always log it.
 	logger.Info("begin: synchronize state with the runtime", "numPods", len(pods), "numContainers", len(containers))
 	defer logger.Info("end: synchronize state with the runtime", "numPods", len(pods), "numContainers", len(containers))
 
 	defer func() { cp.metrics.RecordNRISynchronize(rerr, time.Since(startTime)) }()
 
-	cpuAllocationStore := store.NewCPUAllocation(cp.topology.CPUTopology, cp.topology.ReservedCPUs)
+	// Runtime inventory is not the prepared-claim inventory: a claim may
+	// have no container yet, or retain its owner between container restarts.
+	// Only Unprepare releases these records while this process survives.
+	cpuAllocationStore := cp.cpuAllocationStore.Clone()
 	podConfigStore := store.NewPodConfig()
-	claimTracker := store.NewClaimTracker()
+	claimTracker := cp.claimTracker.Clone()
+	var containerUpdates []*api.ContainerUpdate
 	cdiCacheRefreshAttempted := false
 
 	for _, pod := range pods {
@@ -57,6 +80,18 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 
 			claimAllocations, err := parseDRAEnvToClaimAllocations(cLogger, container.Env)
 			if err != nil {
+				// Keep tracking a known runtime container on reconnect, especially
+				// a shared container that must receive future pool updates. Never
+				// infer allocations from malformed env or reuse a replaced ID.
+				if cp.hasSynchronized {
+					podUID := types.UID(pod.GetUid())
+					state := cp.podConfigStore.GetContainerState(podUID, container.Name)
+					if state != nil && state.MatchesContainer(container.Name, types.UID(container.GetId())) {
+						podConfigStore.SetContainerState(podUID, state)
+						cLogger.Error(err, "retaining known container state with malformed DRA env during synchronize")
+						continue
+					}
+				}
 				cLogger.Error(err, "ignoring container with malformed DRA env during synchronize")
 				continue
 			}
@@ -65,6 +100,8 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			allGuaranteedCPUs := cpuset.New()
 			validatedClaimAllocations := make(map[types.UID]cpuset.CPUSet)
 			for uid, cpus := range claimAllocations {
+				_, prepared := cp.cpuAllocationStore.GetResourceClaimAllocation(uid)
+				owned := cp.claimTracker.IsOwner(uid, types.UID(pod.Uid), container.Name)
 				caLogger := cLogger.WithValues("claimUID", uid)
 				if !cdiCacheRefreshAttempted {
 					err = cp.cdiMgr.Refresh()
@@ -77,13 +114,22 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				deviceName := getCDIDeviceName(uid)
 				envs, err := cp.cdiMgr.GetDeviceEnv(deviceName)
 				if err != nil {
+					if cp.hasSynchronized && prepared && owned {
+						return nil, fmt.Errorf("CDI state missing for prepared claim %q: %w", uid, err)
+					}
 					caLogger.Error(err, "ignoring claim not prepared by this driver during synchronize")
 					continue
 				}
 				err = validateSynchronizedClaimAllocation(caLogger, uid, cpus, envs)
 				if err != nil {
+					if cp.hasSynchronized && prepared && owned {
+						return nil, err
+					}
 					caLogger.Error(err, "ignoring invalid claim allocation during synchronize")
 					continue
+				}
+				if cp.hasSynchronized && !prepared {
+					return nil, fmt.Errorf("runtime references claim %q without a prepared allocation", uid)
 				}
 				// Synchronize restores an allocation that already exists in the runtime;
 				// the shared-pool guard applies only to new reservations.
@@ -114,28 +160,44 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 					ContainerId: container.GetId(),
 				}
 				guaranteedUpdate.SetLinuxCPUSetCPUs(allGuaranteedCPUs.String())
-				rupdates = append(rupdates, guaranteedUpdate)
+				containerUpdates = append(containerUpdates, guaranteedUpdate)
 			}
 			podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
 			cLogger.V(6).Info("set container state", "claims", len(claimUIDs))
 		}
 	}
 
-	cp.podConfigStore = podConfigStore
-	cp.cpuAllocationStore = cpuAllocationStore
-	cp.claimTracker = claimTracker
-	cp.refreshAllocationMetrics()
-
 	// Reconcile container CPU masks to handle cases where the NRI plugin might have crashed
 	// or restarted and missed updating the cgroup settings.
 	// See: https://github.com/containerd/nri/issues/282
-	sharedContainerUpdates, err := cp.getSharedContainerUpdates(logger, types.UID(""))
+	sharedContainerUpdates, err := sharedContainerUpdatesFor(logger, cpuAllocationStore, podConfigStore, types.UID(""))
 	if err != nil {
 		return nil, err
 	}
-	rupdates = append(rupdates, sharedContainerUpdates...)
-	logger.V(6).Info("synchronization complete", "updatesCount", len(rupdates))
-	return rupdates, nil
+	containerUpdates = append(containerUpdates, sharedContainerUpdates...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Serialize the final connection check with disconnect, without holding
+	// the lifecycle lock during CDI I/O. Old attempts must never publish state.
+	if attempt != nil {
+		cp.nri.mu.Lock()
+		defer cp.nri.mu.Unlock()
+		if cp.nri.current != attempt || attempt.closed {
+			return nil, fmt.Errorf("NRI connection closed during synchronization")
+		}
+	}
+	cp.podConfigStore = podConfigStore
+	cp.cpuAllocationStore = cpuAllocationStore
+	cp.claimTracker = claimTracker
+	cp.hasSynchronized = true
+	if attempt != nil {
+		attempt.ready = true
+		cp.nri.notifyLocked()
+	}
+	cp.refreshAllocationMetrics()
+	logger.V(6).Info("synchronization complete", "updatesCount", len(containerUpdates))
+	return containerUpdates, nil
 }
 
 func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types.UID]cpuset.CPUSet, error) {
@@ -189,11 +251,16 @@ func validateSynchronizedClaimAllocation(logger logr.Logger, uid types.UID, cpus
 	return nil
 }
 
+// getSharedContainerUpdates requires stateMu. Synchronize uses its candidate stores instead.
 func (cp *CPUDriver) getSharedContainerUpdates(logger logr.Logger, excludeID types.UID) ([]*api.ContainerUpdate, error) {
+	return sharedContainerUpdatesFor(logger, cp.cpuAllocationStore, cp.podConfigStore, excludeID)
+}
+
+func sharedContainerUpdatesFor(logger logr.Logger, allocations *store.CPUAllocation, pods *store.PodConfig, excludeID types.UID) ([]*api.ContainerUpdate, error) {
 	updates := []*api.ContainerUpdate{}
-	sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
-	preparedCPUs := cp.cpuAllocationStore.GetPreparedCPUs()
-	sharedCPUContainers := cp.podConfigStore.GetContainersWithSharedCPUs()
+	sharedCPUs := allocations.GetSharedCPUs()
+	preparedCPUs := allocations.GetPreparedCPUs()
+	sharedCPUContainers := pods.GetContainersWithSharedCPUs()
 	// An empty CPUSet is serialized by NRI as Cpus="", which means "do not
 	// change the current CPUSet" rather than "clear the CPUSet". Never emit
 	// that update while a prepared DRA allocation has exhausted the pool and
@@ -220,13 +287,24 @@ func (cp *CPUDriver) getSharedContainerUpdates(logger logr.Logger, excludeID typ
 
 // CreateContainer handles container creation requests from the NRI.
 func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) (radjust *api.ContainerAdjustment, rupdates []*api.ContainerUpdate, rerr error) {
+	return cp.createContainer(ctx, pod, ctr, nil)
+}
+
+func (cp *CPUDriver) createContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container, attempt *nriAttempt) (radjust *api.ContainerAdjustment, rupdates []*api.ContainerUpdate, rerr error) {
+	cp.stateMu.Lock()
+	defer cp.stateMu.Unlock()
+	if err := cp.checkNRIRequest(ctx, attempt); err != nil {
+		return nil, nil, err
+	}
+
 	startTime := time.Now()
 
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen), "pod", ctxlog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
 	logger.V(2).Info("begin: CreateContainer")
 	defer logger.V(2).Info("end: CreateContainer")
 
-	radjust = &api.ContainerAdjustment{}
+	adjust := &api.ContainerAdjustment{}
+	var updates []*api.ContainerUpdate
 
 	claimCount := -1
 	claimAllocations, err := parseDRAEnvToClaimAllocations(logger, ctr.Env)
@@ -252,7 +330,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		cp.podConfigStore.SetContainerState(podUID, state)
 
 		logger.V(2).Info("no guaranteed CPUs found, using shared CPUs", "sharedCPUs", sharedCPUs.String())
-		radjust.SetLinuxCPUSetCPUs(sharedCPUs.String())
+		adjust.SetLinuxCPUSetCPUs(sharedCPUs.String())
 	} else {
 		// NRI invokes CreateContainer for all containers. Only trust DRA env
 		// entries that match a claim prepared by this driver.
@@ -270,17 +348,16 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 			cp.claimTracker.Cleanup(newOwners...)
 			return nil, nil, err
 		}
-		cpuString := guaranteedCPUs.String()
-		logger.V(2).Info("guaranteed CPUs found", "cpus", cpuString)
+		logger.V(2).Info("guaranteed CPUs found", "cpus", guaranteedCPUs.String())
 		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs...)
-		radjust.SetLinuxCPUSetCPUs(cpuString)
-		radjust.AddEnv(dracpuapi.EnvVarExclusiveAssignedCPUSet, cpuString)
+		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
+		adjust.AddEnv(dracpuapi.EnvVarExclusiveAssignedCPUSet, guaranteedCPUs.String())
 		// A new owner means this is the first CreateContainer after Prepare, so
 		// existing shared containers must be moved off the newly claimed CPUs.
 		// On restart the owner already exists and no shared-container updates are
 		// needed.
 		if len(newOwners) > 0 {
-			rupdates, err = cp.getSharedContainerUpdates(logger, containerId)
+			updates, err = cp.getSharedContainerUpdates(logger, containerId)
 			if err != nil {
 				cp.claimTracker.Cleanup(newOwners...)
 				return nil, nil, err
@@ -289,7 +366,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		cp.podConfigStore.SetContainerState(podUID, state)
 	}
 
-	return radjust, rupdates, nil
+	return adjust, updates, nil
 }
 
 // StopContainer removes runtime container state without changing DRA-owned allocations.
@@ -300,8 +377,19 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 //   - StopContainer (NRI, here) removes only the matching runtime container state. The prepared
 //     allocation and owner remain unchanged so a restarted container reuses the same CPUs.
 //   - UnprepareResourceClaims (DRA) is the authoritative release point for the allocation and owner.
-//   - Synchronize (NRI, on restart) rebuilds the stores from the running containers' CDI env.
+//   - Synchronize rebuilds runtime container state, retaining prepared claims and owners
+//     while this process survives. Cold recovery uses running containers and CDI.
 func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) ([]*api.ContainerUpdate, error) {
+	return cp.stopContainer(ctx, pod, ctr, nil)
+}
+
+func (cp *CPUDriver) stopContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container, attempt *nriAttempt) ([]*api.ContainerUpdate, error) {
+	cp.stateMu.Lock()
+	defer cp.stateMu.Unlock()
+	if err := cp.checkNRIRequest(ctx, attempt); err != nil {
+		return nil, err
+	}
+
 	startTime := time.Now()
 
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen), "pod", ctxlog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
@@ -322,6 +410,16 @@ func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr
 
 // RemoveContainer handles container removal requests from the NRI.
 func (cp *CPUDriver) RemoveContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container) error {
+	return cp.removeContainer(ctx, pod, ctr, nil)
+}
+
+func (cp *CPUDriver) removeContainer(ctx context.Context, pod *api.PodSandbox, ctr *api.Container, attempt *nriAttempt) error {
+	cp.stateMu.Lock()
+	defer cp.stateMu.Unlock()
+	if err := cp.checkNRIRequest(ctx, attempt); err != nil {
+		return err
+	}
+
 	startTime := time.Now()
 
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen), "pod", ctxlog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)

@@ -33,6 +33,7 @@ type Recorder interface {
 	RecordNRIRemoveContainer(err error, claimCount int, elapsed time.Duration)
 }
 
+// refreshAllocationMetrics requires stateMu once the driver is serving callbacks.
 func (cp *CPUDriver) refreshAllocationMetrics() {
 	if cp.cpuAllocationStore == nil {
 		return
