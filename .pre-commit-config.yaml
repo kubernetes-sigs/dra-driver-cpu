@@ -28,7 +28,8 @@ repos:
     rev: 0.7.22
     hooks:
       - id: mdformat
-        exclude: (\.chglog/.*|deployment/helm/.*|\.github/ISSUE_TEMPLATE/.*)\.md
+        # Hugo front matter must not be rewritten as Markdown.
+        exclude: (\.chglog/.*|deployment/helm/.*|\.github/ISSUE_TEMPLATE/.*|site/content/.*)\.md
         additional_dependencies:
           - mdformat-toc
           - mdformat-tables
@@ -57,8 +58,13 @@ repos:
     hooks:
       - id: go-fmt
       - id: go-mod-tidy
+        # Hugo manages the site's theme dependencies; go mod tidy removes them.
+        exclude: '(^|/)vendor/|^site/'
       - id: go-vet-mod
+        # The Hugo module contains no Go packages.
+        exclude: '(^|/)vendor/|^site/'
       - id: go-build-mod
+        exclude: '(^|/)vendor/|^site/'
   - repo: local
     hooks:
       # https://github.com/golangci/golangci-lint/blob/main/.pre-commit-hooks.yaml
