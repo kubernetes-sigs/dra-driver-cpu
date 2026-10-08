@@ -11,6 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+{{- if ne .Values.healthzPath "/healthz" }}
+{{- fail "healthzPath must be /healthz: the driver serves health checks only at this path" }}
+{{- end }}
 {{- $effectiveDriverConfig := include "dra-driver-cpu.effectiveDriverConfig" . | fromYaml }}
 {{- $kubeletRoot := include "dra-driver-cpu.kubeletRootDir" . }}
 ---

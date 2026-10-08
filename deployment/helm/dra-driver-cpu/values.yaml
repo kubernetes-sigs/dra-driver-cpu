@@ -86,8 +86,8 @@ args:
   # -- Discover and expose PCIe roots as device attributes. Requires the `DRAListTypeAttributes=true` feature gate in the cluster. Not configurable via `driverConfig`; use this flag instead
   exposePCIeRoots: false # @schema type:boolean
 
-# -- Path for liveness and readiness probes
-healthzPath: /healthz
+# -- Path for liveness and readiness probes. Must be `/healthz`, the driver's fixed health endpoint
+healthzPath: /healthz # @schema enum:[/healthz];required:true
 # -- Port the HTTP server binds to; used for the container port and probes
 healthzPort: 8080 # @schema type:integer;minimum:1;maximum:65535
 
