@@ -27,7 +27,7 @@ import (
 )
 
 // NOTE: This file is a copy of https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/cm/cpumanager/cpu_assignment_test.go
-// as of commit https://github.com/kubernetes/kubernetes/commit/fd5b2efa76e44c5ef523cd0711f5ed23eb7e6b1a with minor modifications.
+// as of tag v1.37.1 (commit https://github.com/kubernetes/kubernetes/commit/f78e722310e50bcaca9276be22276d9e91d91308) with minor modifications.
 // NOTE: about contextual logging: different from the other parts of the codebase, we *intentionally* keep klog references
 // to minimize the changes wrt the kubernetes codebase till (if) we decide to fully fork it.
 
@@ -862,6 +862,15 @@ func TestTakeByTopologyWithSpreadPhysicalCPUsPreferredOption(t *testing.T) {
 			"",
 			mustParseCPUSet(t, "0-7"),
 		},
+		{
+			"take a socket of cpus from quad socket four way with HT, 12 cpus",
+			topoQuadSocketFourWayHT,
+			StaticPolicyOptions{DistributeCPUsAcrossCores: true},
+			mustParseCPUSet(t, "0-287"),
+			12,
+			"",
+			mustParseCPUSet(t, "0-2,9-10,13-14,21-22,25-26,33"),
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1072,7 +1081,7 @@ func TestTakeByTopologyNUMADistributed(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			result, err := takeByTopologyNUMADistributed(logger, tc.topo, tc.availableCPUs, tc.numCPUs, tc.cpuGroupSize, CPUSortingStrategyPacked)
+			result, err := takeByTopologyNUMADistributed(logger, tc.topo, tc.availableCPUs, tc.numCPUs, tc.cpuGroupSize, CPUSortingStrategyPacked, false)
 			if err != nil {
 				if tc.expErr == "" {
 					t.Errorf("unexpected error [%v]", err)
