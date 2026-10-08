@@ -1,6 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
+  "required": [
+    "healthzPath"
+  ],
   "properties": {
     "affinity": {
       "description": "Affinity rules for scheduling the DaemonSet pods",
@@ -85,8 +88,11 @@
       ]
     },
     "healthzPath": {
-      "description": "Path for liveness and readiness probes",
-      "type": "string"
+      "description": "Path for liveness and readiness probes. Must be `/healthz`, the driver's fixed health endpoint",
+      "type": "string",
+      "enum": [
+        "/healthz"
+      ]
     },
     "healthzPort": {
       "description": "Port the HTTP server binds to; used for the container port and probes",

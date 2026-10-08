@@ -88,6 +88,21 @@ func TestRenderedDaemonSet(t *testing.T) {
 	if err := checkRoot(ds, *expectedRoot, *expectFlag); err != nil {
 		t.Fatal(err)
 	}
+	c, err := driver(ds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, probe := range map[string]*corev1.Probe{
+		"liveness":  c.LivenessProbe,
+		"readiness": c.ReadinessProbe,
+	} {
+		if probe == nil || probe.HTTPGet == nil {
+			t.Fatalf("%s probe must use HTTP", name)
+		}
+		if probe.HTTPGet.Path != "/healthz" {
+			t.Fatalf("%s probe path = %q, want /healthz", name, probe.HTTPGet.Path)
+		}
+	}
 	if *checkOverride {
 		if err := checkNodeNameOverride(ds, *expectedOverride); err != nil {
 			t.Fatal(err)
