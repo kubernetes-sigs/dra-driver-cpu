@@ -683,6 +683,40 @@ func TestResolve_KubeletRootDirWithAConfigFile(t *testing.T) {
 	}
 }
 
+// TestDumpFile_RoundTrips feeds DumpFile's own output back through FromFile:
+// it must be accepted (none of the excluded fields leak in) and reproduce the
+// non-excluded fields unchanged.
+func TestDumpFile_RoundTrips(t *testing.T) {
+	cfg := driverconfig.Default()
+	cfg.ReservedCPUs = "0-3"
+	cfg.CPUDeviceMode = "individual"
+	cfg.BindAddress = ":9999"           // excluded: must not round-trip
+	cfg.ExposePCIeRoots = true          // excluded: must not round-trip
+	cfg.KubeletRootDir = "/mnt/kubelet" // excluded: must not round-trip
+
+	dir := t.TempDir()
+	out, err := cfg.DumpAsFile()
+	require.NoError(t, err)
+	cfgFile := writeFile(t, dir, "config.yaml", out)
+
+	result, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
+		driverconfig.FromFile(cfgFile),
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, cfg.ReservedCPUs, result.ReservedCPUs)
+	assert.Equal(t, cfg.CPUDeviceMode, result.CPUDeviceMode)
+	assert.Equal(t, cfg.GroupBy, result.GroupBy)
+	assert.Equal(t, cfg.Kubeconfig, result.Kubeconfig)
+	assert.Equal(t, cfg.HostnameOverride, result.HostnameOverride)
+	assert.Equal(t, cfg.SysFSOverlay, result.SysFSOverlay)
+	// Excluded fields come back from Default(), not from cfg, since DumpFile
+	// must have dropped them from the file.
+	assert.Equal(t, driverconfig.Default().BindAddress, result.BindAddress)
+	assert.Equal(t, driverconfig.Default().ExposePCIeRoots, result.ExposePCIeRoots)
+	assert.Equal(t, driverconfig.Default().KubeletRootDir, result.KubeletRootDir)
+}
+
 // TestResolve_BoolFlagWinsOverFile: a bool CLI flag correctly overrides via the JSON round-trip.
 func TestResolve_BoolFlagWinsOverFile(t *testing.T) {
 	dir := t.TempDir()
