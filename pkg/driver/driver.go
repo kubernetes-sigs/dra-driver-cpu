@@ -29,7 +29,6 @@ import (
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
-	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
@@ -246,7 +245,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	exposeExtAttrs := false
 	logger.Info("creating CPU allocator", "method", config.Allocator)
 	switch config.Allocator {
-	case driverconfig.AllocatorExternal:
+	case cpuallocator.ModeExternal:
 		plugin.cpuAllocator = cpuallocator.NewExternal(config.DriverName, managedCPUs, config.ReservedCPUs)
 		exposeExtAttrs = true
 	default:
