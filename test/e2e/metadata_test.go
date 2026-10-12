@@ -37,12 +37,14 @@ import (
 )
 
 type metadataEntry struct {
-	Path    string          `json:"path"`
-	Content json.RawMessage `json:"content"`
+	Path    string            `json:"path"`
+	Content []json.RawMessage `json:"content"`
 }
 
 type metadataFile struct {
-	Requests []metadataRequest `json:"requests"`
+	APIVersion string            `json:"apiVersion"`
+	Kind       string            `json:"kind"`
+	Requests   []metadataRequest `json:"requests"`
 }
 
 type metadataRequest struct {
@@ -148,10 +150,23 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 				"failed to parse dracpumetadata output: %s", stdout)
 			gomega.Expect(entries).ToNot(gomega.BeEmpty(), "no metadata files found")
 
-			ginkgo.By("verifying metadata content")
-			var metadata metadataFile
-			gomega.Expect(json.Unmarshal(entries[0].Content, &metadata)).To(gomega.Succeed(),
-				"failed to parse metadata JSON: %s", string(entries[0].Content))
+			ginkgo.By("verifying metadata content and compatibility versions")
+			gomega.Expect(entries[0].Content).To(gomega.HaveLen(2), "expected metadata in both supported API versions")
+			metadataVersions := make([]metadataFile, 0, len(entries[0].Content))
+			for _, content := range entries[0].Content {
+				var metadata metadataFile
+				gomega.Expect(json.Unmarshal(content, &metadata)).To(gomega.Succeed(),
+					"failed to parse metadata JSON: %s", string(content))
+				metadataVersions = append(metadataVersions, metadata)
+			}
+			gomega.Expect(metadataVersions[0].APIVersion).To(gomega.Equal("metadata.resource.k8s.io/v1beta1"))
+			gomega.Expect(metadataVersions[1].APIVersion).To(gomega.Equal("metadata.resource.k8s.io/v1alpha1"))
+			gomega.Expect(metadataVersions[0].Kind).To(gomega.Equal("DeviceMetadata"))
+			gomega.Expect(metadataVersions[1].Kind).To(gomega.Equal("DeviceMetadata"))
+			gomega.Expect(metadataVersions[1].Requests).To(gomega.Equal(metadataVersions[0].Requests),
+				"v1alpha1 metadata should contain the same request and device data as v1beta1")
+
+			metadata := metadataVersions[0]
 
 			gomega.Expect(metadata.Requests).To(gomega.HaveLen(1))
 			req := metadata.Requests[0]
