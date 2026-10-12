@@ -16,7 +16,10 @@ limitations under the License.
 
 package driverconfig
 
-import "github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+import (
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+)
 
 const (
 	// DefaultKubeletRootDir is the standard kubelet root directory, so behaviour is
@@ -33,6 +36,6 @@ func Default() Config {
 		CPUDeviceMode:  device.CPU_DEVICE_MODE_GROUPED,
 		GroupBy:        device.GROUP_BY_NUMA_NODE,
 		KubeletRootDir: DefaultKubeletRootDir,
-		Allocator:      AllocatorCPUManager,
+		Allocator:      cpuallocator.ModeCPUManager,
 	}
 }
