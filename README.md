@@ -6,6 +6,11 @@ This driver provides an alternative to the [CPUManager](https://kubernetes.io/do
 
 ## Getting Started
 
+The driver supports Kubernetes from 1.34 to 1.37.
+See [Supported Kubernetes versions](docs/user/installation.md#compatibility) for full details.
+If run against an older version, the driver may run but break unexpectedly.
+If run against a newer version, the driver may not be able to support newer Kubernetes features.
+
 The recommended way to install the driver is via the provided Helm chart:
 
 ```bash
