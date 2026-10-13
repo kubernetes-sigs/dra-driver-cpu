@@ -65,3 +65,91 @@ ran before the configuration file was read, so the setting was silently inert on
 
 Please make sure to document your rationale (no need to write an essay: a few clear sentences
 are perfectly fine) in your issue/PR so we can evaluate and converge towards the best shape.
+
+## Handling multiple configuration version
+
+### Concepts
+
+The main versioned configuration source are the configuration files.
+The command line flags remain **unversioned**, and their backward compatibility
+is best effort. We are (0.3.0 at time of writing) aggressively phasing out all the
+command line tunables, which mitigates the compatibility concerns.
+
+We adopt the same approach [scheduler-plugins](https://github.com/kubernetes-sigs/scheduler-plugins/tree/master/apis/config)
+follows: an internal runtime configuration and one or more public versioned
+configuration schemas. While we reuse the same conceptual model, the implementation
+will however be the simplest possible which serves our needs.
+
+Each supported version will be converted to the internal configuration, following
+a "hub and spoke"-like mode, without converting between public versions.
+For example, if at a given time we support `v1alpha3` and `v1beta1` configuration
+APIs we will have:
+
+- `v1alpha3` -> internal
+- `v1beta1` -> internal
+
+and **not**: `v1alpha3` -> `v1beta1`-> internal
+
+The runtime code will only consume only the internal configuration and does not
+branch on the input versions.
+The internal configuration should never be exposed directly to external consumers,
+because there is not any stability promise, not even across Z version.
+The tooling needed to extract the configuration will always and only produce
+the latest supported version; in the example above, it will be `v1beta1`.
+
+### Loading configuration
+
+We keep the model on which each configuration source is an overlay over the
+previous settings.
+This will make configlet support very easy to add later on and costs little
+extra complexity.
+
+The basic load flow for _configuration_ files will look like this:
+
+1. Identify the version and strictly decode its public schema. IOW, we will not try
+   each decoder till one succeeds (compare to how kubelet state files are managed).
+1. Apply that version's defaults and convert to the internal configuration.
+1. Only the final effective configuration will be validated according to the
+   *internal representation constraints* (regardless of the versioned source)
+
+Defaults for public fields belong to their schema version, not to core runtime
+code. The backward compatibility is therefore delegated to the versioned schemas.
+The backward compatibility promises extends also to the _meaning_ of the
+settings and to supplied and omitted fields; accepting an old file is insufficient
+if its behavior changes silently.
+
+When no configuration file is specified, we will use the most recent schema to supply
+the current defaults.
+
+Decoding must reject unknown fields, duplicate keys, and incorrect key casing.
+Define omission, explicit zero or empty values, and `null` deliberately; use pointer
+fields where presence affects semantics. Versionless files always mean legacy
+`v1alpha1`, never the latest schema. New formats require an explicit `apiVersion`.
+Note the assumption about missing schemas is only limited to `v1alpha1` and will
+be dropped once `v1alpha1` support is phased out.
+
+### Version skew
+
+We support the current schema and **the preceding schema**, ordered by
+introduction, independently of driver releases. For example, adding `v1alpha2`
+retains `v1alpha1`; adding `v1alpha3` will cause `v1alpha1` to be retired.
+
+Schemas are added on their own lifecycle on a per-need basis and these are *not*
+tied to the release process: a new version may or may not introduce new schemas,
+and in the long run we expect the schemas to stabilize and change less often,
+if at all.
+
+Unsupported versions fail startup with the supported versions and migration
+guidance. The driver will **not** automatically convert, edit or mutate
+configuration files;
+we reserve the options to add conversion helpers in separate binaries.
+
+While a schema is supported, the runtime must retain the behavior
+necessary to honor it.
+
+Helm validation must derive from the public schemas and accept every supported
+version. Rendering and deprecated argument folding must respect the selected
+schema, without silently changing its version. New examples and generated files
+must carry an explicit version. Document migration steps and chart/image
+compatibility, including rollback: an older binary generally cannot read a newer
+schema, so retain a mutually supported format until deliberately migrating.
