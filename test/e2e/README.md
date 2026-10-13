@@ -77,6 +77,44 @@ honor these settings, where applicable.
   before to run any actual test. Useful for troubleshooting and test fixing/tuning.
   NOTE: setting this value will make the test output significantly larger.
 
+- `DRACPU_E2E_NODE_RUNTIME`: (optional, default `docker`): the container runtime CLI the
+  node fault injection specs use to restart a node or its kubelet. Set it when the nodes of
+  the cluster under test are not managed by `docker`.
+
+## node fault injection
+
+> **Warning:** these specs reboot a worker node and restart its kubelet. Run them only
+> against a cluster you can throw away. Exclude them with
+> `DRACPU_E2E_LABEL_FILTER='!node-fault'` when running against a cluster you care about.
+
+The specs labeled `node-fault` cover the reboot and reprepare behavior of the driver:
+
+- a node reboot must make the driver rebuild the CDI spec on the prepare path and hand the
+  container the same CPUs, without recording prepare or unprepare errors;
+- a kubelet-only restart must *not* trigger a second prepare, because the kubelet keeps the
+  claim's devices and CDI IDs in its DRA manager state;
+- a driver-only restart must leave the containers untouched and rebuild the driver state from
+  the running containers, without a second prepare;
+- deleting and recreating a pod bound to the same claim must release and re-acquire the same
+  CPUs.
+
+The kubelet API does not expose these faults, so the specs inject them by acting on the
+container which backs the node, using the container runtime CLI configured through
+`DRACPU_E2E_NODE_RUNTIME`. This works on kind-like clusters, where every node is a container
+running on the same host as the test binary and named after the node. The specs skip
+themselves when the runtime CLI is missing or when no container is named after the node.
+
+Because a node reboot restarts the driver process, its counters start from zero again, so the
+specs reason about the counters relatively rather than in absolute terms.
+
+The driver behavior these specs pin down is described for users in
+[how-it-works](../../docs/user/how-it-works.md#surviving-node-reboots-restarts-and-pod-recreation).
+
+The suite waits on real cluster operations, so `make test-e2e` passes an explicit
+`-timeout` (`DRACPU_E2E_TIMEOUT`, default `15m`). Running the suite with a direct `go test`
+call needs the same, otherwise a stuck wait ends in the 10m default timeout panic instead of
+a readable failure.
+
 ## how to run
 
 The simplest way is from your terminal:
