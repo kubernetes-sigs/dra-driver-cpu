@@ -8,7 +8,11 @@ and the command-line flags the driver still supports.
 The driver supports two configuration mechanisms:
 
 - The config file - the main, preferred way to configure the driver.
-- Command-line flags — kept for a small set of important, mostly behavior altering settings and for backward compatibility. Flags removed in v0.4.0 and their config file equivalents are listed in [Command-line flags](#command-line-flags) below.
+- Command-line flags — kept for a small set of important, mostly behavior altering settings and for
+  backward compatibility. Flags removed in v0.4.0 and their config file equivalents are listed
+  in [Command-line flags](#command-line-flags) below.
+  Some flags are being deprecated in favor of their config file equivalent
+  (see [Helm: deprecated args values vs driverConfig](#helm-deprecated-args-values-vs-driverconfig) below).
 
 If the same setting is provided both ways, the explicit command-line flag wins, so avoid mixing
 the two for the same field.
@@ -139,6 +143,9 @@ driverConfig:
 ```
 
 #### Versioning and backward compatibility
+
+See the [backward compatibility policy](upgrade.md#backward-compatibility-policy)
+for the project-wide promise.
 
 The schema is versioned via the optional `apiVersion` field (currently `v1alpha1`). The layout
 is intentionally flat for now. If a nested hierarchy is introduced in the future, the
