@@ -68,6 +68,9 @@ are perfectly fine) in your issue/PR so we can evaluate and converge towards the
 
 ## Handling multiple configuration version
 
+See the [backward compatibility policy](../user/upgrade.md#backward-compatibility-policy)
+for the project-wide promise.
+
 ### Concepts
 
 The main versioned configuration source are the configuration files.

@@ -9,6 +9,33 @@ invariant](how-it-works.md#how-it-works).
 An upgrade may temporarily leave a node without an active driver, but it must
 not create overlapping active owners.
 
+## Backward compatibility policy
+
+The backward compatibility promise must be considered
+
+- best-effort (we try hard not to break, but may happen) for all alpha-level APIs (v1alpha1, v1alpha2...)
+- tentative (we will break only in exceptional circumstances) for all beta-level APIs (v1beta1, v1beta2...)
+- effective (no backward incompatible changes) for all the GA APIs (v1, v2...)
+
+The driver exposes configuration APIs in `api/`. The project strives to support
+these APIs adhering to the kubernetes best practices and standards, including
+backward compatibility, under the maturity graduation process described above.
+The backward compatibility does do cover golang API packages and the API
+YAML/JSON serialization format.
+
+The backward compatibility promise does not cover command line flags.
+While the project strives to cause minimal disruptions to the users, it reserves
+the option to remove deprecated options after only a single release. In other words,
+flags deprecated in 0.3.0 may be removed already in 0.4.0.
+In some non-default cases, flags may have a longer promised lifetime; in that case,
+the versions on which they will be removed will be clearly documented.
+
+The backward compatibility promise does not cover golang packages outside the api packages.
+The project strives, but can't guarantee, backward compatible changes in the golang
+packages.
+Public packages (not these in internal/...) must be considered to have best-effort
+backward compatibility promise until documented otherwise.
+
 ## Upgrade from 0.3.0 to 0.4.0 (EARLY WARNING)
 
 Before the driver enters beta stage, a batch of **breaking** changes are planned.
