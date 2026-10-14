@@ -41,7 +41,7 @@ type allocationRecorder struct {
 func (r *allocationRecorder) SetAllocationState(state cpumetrics.AllocationState) { r.state = state }
 
 func TestSynchronizeFailurePreservesState(t *testing.T) {
-	d, _ := newMetricsTestDriver(t)
+	d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
 	recorder := &allocationRecorder{Recorder: cpumetrics.Noop()}
 	d.metrics = recorder
 	d.refreshAllocationMetrics()
@@ -65,7 +65,7 @@ func TestSynchronizeFailurePreservesState(t *testing.T) {
 }
 
 func TestSynchronizeRetainsPreparedClaimAndOwner(t *testing.T) {
-	d, _ := newMetricsTestDriver(t)
+	d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
 	_, err := d.Synchronize(t.Context(), nil, nil)
 	require.NoError(t, err)
 	claim := individualMetricsClaim("pending", "cpudev0")
@@ -136,7 +136,7 @@ func TestWarmSynchronizeRejectsConflictingClaims(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			d, _ := newMetricsTestDriver(t)
+			d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
 			_, err := d.Synchronize(t.Context(), nil, nil)
 			require.NoError(t, err)
 			cdi := newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
@@ -161,7 +161,7 @@ func TestWarmSynchronizeRejectsConflictingClaims(t *testing.T) {
 }
 
 func TestWarmSynchronizeDoesNotResurrectUnpreparedClaim(t *testing.T) {
-	d, _ := newMetricsTestDriver(t)
+	d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
 	_, err := d.Synchronize(t.Context(), nil, nil)
 	require.NoError(t, err)
 	claim := individualMetricsClaim("a", "cpudev0")
@@ -209,7 +209,7 @@ func requireStateLockHeld(t *testing.T, d *CPUDriver) {
 }
 
 func TestSynchronizeSerializesPrepare(t *testing.T) {
-	d, _ := newMetricsTestDriver(t)
+	d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
 	claim := individualMetricsClaim("pending", "cpudev0")
 	cdi := &pausedRefreshCDI{
 		mockCdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{"running": cpuset.New(1)}),
@@ -250,7 +250,7 @@ func TestSynchronizeSerializesPrepare(t *testing.T) {
 }
 
 func TestSynchronizeSerializesUnprepare(t *testing.T) {
-	d, _ := newMetricsTestDriver(t)
+	d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
 	claim := individualMetricsClaim("pending", "cpudev0")
 	cdi := &pausedRefreshCDI{
 		mockCdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{"running": cpuset.New(1)}),
@@ -294,7 +294,7 @@ func TestSynchronizeSerializesUnprepare(t *testing.T) {
 }
 
 func TestSynchronizeSerializesCancelledPrepare(t *testing.T) {
-	d, _ := newMetricsTestDriver(t)
+	d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
 	claim := individualMetricsClaim("pending", "cpudev0")
 	cdi := &pausedRefreshCDI{
 		mockCdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{"running": cpuset.New(1)}),
@@ -336,7 +336,7 @@ func TestSynchronizeSerializesCancelledPrepare(t *testing.T) {
 }
 
 func TestSynchronizeCancelledBeforeCommit(t *testing.T) {
-	d, _ := newMetricsTestDriver(t)
+	d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
 	cdi := &pausedRefreshCDI{mockCdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)}), entered: make(chan struct{}), release: make(chan struct{})}
 	d.cdiMgr = cdi
 	old := d.cpuAllocationStore
@@ -358,7 +358,7 @@ func TestSynchronizeCancelledBeforeCommit(t *testing.T) {
 func TestWarmSynchronizeIgnoresInvalidEnvFromNonOwner(t *testing.T) {
 	for _, missingCDI := range []bool{false, true} {
 		t.Run(fmt.Sprintf("missingCDI=%v", missingCDI), func(t *testing.T) {
-			d, _ := newMetricsTestDriver(t)
+			d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
 			_, err := d.Synchronize(t.Context(), nil, nil)
 			require.NoError(t, err)
 			claim := individualMetricsClaim("a", "cpudev0")
@@ -381,8 +381,8 @@ func TestWarmSynchronizeIgnoresInvalidEnvFromNonOwner(t *testing.T) {
 	}
 }
 
-func TestWarmSynchronizeRetainsMalformedSharedContainer(t *testing.T) {
-	d, _ := newMetricsTestDriver(t)
+func TestWarmSynchronizeRetainsKnownSharedContainerWithMalformedEnv(t *testing.T) {
+	d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
 	_, err := d.Synchronize(t.Context(), nil, nil)
 	require.NoError(t, err)
 	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod"}
@@ -426,7 +426,7 @@ func TestWarmSynchronizeMalformedContainerIdentity(t *testing.T) {
 		{name: "malformed before valid claim", podUID: "pod", containerName: "sidecar", containerID: "shared", env: []string{"DRA_CPUSET_other=bad", "DRA_CPUSET_a=0"}, known: true, present: true, wantRetain: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d, _ := newMetricsTestDriver(t)
+			d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
 			_, err := d.Synchronize(t.Context(), nil, nil)
 			require.NoError(t, err)
 			pod := &api.PodSandbox{Id: "sandbox", Uid: "pod"}
@@ -465,7 +465,7 @@ func TestWarmSynchronizeMalformedContainerIdentity(t *testing.T) {
 }
 
 func TestWarmSynchronizeMalformedExclusiveContainerKeepsOwnership(t *testing.T) {
-	d, _ := newMetricsTestDriver(t)
+	d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
 	_, err := d.Synchronize(t.Context(), nil, nil)
 	require.NoError(t, err)
 	claim := individualMetricsClaim("a", "cpudev0")

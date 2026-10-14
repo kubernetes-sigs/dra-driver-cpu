@@ -123,7 +123,7 @@ func (cp *CPUDriver) synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				err = validateSynchronizedClaimAllocation(caLogger, uid, cpus, envs)
 				if err != nil {
 					if cp.hasSynchronized && prepared && owned {
-						return nil, err
+						return nil, fmt.Errorf("failed to validate claim allocation for container %q during synchronize: %w", container.Name, err)
 					}
 					caLogger.Error(err, "ignoring invalid claim allocation during synchronize")
 					continue
@@ -150,7 +150,7 @@ func (cp *CPUDriver) synchronize(ctx context.Context, pods []*api.PodSandbox, co
 					return nil, err
 				}
 				if err := cpuAllocationStore.ValidateResourceClaimAllocations(validatedClaimAllocations); err != nil {
-					return nil, err
+					return nil, fmt.Errorf("failed to validate claim allocations for container %q during synchronize: %w", container.Name, err)
 				}
 				cLogger.V(2).Info("found guaranteed CPUs", "cpus", allGuaranteedCPUs.String())
 				state = store.NewContainerState(container.GetName(), containerUID, claimUIDs...)
@@ -347,8 +347,8 @@ func (cp *CPUDriver) createContainer(ctx context.Context, pod *api.PodSandbox, c
 		}
 		if err := cp.cpuAllocationStore.ValidateResourceClaimAllocations(claimAllocations); err != nil {
 			cp.claimTracker.Cleanup(newOwners...)
-			resultErr = err
-			return nil, nil, err
+			resultErr = fmt.Errorf("failed to validate claim allocations for container %q: %w", ctr.Name, err)
+			return nil, nil, resultErr
 		}
 		logger.V(2).Info("guaranteed CPUs found", "cpus", guaranteedCPUs.String())
 		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs...)
