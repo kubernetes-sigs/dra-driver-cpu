@@ -17,8 +17,11 @@ limitations under the License.
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -27,8 +30,8 @@ import (
 const metadataBasePath = "/var/run/kubernetes.io/dra-device-attributes"
 
 type metadataEntry struct {
-	Path    string          `json:"path"`
-	Content json.RawMessage `json:"content"`
+	Path    string            `json:"path"`
+	Content []json.RawMessage `json:"content"`
 }
 
 func main() {
@@ -45,10 +48,11 @@ func main() {
 		if err != nil {
 			return fmt.Errorf("reading %s: %w", path, err)
 		}
-		entries = append(entries, metadataEntry{
-			Path:    path,
-			Content: json.RawMessage(data),
-		})
+		content, err := decodeMetadataStream(data)
+		if err != nil {
+			return fmt.Errorf("decoding %s: %w", path, err)
+		}
+		entries = append(entries, metadataEntry{Path: path, Content: content})
 		return nil
 	})
 	if err != nil {
@@ -60,4 +64,23 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error encoding output: %v\n", err)
 		os.Exit(2)
 	}
+}
+
+func decodeMetadataStream(data []byte) ([]json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	var objects []json.RawMessage
+	for {
+		var object json.RawMessage
+		if err := decoder.Decode(&object); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+		objects = append(objects, object)
+	}
+	if len(objects) == 0 {
+		return nil, errors.New("metadata stream is empty")
+	}
+	return objects, nil
 }
