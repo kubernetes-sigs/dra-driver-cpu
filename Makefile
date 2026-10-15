@@ -298,6 +298,11 @@ helm-schema: driverconfig-schema ## regenerate values.schema.json from values.ya
 helm-schema-check: helm-schema ## verify values.schema.json is up to date; fails if regeneration produces a diff
 	@git diff --exit-code ${HELM_CHART}/values.schema.json || \
 		(echo "ERROR: values.schema.json is out of date. Run 'make helm-schema' to update it." && exit 1)
+
+.PHONY: check-version-refs
+check-version-refs: ## verify the documentation names the release in VERSION and no older one
+	@hack/ci/check-version-refs.sh
+
 CHART_REGISTRY?=$(REGISTRY)/$(IMAGE_NAME)/charts
 HELM_VERSION_SHA?=a2369ca71c0ef633bf6e4fccd66d634eb379b371 # v3.20.1
 

@@ -1,0 +1,18 @@
+# Lines that are allowed to name a release other than the one in VERSION, for
+# hack/ci/check-version-refs.sh. An entry is either a whole file, or a file and
+# a substring the line has to contain:
+#
+#   <path>          every line of the file
+#   <path>:<text>   every line of the file that contains <text>
+#
+# Keep the list short and say why each entry is here.
+
+# The upgrade guide exists to name the releases it upgrades from.
+docs/user/upgrade.md
+
+# The release a migration path starts to apply at, not the current release.
+docs/dev/testing.md:starting with 0.3.0
+
+# The chart's appVersion trails VERSION on purpose, and this sentence is the one
+# that accounts for it.
+docs/user/configuration.md:still selects the
