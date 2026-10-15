@@ -100,7 +100,7 @@ flag in the driver. The driver has no way to introspect the cluster feature gate
 Care must be taken to consume the attribute using the CEL expressions selector, because the backward compatibility path is not yet clear
 (see: https://github.com/kubernetes/enhancements/pull/6081#issuecomment-4606653735 and following)
 
-### Current limitations (v0.2.0)
+### Current limitations (v0.3.0)
 
 In grouped mode, the `pcieRoot` attribute reports the union of all PCIe roots local to the group's allocatable CPUs.
 When `matchAttribute` is used for cross-driver co-location (e.g., CPU + NIC), the scheduler matches on a shared root,
