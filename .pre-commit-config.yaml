@@ -74,3 +74,9 @@ repos:
         types: [go]
         language: system
         pass_filenames: false
+      - id: check-version-refs
+        name: Check Version Refs
+        entry: make check-version-refs
+        files: ^(VERSION|docs/.*\.md|README\.md|deployment/helm/.*/README\.md(\.gotmpl)?)$
+        language: system
+        pass_filenames: false
