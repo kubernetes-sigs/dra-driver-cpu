@@ -44,7 +44,7 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
 | extraVolumeMounts | list | `[]` | Extra volume mounts for the driver container |
 | extraVolumes | list | `[]` | Extra volumes for the DaemonSet pod |
 | fullnameOverride | string | `""` | Override the full release name |
-| healthzPath | string | `"/healthz"` | Path for liveness and readiness probes |
+| healthzPath | string | `"/healthz"` | Path for liveness and readiness probes. Must be `/healthz`, the driver's fixed health endpoint |
 | healthzPort | int | `8080` | Port the HTTP server binds to; used for the container port and probes |
 | image.pullPolicy | string | `"IfNotPresent"` | Image pull policy |
 | image.repository | string | `"registry.k8s.io/dra-driver-cpu/dra-driver-cpu"` | Container image repository |

@@ -88,9 +88,8 @@ checkHostnameOverride() {
 }
 
 # refuses <name> <message> <helm args...>; the render has to fail and name the
-# guard the case is for, so an unrelated helm failure cannot satisfy it. Schema
-# validation is off throughout: these cover the template's own refusals, and the
-# schema is checked by helm lint and the generated-schema target.
+# guard the case is for, so an unrelated helm failure cannot satisfy it. Cases
+# with --skip-schema-validation cover the template's own refusals.
 refuses() {
 	local name=$1 want=$2
 	shift 2
@@ -109,6 +108,21 @@ refuses() {
 
 # Unset: the chart leaves the root to the driver, so there is no flag to check.
 accepts default '' "${default_root}" false
+
+# The driver serves health checks only at /healthz. Keep explicit default
+# values working, but refuse paths that would break or bypass the probes.
+"${helm}" "${template_args[@]}" --set-string healthzPath=/healthz >"${tmp}/healthz.yaml"
+go test -count=1 ./test/render/ -args \
+	-manifest "${tmp}/healthz.yaml" -expected-root "${default_root}"
+for health_path in /readyz /healthz/ /metrics ''; do
+	refuses healthz-path-schema healthzPath --set-string "healthzPath=${health_path}"
+	refuses healthz-path-template 'healthzPath must be /healthz' \
+		--skip-schema-validation --set-string "healthzPath=${health_path}"
+done
+refuses healthz-path-null-schema healthzPath --set healthzPath=null
+refuses healthz-path-null-template 'healthzPath must be /healthz' \
+	--skip-schema-validation --set healthzPath=null
+
 accepts relocated /var/lib/custom-kubelet /var/lib/custom-kubelet true
 # Cleaned by the template, so the mounts and the flag cannot differ by a slash.
 accepts uncleaned /var/lib/custom-kubelet/ /var/lib/custom-kubelet true
