@@ -29,7 +29,6 @@ import (
 	"github.com/go-logr/logr/testr"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	devattr "github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
@@ -1180,9 +1179,9 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			},
 			SysFS: testSysFS(cpuInfos),
 		}
-		allocator := driverconfig.AllocatorCPUManager
+		allocator := cpuallocator.ModeCPUManager
 		if groupBy == devattr.GROUP_BY_MACHINE {
-			allocator = driverconfig.AllocatorExternal
+			allocator = cpuallocator.ModeExternal
 		}
 		conf := Config{
 			DriverName:       testDriverName,
