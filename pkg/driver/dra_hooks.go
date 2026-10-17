@@ -117,7 +117,7 @@ func (cp *CPUDriver) reserveResourceClaimAllocation(logger logr.Logger, claimUID
 	return cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claimUID, cpus, hasSharedContainers)
 }
 
-func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
+func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
 	logger.V(4).Info("preparing grouped resource claim")
 
 	if claim.Status.Allocation == nil {
@@ -246,12 +246,12 @@ func (cp *CPUDriver) prepareResourceClaim(ctx context.Context, logger logr.Logge
 		return kubeletplugin.PrepareResult{Err: err}
 	}
 	if cp.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
-		return cp.prepareGroupedResourceClaim(logger, claim)
+		return cp.prepareGroupedResourceClaimLocked(logger, claim)
 	}
-	return cp.prepareIndividualResourceClaim(logger, claim)
+	return cp.prepareIndividualResourceClaimLocked(logger, claim)
 }
 
-func (cp *CPUDriver) prepareIndividualResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
+func (cp *CPUDriver) prepareIndividualResourceClaimLocked(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
 	logger.V(4).Info("preparing individual resource claim")
 
 	if claim.Status.Allocation == nil {

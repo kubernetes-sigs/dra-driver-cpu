@@ -100,8 +100,11 @@ func (cp *CPUDriver) synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			allGuaranteedCPUs := cpuset.New()
 			validatedClaimAllocations := make(map[types.UID]cpuset.CPUSet)
 			for uid, cpus := range claimAllocations {
-				_, prepared := cp.cpuAllocationStore.GetResourceClaimAllocation(uid)
-				owned := cp.claimTracker.IsOwner(uid, types.UID(pod.Uid), container.Name)
+				var prepared, owned bool
+				if cp.hasSynchronized {
+					_, prepared = cp.cpuAllocationStore.GetResourceClaimAllocation(uid)
+					owned = cp.claimTracker.IsOwner(uid, types.UID(pod.Uid), container.Name)
+				}
 				caLogger := cLogger.WithValues("claimUID", uid)
 				if !cdiCacheRefreshAttempted {
 					err = cp.cdiMgr.Refresh()
