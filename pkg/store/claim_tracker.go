@@ -19,6 +19,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 
 	"github.com/go-logr/logr"
@@ -106,4 +107,22 @@ func (ctk *ClaimTracker) Len() int {
 	ctk.mu.Lock()
 	defer ctk.mu.Unlock()
 	return len(ctk.ownerByClaimUID)
+}
+
+// Clone copies retained ownership without sharing the map or lock.
+func (ctk *ClaimTracker) Clone() *ClaimTracker {
+	ctk.mu.Lock()
+	defer ctk.mu.Unlock()
+	next := NewClaimTracker()
+	maps.Copy(next.ownerByClaimUID, ctk.ownerByClaimUID)
+	return next
+}
+
+// IsOwner reports whether a claim is already bound to this pod and container.
+// A claim UID in a runtime environment alone is not proof of ownership.
+func (ctk *ClaimTracker) IsOwner(claimUID k8stypes.UID, podUID k8stypes.UID, containerName string) bool {
+	ctk.mu.Lock()
+	defer ctk.mu.Unlock()
+	owner, found := ctk.ownerByClaimUID[claimUID]
+	return found && owner.Equal(OwnerIdent{PodUID: podUID, ContainerName: containerName})
 }

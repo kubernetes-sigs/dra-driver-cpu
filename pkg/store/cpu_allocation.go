@@ -162,3 +162,20 @@ func (s *CPUAllocation) Snapshot() AllocationSnapshot {
 		ActiveResourceClaims: len(s.resourceClaimAllocations),
 	}
 }
+
+// Clone copies allocation state without sharing maps or locks.
+func (s *CPUAllocation) Clone() *CPUAllocation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	allocations := make(map[types.UID]cpuset.CPUSet, len(s.resourceClaimAllocations))
+	for uid, cpus := range s.resourceClaimAllocations {
+		allocations[uid] = cpus.Clone()
+	}
+
+	return &CPUAllocation{
+		availableCPUs:            s.availableCPUs.Clone(),
+		reservedCPUs:             s.reservedCPUs.Clone(),
+		preparedCPUs:             s.preparedCPUs.Clone(),
+		resourceClaimAllocations: allocations,
+	}
+}

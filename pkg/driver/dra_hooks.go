@@ -27,6 +27,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
+	"google.golang.org/grpc"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
@@ -78,16 +79,7 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 	for _, claim := range claims {
 		start := time.Now()
 		cLogger := logger.WithValues("claim", ctxlog.KObj(claim), "claimUID", claim.UID)
-
-		if err := cp.checkAdminAccess(claim); err != nil {
-			result[claim.UID] = kubeletplugin.PrepareResult{Err: err}
-		} else {
-			if cp.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
-				result[claim.UID] = cp.prepareGroupedResourceClaim(cLogger, claim)
-			} else {
-				result[claim.UID] = cp.prepareResourceClaim(cLogger, claim)
-			}
-		}
+		result[claim.UID] = cp.prepareResourceClaim(ctx, cLogger, claim)
 		prepareResult := cpumetrics.ResultSuccess
 		if result[claim.UID].Err != nil {
 			prepareResult = cpumetrics.ResultError
@@ -125,7 +117,7 @@ func (cp *CPUDriver) reserveResourceClaimAllocation(logger logr.Logger, claimUID
 	return cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claimUID, cpus, hasSharedContainers)
 }
 
-func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
+func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
 	logger.V(4).Info("preparing grouped resource claim")
 
 	if claim.Status.Allocation == nil {
@@ -241,7 +233,25 @@ func (cp *CPUDriver) prepareGroupedResourceClaim(logger logr.Logger, claim *reso
 	return result
 }
 
-func (cp *CPUDriver) prepareResourceClaim(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
+func (cp *CPUDriver) prepareResourceClaim(ctx context.Context, logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
+	cp.stateMu.Lock()
+	defer cp.stateMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return kubeletplugin.PrepareResult{Err: err}
+	}
+	if err := cp.prepareReady(); err != nil {
+		return kubeletplugin.PrepareResult{Err: err}
+	}
+	if err := cp.checkAdminAccess(claim); err != nil {
+		return kubeletplugin.PrepareResult{Err: err}
+	}
+	if cp.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
+		return cp.prepareGroupedResourceClaimLocked(logger, claim)
+	}
+	return cp.prepareIndividualResourceClaimLocked(logger, claim)
+}
+
+func (cp *CPUDriver) prepareIndividualResourceClaimLocked(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
 	logger.V(4).Info("preparing individual resource claim")
 
 	if claim.Status.Allocation == nil {
@@ -368,20 +378,24 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 		cLogger := logger.WithValues("claim", claim.String(), "claimUID", claim.UID)
 		cLogger.V(2).Info("unpreparing resource claim")
 		start := time.Now()
-		err := cp.unprepareResourceClaim(cLogger, claim)
+		err := cp.unprepareResourceClaim(ctx, cLogger, claim)
 		result[claim.UID] = err
 		if err != nil {
 			cLogger.Error(err, "error unpreparing resources for claim")
 			cp.metrics.RecordUnprepare(cpumetrics.ResultError, time.Since(start))
 		} else {
 			cp.metrics.RecordUnprepare(cpumetrics.ResultSuccess, time.Since(start))
-			cp.refreshAllocationMetrics()
 		}
 	}
 	return result, nil
 }
 
-func (cp *CPUDriver) unprepareResourceClaim(logger logr.Logger, claim kubeletplugin.NamespacedObject) error {
+func (cp *CPUDriver) unprepareResourceClaim(ctx context.Context, logger logr.Logger, claim kubeletplugin.NamespacedObject) error {
+	cp.stateMu.Lock()
+	defer cp.stateMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Remove the CDI spec first. If that fails, keep the allocation recorded so
 	// the driver does not make those CPUs available while stale CDI state remains.
 	if err := cp.cdiMgr.RemoveDevice(logger, getCDIDeviceName(claim.UID)); err != nil {
@@ -389,6 +403,7 @@ func (cp *CPUDriver) unprepareResourceClaim(logger logr.Logger, claim kubeletplu
 	}
 	cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claim.UID)
 	cp.claimTracker.Cleanup(claim.UID)
+	cp.refreshAllocationMetrics()
 	// TODO(#279): Update existing shared containers here once all supported runtimes can
 	// safely process unsolicited NRI UpdateContainers calls. Until then, each container
 	// picks up the expanded cpuset on its next CreateContainer or Synchronize.
@@ -406,7 +421,7 @@ func (cp *CPUDriver) HandleError(ctx context.Context, err error, msg string) {
 	// For unrecoverable errors, exit immediately with a clear error message.
 	// This fail-fast behavior is intentional for early project maturity to surface
 	// issues quickly rather than silently continuing in a broken state.
-	if !errors.Is(err, kubeletplugin.ErrRecoverable) {
+	if !errors.Is(err, kubeletplugin.ErrRecoverable) && !errors.Is(err, grpc.ErrServerStopped) {
 		logger.Error(err, "fatal unrecoverable error in DRA driver, exiting",
 			"driver", cp.driverName,
 			"node", cp.nodeName,
