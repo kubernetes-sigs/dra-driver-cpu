@@ -78,7 +78,16 @@ Move the values to the configuration file before upgrading:
 
 See [configuration](configuration.md#command-line-flags) for details.
 
-#### Early warning
+#### API packages reorganization
+
+Go consumers of the opaque allocation configuration API must update their imports:
+
+- Schema types: `api/v1alpha1` moves to `api/allocation/v1alpha1`.
+- `ParseOpaqueConfig`: `api` moves to `api/allocation`.
+
+The serialized `v1alpha1` schema and parsing behavior are unchanged.
+
+### Early warning
 
 Before the driver enters beta stage, a batch of **breaking** changes are planned.
 The idea is to coalesce together all the known backward incompatible changes in release 0.4.0.

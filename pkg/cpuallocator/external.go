@@ -20,7 +20,7 @@ import (
 	"fmt"
 
 	"github.com/go-logr/logr"
-	opaqueapi "github.com/kubernetes-sigs/dra-driver-cpu/api"
+	allocationapi "github.com/kubernetes-sigs/dra-driver-cpu/api/allocation"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/dynamic-resource-allocation/resourceclaim"
@@ -125,7 +125,7 @@ func getOpaqueCPUSet(logger logr.Logger, driverName string, allocation *resource
 
 	// Return the matched config if found
 	if matchedConfig != nil && len(matchedConfig.Opaque.Parameters.Raw) > 0 {
-		parsedCPUSet, err := opaqueapi.ParseOpaqueConfig(matchedConfig.Opaque.Parameters.Raw)
+		parsedCPUSet, err := allocationapi.ParseOpaqueConfig(matchedConfig.Opaque.Parameters.Raw)
 		if err != nil {
 			return cpuset.New(), false, err
 		}
