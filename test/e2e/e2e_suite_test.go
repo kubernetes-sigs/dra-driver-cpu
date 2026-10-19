@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -54,16 +55,25 @@ func TestE2E(t *testing.T) {
 // shared code which is not ready yet to be moved into a test/pkg/... package
 
 const (
-	driverName            = "dra.cpu"
-	argReservedCPUs       = "--reserved-cpus="
-	argCPUDeviceMode      = "--cpu-device-mode="
-	argGroupBy            = "--group-by="
-	argAllocator          = "--allocator="
-	daemonSetNamespace    = "kube-system"
-	daemonSetLabel        = "app=dracpu"
-	driverPodPollInterval = 2 * time.Second
-	driverPodPollTimeout  = 2 * time.Minute
+	driverName                = "dra.cpu"
+	argReservedCPUs           = "--reserved-cpus="
+	argCPUDeviceMode          = "--cpu-device-mode="
+	argGroupBy                = "--group-by="
+	argAllocator              = "--allocator="
+	defaultDaemonSetNamespace = "kube-system"
+	daemonSetLabel            = "app=dracpu"
+	driverPodPollInterval     = 2 * time.Second
+	driverPodPollTimeout      = 2 * time.Minute
 )
+
+var daemonSetNamespace = getEnvDaemonSetNamespace()
+
+func getEnvDaemonSetNamespace() string {
+	if val := os.Getenv("DRACPU_E2E_DAEMONSET_NAMESPACE"); val != "" {
+		return val
+	}
+	return defaultDaemonSetNamespace
+}
 
 func listDriverPods(ctx context.Context, client kubernetes.Interface) ([]v1.Pod, error) {
 	podList, err := client.CoreV1().Pods(daemonSetNamespace).List(ctx, metav1.ListOptions{

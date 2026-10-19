@@ -68,10 +68,10 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 		ginkgo.DeferCleanup(infraFxt.Teardown)
 
 		ginkgo.By("checking the daemonset configuration matches the test configuration")
-		daemonSet, err := rootFxt.K8SClientset.AppsV1().DaemonSets("kube-system").Get(ctx, "dracpu", metav1.GetOptions{})
+		daemonSet, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, "dracpu", metav1.GetOptions{})
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get dracpu daemonset")
 		gomega.Expect(daemonSet.Spec.Template.Spec.Containers).ToNot(gomega.BeEmpty(), "no containers in dracpu daemonset")
-		cfgValues, err := getDriverConfigValues(ctx, rootFxt.K8SClientset, "kube-system", daemonSet)
+		cfgValues, err := getDriverConfigValues(ctx, rootFxt.K8SClientset, daemonSetNamespace, daemonSet)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot read dracpu driver config values")
 		var dsReservedCPUs cpuset.CPUSet
 		if len(cfgValues.ReservedCPUs) > 0 {

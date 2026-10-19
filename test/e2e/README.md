@@ -77,6 +77,10 @@ honor these settings, where applicable.
   before to run any actual test. Useful for troubleshooting and test fixing/tuning.
   NOTE: setting this value will make the test output significantly larger.
 
+- `DRACPU_E2E_DAEMONSET_NAMESPACE`: (optional, default `kube-system`): the namespace where the
+  dra-driver-cpu DaemonSet and its pods are deployed. Override this when the driver is installed
+  in a namespace other than `kube-system`.
+
 ## how to run
 
 The simplest way is from your terminal:
