@@ -54,11 +54,136 @@ func TestCPUAllocationPreparedLifecycle(t *testing.T) {
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
 	require.Error(t, store.ReserveResourceClaimAllocation(logger, "claim-2", claimCPUs, false))
 
-	require.NoError(t, store.ValidateResourceClaimAllocations(map[types.UID]cpuset.CPUSet{claimUID: claimCPUs}))
+	updatedClaims, err := store.ValidateResourceClaimAllocations(logger, "pod", "app", map[types.UID]cpuset.CPUSet{claimUID: claimCPUs})
+	require.NoError(t, err)
+	require.Equal(t, []types.UID{claimUID}, updatedClaims)
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
 
 	store.RemoveResourceClaimAllocation(logger, claimUID)
+	require.False(t, store.IsOwner(claimUID, "pod", "app"))
 	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
+}
+
+func TestCPUAllocationValidateResourceClaimAllocations(t *testing.T) {
+	owner := OwnerIdent{PodUID: "pod", ContainerName: "app"}
+	allocations := map[types.UID]cpuset.CPUSet{"a": cpuset.New(0), "b": cpuset.New(1)}
+	tests := []struct {
+		name              string
+		initial           *OwnerIdent // Initial owner of claim b.
+		expected          map[types.UID]cpuset.CPUSet
+		wantUpdatedClaims []types.UID
+		wantErr           string
+	}{
+		{
+			name:    "empty",
+			wantErr: "no claims to bind",
+		},
+		{
+			name:              "first binding",
+			expected:          allocations,
+			wantUpdatedClaims: []types.UID{"a", "b"},
+		},
+		{
+			name:     "same owner",
+			initial:  &owner,
+			expected: map[types.UID]cpuset.CPUSet{"b": cpuset.New(1)},
+		},
+		{
+			name:              "mixed new and existing owners",
+			initial:           &owner,
+			expected:          allocations,
+			wantUpdatedClaims: []types.UID{"a"},
+		},
+		{
+			name:     "pod conflict",
+			initial:  &OwnerIdent{PodUID: "other", ContainerName: "app"},
+			expected: allocations,
+			wantErr:  "already bound",
+		},
+		{
+			name:     "container conflict",
+			initial:  &OwnerIdent{PodUID: "pod", ContainerName: "other"},
+			expected: allocations,
+			wantErr:  "already bound",
+		},
+		{
+			name:     "missing claim",
+			expected: map[types.UID]cpuset.CPUSet{"a": cpuset.New(0), "missing": cpuset.New(2)},
+			wantErr:  "not prepared",
+		},
+		{
+			name:     "CPU mismatch",
+			expected: map[types.UID]cpuset.CPUSet{"a": cpuset.New(0), "b": cpuset.New(2)},
+			wantErr:  "cpuset mismatch",
+		},
+		{
+			name:     "CPU mismatch for existing owner",
+			initial:  &owner,
+			expected: map[types.UID]cpuset.CPUSet{"a": cpuset.New(0), "b": cpuset.New(2)},
+			wantErr:  "cpuset mismatch",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			logger := testr.New(t)
+			store := newTestCPUAllocation(logger, cpuset.New(0, 1, 2), cpuset.New())
+			for uid, cpus := range allocations {
+				requirePreparedAllocation(t, logger, store, uid, cpus)
+			}
+			if tc.initial != nil {
+				_, err := store.ValidateResourceClaimAllocations(logger, tc.initial.PodUID, tc.initial.ContainerName, map[types.UID]cpuset.CPUSet{"b": cpuset.New(1)})
+				require.NoError(t, err)
+			}
+			before := store.Clone()
+			// bind claim to containers
+			updatedClaims, err := store.ValidateResourceClaimAllocations(logger, owner.PodUID, owner.ContainerName, tc.expected)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				require.Equal(t, before.resourceClaimAllocations, store.resourceClaimAllocations, "failed validation must not change any claim")
+			} else {
+				require.NoError(t, err)
+				for uid := range tc.expected {
+					require.True(t, store.IsOwner(uid, owner.PodUID, owner.ContainerName))
+				}
+			}
+			require.ElementsMatch(t, tc.wantUpdatedClaims, updatedClaims)
+			require.Equal(t, before.Snapshot(), store.Snapshot())
+			// Unbind clears only updated claims, preserving prior owners and CPU reservations.
+			store.Cleanup(append(updatedClaims, "missing")...)
+			require.Equal(t, before.resourceClaimAllocations, store.resourceClaimAllocations)
+			require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2)))
+		})
+	}
+}
+
+func TestCPUAllocationCloneRetainsOwnership(t *testing.T) {
+	logger := testr.New(t)
+	store := newTestCPUAllocation(logger, cpuset.New(0, 1, 2), cpuset.New())
+	requirePreparedAllocation(t, logger, store, "a", cpuset.New(0))
+	requirePreparedAllocation(t, logger, store, "b", cpuset.New(1))
+	_, err := store.ValidateResourceClaimAllocations(logger, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
+	require.NoError(t, err)
+	require.True(t, store.IsOwner("a", "pod", "app"))
+	require.False(t, store.IsOwner("b", "pod", "app"))
+
+	clone := store.Clone()
+	// mirror checks done on the original to make sure they agree
+	require.True(t, clone.IsOwner("a", "pod", "app"))
+	require.False(t, clone.IsOwner("b", "pod", "app"))
+	require.Equal(t, store.Snapshot(), clone.Snapshot())
+	// unbind
+	clone.Cleanup("a")
+	// rebind, now succeeds
+	_, err = clone.ValidateResourceClaimAllocations(logger, "other", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
+	require.NoError(t, err)
+	clone.RemoveResourceClaimAllocation(logger, "b")
+	// rebound clone
+	require.True(t, clone.IsOwner("a", "other", "app"))
+	require.True(t, clone.GetSharedCPUs().Equals(cpuset.New(1, 2)))
+
+	// verify clone mutations didn't affect the original
+	require.True(t, store.IsOwner("a", "pod", "app"))
+	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2)))
 }
 
 func TestNewCPUAllocation(t *testing.T) {

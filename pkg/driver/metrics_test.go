@@ -51,7 +51,6 @@ func newMetricsTestDriverWithCPUInfos(t *testing.T, cpuInfos []cpuinfo.CPUInfo) 
 
 	reg := prometheus.NewRegistry()
 	recorder := cpumetrics.New(reg)
-	cpuStore := store.NewCPUAllocation(topo, cpuset.New())
 	driver := &CPUDriver{
 		driverName: testDriverName,
 		topology: deviceTopology{
@@ -68,8 +67,7 @@ func newMetricsTestDriverWithCPUInfos(t *testing.T, cpuInfos []cpuinfo.CPUInfo) 
 			},
 		},
 		podConfigStore:     store.NewPodConfig(),
-		cpuAllocationStore: cpuStore,
-		claimTracker:       store.NewClaimTracker(),
+		cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
 		cdiMgr:             newMockCdiMgr(),
 		metrics:            recorder,
 	}

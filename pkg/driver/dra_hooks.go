@@ -426,7 +426,6 @@ func (cp *CPUDriver) unprepareResourceClaim(ctx context.Context, logger logr.Log
 		return err
 	}
 	cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claim.UID)
-	cp.claimTracker.Cleanup(claim.UID)
 	cp.refreshAllocationMetrics()
 	// TODO(#279): Update existing shared containers here once all supported runtimes can
 	// safely process unsolicited NRI UpdateContainers calls. Until then, each container
