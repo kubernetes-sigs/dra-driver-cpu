@@ -129,7 +129,6 @@ type CPUDriver struct {
 	topology                deviceTopology
 	cpuDeviceMode           string
 	cpuDeviceGroupBy        string
-	claimTracker            *store.ClaimTracker
 	pcieRootMapper          *store.PCIeRootMapper
 	devicesPerResourceSlice int
 	metrics                 Recorder
@@ -222,7 +221,6 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		},
 		cpuDeviceMode:           config.CPUDeviceMode,
 		cpuDeviceGroupBy:        config.CPUDeviceGroupBy,
-		claimTracker:            store.NewClaimTracker(),
 		pcieRootMapper:          store.NewPCIeRootMapper(),
 		devicesPerResourceSlice: config.DevicesPerResourceSlice(),
 		metrics:                 metricsRecorder,
