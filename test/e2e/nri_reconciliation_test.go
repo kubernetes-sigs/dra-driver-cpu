@@ -37,9 +37,8 @@ import (
 )
 
 const (
-	daemonSetNamespaceRule = "kube-system"
-	pollIntervalRule       = 2 * time.Second
-	pollTimeoutRule        = 2 * time.Minute
+	pollIntervalRule = 2 * time.Second
+	pollTimeoutRule  = 2 * time.Minute
 )
 
 var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
@@ -75,11 +74,11 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 		ginkgo.DeferCleanup(infraFxt.Teardown)
 
 		ginkgo.By("getting the daemonset configuration")
-		orgDaemonSet, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Get(ctx, "dracpu", metav1.GetOptions{})
+		orgDaemonSet, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, "dracpu", metav1.GetOptions{})
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get dracpu daemonset")
 		gomega.Expect(orgDaemonSet.Spec.Template.Spec.Containers).ToNot(gomega.BeEmpty(), "no containers in dracpu daemonset")
 
-		cfgValues, err := getDriverConfigValues(ctx, rootFxt.K8SClientset, daemonSetNamespaceRule, orgDaemonSet)
+		cfgValues, err := getDriverConfigValues(ctx, rootFxt.K8SClientset, daemonSetNamespace, orgDaemonSet)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot read dracpu driver config values")
 		cpuDeviceMode = cfgValues.CPUDeviceMode
 		groupBy = cfgValues.GroupBy
@@ -136,19 +135,19 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 		ginkgo.DeferCleanup(func(ctx context.Context) {
 			ginkgo.By("Restoring NRI plugin DaemonSet")
 			gomega.Eventually(func(g gomega.Gomega) {
-				ds, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Get(ctx, "dracpu", metav1.GetOptions{})
+				ds, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, "dracpu", metav1.GetOptions{})
 				if err != nil {
 					return
 				}
 				ds.Spec = orgDaemonSet.Spec
-				_, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Update(ctx, ds, metav1.UpdateOptions{})
+				_, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Update(ctx, ds, metav1.UpdateOptions{})
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 			}, pollTimeoutRule, pollIntervalRule).Should(gomega.Succeed())
 		})
 
 		gomega.Eventually(func(g gomega.Gomega) {
 			// Modify DaemonSet to exclude target node
-			ds, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Get(ctx, "dracpu", metav1.GetOptions{})
+			ds, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, "dracpu", metav1.GetOptions{})
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			req := v1.NodeSelectorRequirement{
@@ -177,7 +176,7 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 					terms[i].MatchExpressions = append(terms[i].MatchExpressions, req)
 				}
 			}
-			_, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Update(ctx, ds, metav1.UpdateOptions{})
+			_, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Update(ctx, ds, metav1.UpdateOptions{})
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 		}, pollTimeoutRule, pollIntervalRule).Should(gomega.Succeed(), "failed to update DaemonSet affinity")
 
@@ -214,10 +213,10 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 
 		ginkgo.By("Bringing up the cpu dra driver on target node")
 		gomega.Eventually(func(g gomega.Gomega) {
-			ds, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Get(ctx, "dracpu", metav1.GetOptions{})
+			ds, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, "dracpu", metav1.GetOptions{})
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			ds.Spec = orgDaemonSet.Spec
-			_, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespaceRule).Update(ctx, ds, metav1.UpdateOptions{})
+			_, err = rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Update(ctx, ds, metav1.UpdateOptions{})
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 		}, pollTimeoutRule, pollIntervalRule).Should(gomega.Succeed(), "failed to restore DaemonSet spec")
 

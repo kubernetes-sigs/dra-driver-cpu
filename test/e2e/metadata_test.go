@@ -87,10 +87,10 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 		restConfig, err = e2eclient.NewK8SConfig()
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create Kubernetes config")
 
-		daemonSet, err := rootFxt.K8SClientset.AppsV1().DaemonSets("kube-system").Get(ctx, "dracpu", metav1.GetOptions{})
+		daemonSet, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, "dracpu", metav1.GetOptions{})
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get dracpu daemonset")
 		gomega.Expect(daemonSet.Spec.Template.Spec.Containers).ToNot(gomega.BeEmpty())
-		cfgValues, err := getDriverConfigValues(ctx, rootFxt.K8SClientset, "kube-system", daemonSet)
+		cfgValues, err := getDriverConfigValues(ctx, rootFxt.K8SClientset, daemonSetNamespace, daemonSet)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot read driver config values")
 		cpuDeviceMode = cfgValues.CPUDeviceMode
 		groupBy = cfgValues.GroupBy
