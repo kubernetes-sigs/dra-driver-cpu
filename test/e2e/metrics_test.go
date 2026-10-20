@@ -345,7 +345,7 @@ func discoverAvailableCPUs(ctx context.Context, fxt *fixture.Fixture, nodeName, 
 }
 
 func getDriverRawMetrics(ctx context.Context, fxt *fixture.Fixture, nodeName string) (string, error) {
-	dracpuPod, err := e2epod.GetDRACPUPod(ctx, fxt.K8SClientset, nodeName)
+	dracpuPod, err := e2epod.GetDRACPUPod(ctx, fxt.K8SClientset, nodeName, daemonSetNamespace)
 	if err != nil {
 		return "", err
 	}
