@@ -182,12 +182,12 @@ func Identify(pod *v1.Pod) string {
 	return pod.Namespace + "/" + pod.Name + "@" + pod.Spec.NodeName
 }
 
-func GetDRACPUPod(ctx context.Context, cs kubernetes.Interface, nodeName string) (*v1.Pod, error) {
-	const (
-		// TODO: these should be common constants or introspected
+func GetDRACPUPod(ctx context.Context, cs kubernetes.Interface, nodeName, dracpuNamespace string) (*v1.Pod, error) {
+	if dracpuNamespace == "" {
 		dracpuNamespace = "kube-system"
-		dracpuName      = "dracpu"
-	)
+	}
+	// TODO: dracpuName should be a common constant or introspected
+	const dracpuName = "dracpu"
 
 	daemonSet, err := cs.AppsV1().DaemonSets(dracpuNamespace).Get(ctx, dracpuName, metav1.GetOptions{})
 	if err != nil {
