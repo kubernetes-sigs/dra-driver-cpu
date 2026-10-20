@@ -27,7 +27,6 @@ import (
 	e2epod "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/pod"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/yaml"
 )
@@ -66,13 +65,9 @@ var _ = ginkgo.Describe("sysfs overlay", ginkgo.Ordered, func() {
 		fxt, err = fixture.ForGinkgo()
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create fixture")
 
-		daemonSet, err := fxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).
-			Get(ctx, "dracpu", metav1.GetOptions{})
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get dracpu daemonset")
-		gomega.Expect(daemonSet.Spec.Template.Spec.Containers).NotTo(gomega.BeEmpty())
-		overlayPath, _ = findArgInContainer(&daemonSet.Spec.Template.Spec.Containers[0], argSysFSOverlay)
+		overlayPath = getDriverConfig(ctx, fxt.K8SClientset).SysFSOverlay
 		gomega.Expect(overlayPath).NotTo(gomega.BeEmpty(),
-			"overlay topology expectations are set, but the driver has no %s argument", argSysFSOverlay)
+			"overlay topology expectations are set, but the driver has no sysfs overlay configured")
 
 		restConfig, err = e2eclient.NewK8SConfig()
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create Kubernetes config")

@@ -63,11 +63,11 @@ const (
 	argCPUDeviceMode          = "--cpu-device-mode="
 	argGroupBy                = "--group-by="
 	argAllocator              = "--allocator="
+	argSysFSOverlay           = "--sysfs-overlay="
 	defaultDaemonSetNamespace = "kube-system"
 	daemonSetLabel            = "app=dracpu"
 	driverPodPollInterval     = 2 * time.Second
 	driverPodPollTimeout      = 2 * time.Minute
-	argSysFSOverlay           = "--sysfs-overlay="
 )
 
 var daemonSetNamespace = getEnvDaemonSetNamespace()
@@ -112,12 +112,26 @@ func waitForRunningDriverPods(ctx context.Context, client kubernetes.Interface) 
 	return pods
 }
 
+func getDriverPod(ctx context.Context, client kubernetes.Interface, nodeName string) (*v1.Pod, error) {
+	pods, err := client.CoreV1().Pods(daemonSetNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: daemonSetLabel,
+		FieldSelector: "spec.nodeName=" + nodeName,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(pods.Items) != 1 {
+		return nil, fmt.Errorf("expected one driver pod on node %q, found %d", nodeName, len(pods.Items))
+	}
+	return &pods.Items[0], nil
+}
+
 func waitForReadyDriverPod(ctx context.Context, client kubernetes.Interface, nodeName string) *v1.Pod {
 	ginkgo.GinkgoHelper()
 
 	var driverPod *v1.Pod
 	gomega.Eventually(func() error {
-		candidate, err := e2epod.GetDRACPUPod(ctx, client, nodeName)
+		candidate, err := getDriverPod(ctx, client, nodeName)
 		if err != nil {
 			return err
 		}
@@ -425,6 +439,7 @@ type driverConfigValues struct {
 	GroupBy                               string `json:"groupBy,omitempty"`
 	Allocator                             string `json:"allocator,omitempty"`
 	ReservedCPUs                          string `json:"reservedCPUs,omitempty"`
+	SysFSOverlay                          string `json:"sysfsOverlay,omitempty"`
 	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping,omitempty"`
 }
 
@@ -454,6 +469,9 @@ func getDriverConfigValues(ctx context.Context, client kubernetes.Interface, nam
 	}
 	if val, ok := findArgInContainer(cnt, argReservedCPUs); ok {
 		values.ReservedCPUs = val
+	}
+	if val, ok := findArgInContainer(cnt, argSysFSOverlay); ok {
+		values.SysFSOverlay = val
 	}
 	return values, nil
 }

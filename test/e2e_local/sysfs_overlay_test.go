@@ -30,7 +30,7 @@ import (
 )
 
 var _ = ginkgo.Describe("[Local] dracpu-gatherinfo with HOST_ROOT and sysfs overlay", func() {
-	ginkgo.It("should read the base topology and apply overlay values", func() {
+	ginkgo.DescribeTable("should read the base topology and apply overlay values", func(useConfigFile bool) {
 		hostRoot := ginkgo.GinkgoT().TempDir()
 		overlayPath := filepath.Join(ginkgo.GinkgoT().TempDir(), "sysfs-overlay.yaml")
 
@@ -51,9 +51,13 @@ var _ = ginkgo.Describe("[Local] dracpu-gatherinfo with HOST_ROOT and sysfs over
 `))
 
 		writeLocalTestFile(filepath.Join(hostRoot, "proc/42/comm"), []byte("dracpu\n"))
-		writeLocalTestFile(filepath.Join(hostRoot, "proc/42/cmdline"), []byte(
-			"/dracpu\x00--cpu-device-mode=grouped\x00--group-by=numanode\x00--sysfs-overlay="+overlayPath+"\x00",
-		))
+		driverArgs := "/dracpu\x00--cpu-device-mode=grouped\x00--group-by=numanode\x00--sysfs-overlay=" + overlayPath + "\x00"
+		if useConfigFile {
+			configPath := filepath.Join(ginkgo.GinkgoT().TempDir(), "config.yaml")
+			writeLocalTestFile(configPath, []byte(fmt.Sprintf("cpuDeviceMode: grouped\ngroupBy: numanode\nsysfsOverlay: %q\n", overlayPath)))
+			driverArgs = "/dracpu\x00--config=" + configPath + "\x00"
+		}
+		writeLocalTestFile(filepath.Join(hostRoot, "proc/42/cmdline"), []byte(driverArgs))
 		gomega.Expect(os.Symlink("/", filepath.Join(hostRoot, "proc/42/root"))).To(gomega.Succeed())
 
 		gatherInfoPath := filepath.Join(ginkgo.GinkgoT().TempDir(), "dracpu-gatherinfo")
@@ -82,7 +86,10 @@ var _ = ginkgo.Describe("[Local] dracpu-gatherinfo with HOST_ROOT and sysfs over
 		gomega.Expect(cpu.CoreID).To(gomega.Equal(0))
 		gomega.Expect(cpu.NUMANodeID).To(gomega.Equal(0))
 		gomega.Expect(cpu.UncoreCacheID).To(gomega.Equal(0))
-	})
+	},
+		ginkgo.Entry("with driver CLI flags", false),
+		ginkgo.Entry("with a driver config file", true),
+	)
 })
 
 func writeLocalTestFile(name string, data []byte) {

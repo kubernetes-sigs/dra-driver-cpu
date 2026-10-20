@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	"github.com/onsi/ginkgo/v2"
@@ -55,9 +56,11 @@ var _ = ginkgo.Describe("dra-driver-cpu HTTP health endpoints", ginkgo.Ordered, 
 					healthzPath, pod.Name, pod.Spec.NodeName))
 
 				gomega.Eventually(func(g gomega.Gomega) {
+					requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+					defer cancel()
 					body, err := fxt.K8SClientset.CoreV1().Pods(daemonSetNamespace).
 						ProxyGet("http", pod.Name, strconv.Itoa(driverHTTPPort), healthzPath, nil).
-						DoRaw(ctx)
+						DoRaw(requestCtx)
 					g.Expect(err).NotTo(gomega.HaveOccurred(),
 						"GET %s through the pod proxy failed for pod %q on node %q; response body: %q",
 						healthzPath, pod.Name, pod.Spec.NodeName, body)

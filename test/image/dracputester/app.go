@@ -30,7 +30,6 @@ import (
 
 	"github.com/go-logr/stdr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
-	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"k8s.io/utils/cpuset"
 )
@@ -48,7 +47,11 @@ func cpuSetPath() string {
 }
 
 func cpuSet(sfs fs.FS) (cpuset.CPUSet, error) {
-	data, err := fs.ReadFile(sfs, cpuSetPath())
+	return readCPUSet(sfs, cpuSetPath())
+}
+
+func readCPUSet(sfs fs.FS, name string) (cpuset.CPUSet, error) {
+	data, err := fs.ReadFile(sfs, name)
 	if err != nil {
 		return cpuset.New(), err
 	}
@@ -105,8 +108,7 @@ func main() {
 		// The driver's --sysfs-overlay changes only the topology reported by the driver; it
 		// does not change the kernel's /sys/devices/system/cpu/online file. Report that file
 		// separately so tests can compare process affinity with the real kernel CPU set.
-		kernelSysFS := sysfs.Host()
-		kernelOnline, err := cpuinfo.OnlineCPUs(logger, kernelSysFS)
+		kernelOnline, err := readCPUSet(containerSysfs, "devices/system/cpu/online")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error determining online CPUs: %v\n", err)
 			os.Exit(2)
