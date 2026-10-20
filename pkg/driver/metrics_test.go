@@ -38,9 +38,14 @@ import (
 )
 
 func newMetricsTestDriver(t *testing.T) (*CPUDriver, *prometheus.Registry) {
+	return newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
+}
+
+// newMetricsTestDriverWithCPUInfos lets tests make their CPU topology explicit.
+func newMetricsTestDriverWithCPUInfos(t *testing.T, cpuInfos []cpuinfo.CPUInfo) (*CPUDriver, *prometheus.Registry) {
 	t.Helper()
 	logger := testr.New(t)
-	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
+	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
 	topo, err := mockProvider.GetCPUTopology(logger)
 	require.NoError(t, err)
 
