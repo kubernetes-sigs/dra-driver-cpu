@@ -279,6 +279,8 @@ func TestSynchronizeSerializesPrepare(t *testing.T) {
 
 func TestSynchronizeSerializesUnprepare(t *testing.T) {
 	d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
+	_, err := d.Synchronize(t.Context(), nil, nil)
+	require.NoError(t, err)
 	claim := individualMetricsClaim("pending", "cpudev0")
 	cdi := &pausedRefreshCDI{
 		mockCdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{"running": cpuset.New(1)}),
