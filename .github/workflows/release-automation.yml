@@ -21,6 +21,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
       - name: Read Version
         id: version
         run: |
@@ -42,6 +47,12 @@ jobs:
           echo "VERSION_XY=${VERSION_XY}" >> $GITHUB_ENV
 
           echo "Cutting release for version: $VERSION (Branch: $VERSION_XY Patch: $PATCH_NUM)"
+
+      - name: Check Version Refs
+        run: |
+          if ! make check-version-refs; then
+            echo "::warning::make check-version-refs reported stale or unreadable version references; see the step log"
+          fi
 
       - name: Configure Git
         run: |
