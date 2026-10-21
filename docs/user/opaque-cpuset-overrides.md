@@ -96,5 +96,5 @@ The driver allocates the specified cores directly (after validating that they ar
 > - **ResourceClaim Source**: Opaque configurations must originate from the `ResourceClaim`. Configurations defined in DeviceClass (`spec.config[]`) are not supported and will result in a validation error. Since a configuration in the `DeviceClass` applies to all claims referencing it, configuring a `cpuset` there would assign the same CPUs to multiple claims, failing allocation due to conflict between claims.
 > - **CPUSet Validation**: The driver verifies that the custom cpuset is valid for the host machine and is currently allocatable. It checks that:
 >   - The cores are part of the node's online CPUs.
->   - The cores are not reserved using the driver's `--reserved-cpus` configuration flag.
+>   - The cores are not reserved using the driver's `reservedCPUs` configuration field.
 > - **Error Handling**: If validation fails (e.g. core conflict, size mismatch, duplicate target, or offline cores), the driver returns a failure immediately in Kubelet's `PrepareResourceClaims` hook, causing pod startup to fail.

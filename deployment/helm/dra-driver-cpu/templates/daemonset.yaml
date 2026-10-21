@@ -76,9 +76,6 @@ spec:
           {{- if $effectiveDriverConfig }}
           - --config=/etc/dracpu/config.yaml
           {{- end }}
-          {{- if not $effectiveDriverConfig.hostnameOverride }}
-          - --hostname-override=$(NODE_NAME)
-          {{- end }}
         env:
           - name: NODE_NAME
             valueFrom:

@@ -19,48 +19,19 @@ package driverconfig
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"path/filepath"
 
 	"github.com/go-logr/logr"
-	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // flagToJSONKey maps CLI flag names to their Config JSON keys.
 // Add an entry here whenever a new field is added to Config and AddFlags.
 var flagToJSONKey = map[string]string{
 	"kubeconfig":        "kubeconfig",
-	"hostname-override": "hostnameOverride",
 	"bind-address":      "bindAddress",
-	"reserved-cpus":     "reservedCPUs",
-	"cpu-device-mode":   "cpuDeviceMode",
-	"group-by":          "groupBy",
 	"expose-pcie-roots": "exposePCIeRoots",
-	"sysfs-overlay":     "sysfsOverlay",
 	"kubelet-root-dir":  "kubeletRootDir",
-}
-
-// deprecatedFlags is the set of standalone CLI flags being phased out in
-// favour of the same-named driverConfig field (issue #245).
-var deprecatedFlags = sets.New(
-	"cpu-device-mode",
-	"group-by",
-	"reserved-cpus",
-	"hostname-override",
-	"sysfs-overlay",
-)
-
-// WarnDeprecatedFlags logs a warning for each deprecated flag explicitly set
-// on the command line.
-func WarnDeprecatedFlags(fs *flag.FlagSet, logger logr.Logger) {
-	fs.Visit(func(f *flag.Flag) {
-		if !deprecatedFlags.Has(f.Name) {
-			return
-		}
-		logger.Info("flag is deprecated and will be removed in a future release; prefer the equivalent driverConfig field instead",
-			"flag", f.Name, "driverConfigField", flagToJSONKey[f.Name])
-	})
 }
 
 type Source interface {
