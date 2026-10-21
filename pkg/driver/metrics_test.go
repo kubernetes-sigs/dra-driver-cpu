@@ -180,6 +180,7 @@ func metricSampleValue(metric *dto.Metric) float64 {
 func TestMetricsPrepareResults(t *testing.T) {
 	driver, reg := newMetricsTestDriver(t)
 
+	driver.hasSynchronized = true // This workload starts after initial recovery.
 	prepared, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{
 		individualMetricsClaim("claim-success", "cpudev0"),
 		{ObjectMeta: metav1.ObjectMeta{UID: "claim-error", Name: "claim-error"}},
@@ -196,6 +197,7 @@ func TestMetricsPrepareResults(t *testing.T) {
 func TestMetricsAllocationStateAndClaimSize(t *testing.T) {
 	driver, reg := newMetricsTestDriver(t)
 
+	driver.hasSynchronized = true // This workload starts after initial recovery.
 	prepared, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{
 		individualMetricsClaim("claim-alloc", "cpudev0", "cpudev1"),
 	})
@@ -245,6 +247,7 @@ func TestMetricsNRIAllocationState(t *testing.T) {
 func TestMetricsUnprepareResults(t *testing.T) {
 	driver, reg := newMetricsTestDriver(t)
 	claimUID := types.UID("claim-unprepare")
+	driver.hasSynchronized = true // This workload starts after initial recovery.
 	prepared, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{
 		individualMetricsClaim(claimUID, "cpudev0", "cpudev1"),
 	})
@@ -332,6 +335,7 @@ func TestMetricsNRISynchronizeFailure(t *testing.T) {
 func TestMetricsNRICreateContainerSuccess(t *testing.T) {
 	driver, reg := newMetricsTestDriver(t)
 
+	driver.hasSynchronized = true // This workload starts after initial recovery.
 	for _, workload := range minimalWorkloads {
 		_, err := driver.PrepareResourceClaims(context.Background(), workload.claims)
 		require.NoError(t, err)
@@ -394,6 +398,7 @@ func TestMetricsNRIStopContainer(t *testing.T) {
 	// we abuse the fact StopContainer can't fail (nor it should, in the current code shape)
 	driver, reg := newMetricsTestDriver(t)
 
+	driver.hasSynchronized = true // This workload starts after initial recovery.
 	for _, workload := range minimalWorkloads {
 		_, err := driver.PrepareResourceClaims(context.Background(), workload.claims)
 		require.NoError(t, err)
@@ -429,6 +434,7 @@ func TestMetricsNRIRemoveContainer(t *testing.T) {
 	// we abuse the fact RemoveContainer can't fail (nor it should, in the current code shape)
 	driver, reg := newMetricsTestDriver(t)
 
+	driver.hasSynchronized = true // This workload starts after initial recovery.
 	for _, workload := range minimalWorkloads {
 		_, err := driver.PrepareResourceClaims(context.Background(), workload.claims)
 		require.NoError(t, err)

@@ -74,6 +74,8 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 	logger.V(4).Info("begin: preparing resource claims", "numClaims", len(claims))
 	defer logger.V(4).Info("end: preparing resource claims", "numClaims", len(claims))
 
+	cp.waitForInitialSync(ctx, logger)
+
 	result := make(map[types.UID]kubeletplugin.PrepareResult)
 	for _, claim := range claims {
 		start := time.Now()
@@ -86,6 +88,27 @@ func (cp *CPUDriver) PrepareResourceClaims(ctx context.Context, claims []*resour
 		cp.metrics.RecordPrepare(prepareResult, time.Since(start))
 	}
 	return result, nil
+}
+
+// waitForInitialSync gives the first Synchronize after a restart a short window
+// to complete, so the common restart path prepares on the first attempt. It must
+// not hold stateMu while waiting: Synchronize needs it to close initialSync.
+// prepareResourceClaim still enforces the gate if the wait times out.
+func (cp *CPUDriver) waitForInitialSync(ctx context.Context, logger logr.Logger) {
+	cp.stateMu.Lock()
+	synced, initialSync := cp.hasSynchronized, cp.initialSync
+	cp.stateMu.Unlock()
+	if synced || initialSync == nil {
+		return
+	}
+	logger.V(2).Info("waiting for initial NRI synchronization", "timeout", cp.initialSyncWait)
+	timer := time.NewTimer(cp.initialSyncWait)
+	defer timer.Stop()
+	select {
+	case <-initialSync:
+	case <-ctx.Done():
+	case <-timer.C:
+	}
 }
 
 func getCDIDeviceName(uid types.UID) string {
@@ -237,6 +260,11 @@ func (cp *CPUDriver) prepareResourceClaim(ctx context.Context, logger logr.Logge
 	defer cp.stateMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
+	}
+	// DRA registration precedes NRI startup. Until the first recovery commits,
+	// the empty allocation store does not describe CPUs held by live containers.
+	if !cp.hasSynchronized {
+		return kubeletplugin.PrepareResult{Err: fmt.Errorf("initial NRI synchronization has not completed; retry preparation")}
 	}
 	if err := cp.checkAdminAccess(claim); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}

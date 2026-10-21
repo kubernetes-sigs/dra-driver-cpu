@@ -175,6 +175,9 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	cp.podConfigStore = podConfigStore
 	cp.cpuAllocationStore = cpuAllocationStore
 	cp.claimTracker = claimTracker
+	if !cp.hasSynchronized && cp.initialSync != nil {
+		close(cp.initialSync)
+	}
 	cp.hasSynchronized = true
 	cp.refreshAllocationMetrics()
 	logger.V(6).Info("synchronization complete", "updatesCount", len(containerUpdates))
