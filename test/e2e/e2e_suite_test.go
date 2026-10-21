@@ -56,9 +56,6 @@ func TestE2E(t *testing.T) {
 
 const (
 	driverName                = "dra.cpu"
-	argReservedCPUs           = "--reserved-cpus="
-	argCPUDeviceMode          = "--cpu-device-mode="
-	argGroupBy                = "--group-by="
 	argAllocator              = "--allocator="
 	defaultDaemonSetNamespace = "kube-system"
 	daemonSetLabel            = "app=dracpu"
@@ -351,7 +348,7 @@ type driverConfigValues struct {
 }
 
 // getDriverConfigValues reads the ConfigMap if the daemonset uses --config=, else falls back to
-// the deprecated CLI flags.
+// CLI flags.
 func getDriverConfigValues(ctx context.Context, client kubernetes.Interface, namespace string, ds *appsv1.DaemonSet) (driverConfigValues, error) {
 	var values driverConfigValues
 	cnt := &ds.Spec.Template.Spec.Containers[0]
@@ -365,17 +362,8 @@ func getDriverConfigValues(ctx context.Context, client kubernetes.Interface, nam
 		}
 		return values, nil
 	}
-	if val, ok := findArgInContainer(cnt, argCPUDeviceMode); ok {
-		values.CPUDeviceMode = val
-	}
-	if val, ok := findArgInContainer(cnt, argGroupBy); ok {
-		values.GroupBy = val
-	}
 	if val, ok := findArgInContainer(cnt, argAllocator); ok {
 		values.Allocator = val
-	}
-	if val, ok := findArgInContainer(cnt, argReservedCPUs); ok {
-		values.ReservedCPUs = val
 	}
 	return values, nil
 }

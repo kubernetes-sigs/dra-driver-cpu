@@ -147,7 +147,7 @@ func validateOpaqueCPUSet(opaqueCPUs, managedCPUs, reservedCPUs cpuset.CPUSet, t
 		unmanagedCPUs := opaqueCPUs.Difference(managedCPUs)
 		return fmt.Errorf("requested CPUs %s from preferred CPUs are not managed by this driver: %s", opaqueCPUs.String(), unmanagedCPUs.String())
 	}
-	// Verify CPUs are not part of --reserved-cpus config passed to the driver
+	// Verify CPUs are not part of the reservedCPUs config passed to the driver
 	reservedOverlap := opaqueCPUs.Intersection(reservedCPUs)
 	if reservedOverlap.Size() > 0 {
 		return fmt.Errorf("requested CPUs %s from preferred CPUs contain reserved cores: %s", opaqueCPUs.String(), reservedOverlap.String())
