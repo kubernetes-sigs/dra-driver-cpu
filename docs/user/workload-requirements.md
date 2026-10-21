@@ -12,7 +12,7 @@ How to configure your workloads depends on whether node allocatable accounting i
 Kubernetes API and feature-gate defaults vary by Kubernetes release:
 
 - [Without node allocatable accounting](#without-node-allocatable-accounting) — the driver is running without `publishNodeAllocatableResourceMapping`, or the Kubernetes feature gate is disabled.
-- [With node allocatable accounting](#with-node-allocatable-accounting) — the driver publishes mappings and the Kubernetes components support and enable the feature. The Pod status field differs between the 1.37 alpha and 1.38 beta APIs.
+- [With node allocatable accounting](#with-node-allocatable-accounting) — the driver publishes mappings and the Kubernetes components support and enable the feature. See the version-specific enablement requirements below.
 
 To check which mode is active, inspect the driver's ResourceSlices (`kubectl get resourceslice -o yaml`): the devices include a `nodeAllocatableResources` entry only when the mapping is enabled.
 
@@ -94,26 +94,18 @@ The scheduler and kubelet are unaware of claim CPUs, so you MUST configure your 
 
 The driver must be deployed with `driverConfig.publishNodeAllocatableResourceMapping: true`, and
 the `DRANodeAllocatableResources` feature gate must be enabled on the API server, scheduler, and
-kubelets. Kubernetes 1.37 and 1.38 use different API generations:
+kubelets. The defaults depend on the Kubernetes version:
 
-- **Kubernetes 1.37 alpha:** the scheduler records claim allocations in
-  `pod.status.nodeAllocatableResourceClaimStatuses`. The feature gate is alpha and disabled by
-  default.
-- **Kubernetes 1.38 beta:** the Pod status field is
-  `pod.status.additionalNodeAllocatableResources`; each entry identifies its origin through `source`
-  rather than the alpha field's `resourceClaimName`. Because of the field change, the feature
-  gate remains disabled by default with the default minimum compatibility version (1.37). Enable
-  it explicitly on all relevant components, or set their minimum compatibility version to 1.38.
-  The KEP plans to make it default-on when the default minimum compatibility version advances to
-  1.38 in Kubernetes 1.39.
+- **Kubernetes 1.37:** the feature is alpha and disabled by default.
+- **Kubernetes 1.38:** the feature is beta but remains disabled by default with the default
+  minimum compatibility version (1.37). Enable it explicitly on all relevant components, or
+  set their minimum compatibility version to 1.38. The KEP plans to make it default-on when
+  the default minimum compatibility version advances to 1.38 in Kubernetes 1.39.
 
-Pods using the 1.37 alpha field must be recreated after upgrading to 1.38; the 1.38 kubelet does
-not use the tombstoned alpha field for cgroup enforcement.
-
-The project currently uses Kubernetes `v0.37`, which corresponds to the 1.37 API. Do not assume
-the 1.38 beta status field is available until the project adopts Kubernetes `v0.38` and its
-compatibility and end-to-end tests are updated. See [KEP-5517](https://github.com/kubernetes/enhancements/blob/ae5e51243dea53ea23b53ad64752a515456a6524/keps/sig-scheduling/5517-dra-node-allocatable-resources/README.md)
-for the current graduation and compatibility details.
+Pods scheduled with the feature enabled in Kubernetes 1.37 must be recreated after upgrading
+to 1.38 to preserve accounting and cgroup enforcement. See the
+[KEP-5517 upgrade guidance](https://github.com/kubernetes/enhancements/blob/ae5e51243dea53ea23b53ad64752a515456a6524/keps/sig-scheduling/5517-dra-node-allocatable-resources/README.md#upgrade--downgrade-strategy)
+for the API changes and upgrade details.
 
 The driver then publishes a `nodeAllocatableResources` mapping on every device, and:
 
