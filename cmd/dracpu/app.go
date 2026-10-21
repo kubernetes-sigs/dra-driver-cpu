@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -161,7 +162,6 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 	// Add metrics handler
 	mux.Handle("/metrics", promhttp.Handler())
 	server := &http.Server{
-		Addr:              cfg.BindAddress,
 		Handler:           mux,
 		IdleTimeout:       120 * time.Second,
 		ReadTimeout:       10 * time.Second,
@@ -169,8 +169,13 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 		WriteTimeout:      10 * time.Second,
 	}
 
+	listener, err := net.Listen("tcp", cfg.BindAddress)
+	if err != nil {
+		return fmt.Errorf("failed to bind HTTP server to %s: %w", cfg.BindAddress, err)
+	}
+
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			logger.Error(err, "HTTP server failed")
 		}
 	}()
