@@ -36,7 +36,7 @@ The two components in detail:
 - **DRA driver**: This component is the main control loop and handles the interaction with the Kubernetes API server for Dynamic Resource Allocation.
 
   - **Topology Discovery**: It discovers the node's CPU topology, including details like sockets, NUMA nodes, cores, SMT siblings, Last-Level Cache (LLC), and core types (e.g., Performance-cores, Efficiency-cores). This is done by reading sysfs files.
-  - **ResourceSlice Publication**: Based on the `--cpu-device-mode` flag, it publishes `ResourceSlice` objects to the API server:
+  - **ResourceSlice Publication**: Based on the `cpuDeviceMode` configuration field, it publishes `ResourceSlice` objects to the API server:
     - In `grouped` mode (default), devices represent larger CPU aggregates (like NUMA nodes or sockets). These devices support consumable capacity, indicating the number of available CPUs within that group.
     - In `individual` mode (deprecated), each allocatable CPU becomes a device in the `ResourceSlice`, with attributes detailing its topology.
       This mode is not recommended for new deployments. See [this document](opaque-cpuset-overrides.md#migrate-from-individual-mode) to migrate existing deployments.

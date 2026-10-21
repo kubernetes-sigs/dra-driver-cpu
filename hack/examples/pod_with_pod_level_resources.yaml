@@ -3,7 +3,7 @@
 # including containers that do not use DRA claims (such as sidecar containers).
 #
 # Required Driver Configuration:
-#   --cpu-device-mode: "grouped" (CPUs are grouped, e.g. by NUMA node, and exposed as consumable capacity).
+#   cpuDeviceMode: "grouped" (CPUs are grouped, e.g. by NUMA node, and exposed as consumable capacity).
 #
 # Note: Unlike container-level examples, when using Pod-level resources, DRA claim requests
 # do not need to be replicated in the container's standard resource requests block. The Pod-level

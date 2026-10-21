@@ -42,24 +42,22 @@ import (
 )
 
 const (
-	driverContainer    = "dracpu"
-	pluginsVolume      = "device-plugin"
-	registryVolume     = "plugin-registry"
-	rootFlag           = "--kubelet-root-dir"
-	rootFlagShort      = "-kubelet-root-dir"
-	nodeNameEnv        = "NODE_NAME"
-	nodeNameFieldPath  = "spec.nodeName"
-	nodeNameExpandable = "$(NODE_NAME)"
-	overrideFlag       = "--hostname-override"
-	overrideFlagShort  = "-hostname-override"
+	driverContainer   = "dracpu"
+	pluginsVolume     = "device-plugin"
+	registryVolume    = "plugin-registry"
+	rootFlag          = "--kubelet-root-dir"
+	rootFlagShort     = "-kubelet-root-dir"
+	nodeNameEnv       = "NODE_NAME"
+	nodeNameFieldPath = "spec.nodeName"
+	overrideFlag      = "--hostname-override"
+	overrideFlagShort = "-hostname-override"
 )
 
 var (
-	manifest         = flag.String("manifest", "", "path to a rendered DaemonSet")
-	expectedRoot     = flag.String("expected-root", "", "the kubelet root the mounts and the flag must derive from")
-	expectFlag       = flag.Bool("expect-root-flag", false, "whether the chart should pass "+rootFlag)
-	checkOverride    = flag.Bool("check-hostname-override", false, "whether to judge the hostname-override behavior")
-	expectedOverride = flag.String("expected-override", nodeNameExpandable, "the hostname-override value the chart must pass; empty means none, default is "+nodeNameExpandable)
+	manifest      = flag.String("manifest", "", "path to a rendered DaemonSet")
+	expectedRoot  = flag.String("expected-root", "", "the kubelet root the mounts and the flag must derive from")
+	expectFlag    = flag.Bool("expect-root-flag", false, "whether the chart should pass "+rootFlag)
+	checkOverride = flag.Bool("check-hostname-override", false, "whether to judge how the node name reaches the driver")
 )
 
 // validated says the checks below ran to the end. `go test -run` exits 0 when
@@ -89,7 +87,7 @@ func TestRenderedDaemonSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	if *checkOverride {
-		if err := checkNodeNameOverride(ds, *expectedOverride); err != nil {
+		if err := checkNodeName(ds); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -258,41 +256,26 @@ func checkFlag(c *corev1.Container, root string, want bool) error {
 	return nil
 }
 
-// checkNodeNameOverride judges how the chart pins the node the driver registers
-// under. With no explicit hostnameOverride the kernel hostname may differ from
-// the Node object name (e.g. it is an IP address), which breaks ResourceSlice
-// publishing, so the chart has to pass the flag expanded from the downward API.
-// An explicitly configured override must pass through verbatim and keep the
-// precedence, as the flag would otherwise shadow the config file.
-func checkNodeNameOverride(ds *appsv1.DaemonSet, want string) error {
+// checkNodeName judges how the chart pins the node the driver registers under.
+// The kernel hostname may differ from the Node object name (e.g. it is an IP
+// address), which breaks ResourceSlice publishing, so the chart has to supply
+// the Node name through the NODE_NAME downward API env var. The removed
+// --hostname-override flag must not be passed.
+func checkNodeName(ds *appsv1.DaemonSet) error {
 	c, err := driver(ds)
 	if err != nil {
 		return err
 	}
-	var found []string
 	for _, arg := range append(append([]string{}, c.Command...), c.Args...) {
 		if name, _, _ := strings.Cut(arg, "="); name == overrideFlag || name == overrideFlagShort {
-			found = append(found, arg)
+			return fmt.Errorf("the chart passes %q, but the flag was removed", arg)
 		}
 	}
-	if want == "" {
-		if len(found) != 0 {
-			return fmt.Errorf("the chart passes %v, want no hostname-override at an explicit config", found)
-		}
-		return nil
-	}
-	if len(found) != 1 {
-		return fmt.Errorf("%d hostname-override arguments, want one", len(found))
-	}
-	if got := found[0]; got != overrideFlag+"="+want {
-		return fmt.Errorf("the chart passes %q, want %q", got, overrideFlag+"="+want)
-	}
-	return errors.Join(checkNodeNameEnv(c))
+	return checkNodeNameEnv(c)
 }
 
-// checkNodeNameEnv pins the downward API source of the expansion: the flag
-// value is a literal string to the driver, so a missing or renamed env leaves
-// the driver registering under a name the kubelet never expands.
+// checkNodeNameEnv pins the downward API source of the node name: a missing or
+// renamed env leaves the driver registering under the kernel hostname.
 func checkNodeNameEnv(c *corev1.Container) error {
 	var found []corev1.EnvVar
 	for _, e := range c.Env {

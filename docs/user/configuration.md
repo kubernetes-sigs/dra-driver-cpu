@@ -1,14 +1,14 @@
 # Configuration
 
 This page covers configuring the driver itself, the kubelet prerequisites required to run it,
-and the command-line flags currently being deprecated in favour of the configuration file.
+and the command-line flags the driver still supports.
 
 ## Driver configuration
 
 The driver supports two configuration mechanisms:
 
 - The config file - the main, preferred way to configure the driver.
-- Command-line flags — kept for a small set of important, mostly behavior altering settings and for backward compatibility. Some flags are being deprecated in favor of their config file equivalent (see [Helm: deprecated args values vs driverConfig](#helm-deprecated-args-values-vs-driverconfig) below).
+- Command-line flags — kept for a small set of important, mostly behavior altering settings and for backward compatibility. Flags removed in v0.4.0 and their config file equivalents are listed in [Command-line flags](#command-line-flags) below.
 
 If the same setting is provided both ways, the explicit command-line flag wins, so avoid mixing
 the two for the same field.
@@ -112,6 +112,14 @@ on - is configured through other Helm values, not through this file.
 
 - Path to a kubeconfig file (for out-of-cluster use).
 
+`sysfsOverlay` (string)
+
+- Path, inside the driver container, to a YAML file that overlays the sysfs topology the
+  driver discovers. Use it for incomplete or synthetic topology, e.g. Docker Desktop for
+  macOS. The file must be mounted into the Pod; see the
+  [sysfs overlay example](../../hack/examples/sysfs-overlay/README.md) for the file format
+  and mounts.
+
 `publishNodeAllocatableResourceMapping` (bool, default: `false`)
 
 - Publish `nodeAllocatableResources` mappings in ResourceSlice devices, so the scheduler
@@ -172,18 +180,19 @@ never chart values, so they are rejected rather than ignored.
 **NOTE:** Command-line flags are kept mainly for backward compatibility. Prefer the
 [configuration file](#configuration-file) above for new deployments.
 
-`--cpu-device-mode`, `--group-by`, `--reserved-cpus`, `--hostname-override`, `--sysfs-overlay`
-are deprecated in favour of their config file equivalents and will be removed in a future
-release ([issue #245](https://github.com/kubernetes-sigs/dra-driver-cpu/issues/245)). Each is
-marked as deprecated in `--help`, and passing one explicitly logs a startup warning.
+`--cpu-device-mode`, `--group-by`, `--reserved-cpus`, `--hostname-override` and
+`--sysfs-overlay` were removed in v0.4.0
+([issue #281](https://github.com/kubernetes-sigs/dra-driver-cpu/issues/281)); the driver
+now rejects them as unknown flags. Set the config file equivalents instead:
 
 - `--cpu-device-mode` → `cpuDeviceMode`
 - `--group-by` → `groupBy`
 - `--reserved-cpus` → `reservedCPUs`
-- `--hostname-override` → `hostnameOverride`
+- `--hostname-override` → `hostnameOverride` (when unset, the driver uses the `NODE_NAME`
+  environment variable, which the Helm chart sets from the downward API)
 - `--sysfs-overlay` → `sysfsOverlay`
 
-The remaining flags aren't part of that deprecation:
+The remaining flags are still supported:
 
 - `--config`: path to the config file described above.
 - `--kubeconfig`: path to a kubeconfig file, for out-of-cluster use. Also settable via the `kubeconfig` config field.
