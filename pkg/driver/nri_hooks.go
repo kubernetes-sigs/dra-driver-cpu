@@ -127,7 +127,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				}
 				// Synchronize restores an allocation that already exists in the runtime;
 				// the shared-pool guard applies only to new reservations.
-				if err := allocationState.ReserveResourceClaimAllocation(caLogger, uid, cpus, false); err != nil {
+				if err := allocationState.Reserve(caLogger, uid, cpus, false); err != nil {
 					return nil, err
 				}
 
@@ -139,7 +139,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			if len(validatedClaimAllocations) == 0 {
 				state = store.NewContainerState(container.GetName(), containerUID)
 			} else {
-				if _, err := allocationState.ValidateResourceClaimAllocations(cLogger, types.UID(pod.Uid), container.Name, validatedClaimAllocations); err != nil {
+				if _, err := allocationState.Bind(cLogger, types.UID(pod.Uid), container.Name, validatedClaimAllocations); err != nil {
 					return nil, err
 				}
 				cLogger.V(2).Info("found guaranteed CPUs", "cpus", allGuaranteedCPUs.String())
@@ -309,7 +309,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 			guaranteedCPUs = guaranteedCPUs.Union(cpus)
 			claimUIDs = append(claimUIDs, uid)
 		}
-		newOwners, err := cp.allocationState.ValidateResourceClaimAllocations(logger, podUID, ctr.Name, claimAllocations)
+		newOwners, err := cp.allocationState.Bind(logger, podUID, ctr.Name, claimAllocations)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -324,7 +324,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		if len(newOwners) > 0 {
 			updates, err = sharedContainerUpdatesFor(logger, cp.allocationState, cp.podState, containerId)
 			if err != nil {
-				cp.allocationState.Cleanup(newOwners...)
+				cp.allocationState.Unbind(newOwners...)
 				return nil, nil, err
 			}
 		}

@@ -58,6 +58,7 @@ type claimAllocation struct {
 	owner OwnerIdent
 }
 
+// Acquire returns an owned copy if the allocation has no owner.
 func (ca claimAllocation) Acquire(owner OwnerIdent) (claimAllocation, bool) {
 	if !ca.owner.Vacant() {
 		return claimAllocation{}, false
@@ -68,6 +69,7 @@ func (ca claimAllocation) Acquire(owner OwnerIdent) (claimAllocation, bool) {
 	}, true
 }
 
+// Release returns a copy without ownership, retaining its CPUs.
 func (ca claimAllocation) Release() claimAllocation {
 	return claimAllocation{
 		cpus: ca.cpus.Clone(),
@@ -119,11 +121,11 @@ func NewAllocationState(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CP
 	}
 }
 
-// ReserveResourceClaimAllocation records a prepared claim. Its CPUs remain unavailable
+// Reserve records a prepared claim. Its CPUs remain unavailable
 // to shared containers and other exclusive claims until Unprepare. When shared
 // containers are present, the reservation must leave at least one CPU in the
 // shared pool because NRI cannot represent an empty CPUSet.
-func (s *AllocationState) ReserveResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet, hasSharedContainers bool) error {
+func (s *AllocationState) Reserve(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet, hasSharedContainers bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if allocation, ok := s.resourceClaimAllocations[claimUID]; ok {
@@ -147,12 +149,10 @@ func (s *AllocationState) ReserveResourceClaimAllocation(logger logr.Logger, cla
 	return nil
 }
 
-func (s *AllocationState) Cleanup(claimUIDs ...types.UID) {
+func (s *AllocationState) Unbind(claimUIDs ...types.UID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, claimUID := range claimUIDs {
-		// disown existing allocations.
-		// The cpuset partitioning has is bound to the DRA resource claim and must keep the same lifecycle.
 		if allocation, ok := s.resourceClaimAllocations[claimUID]; ok {
 			s.resourceClaimAllocations[claimUID] = allocation.Release()
 		}
@@ -172,8 +172,9 @@ func (s *AllocationState) IsOwner(claimUID types.UID, podUID types.UID, containe
 	return info.owner.Equal(podUID, containerName)
 }
 
-// ValidateResourceClaimAllocations verifies that a container's claims match prepared allocations.
-func (s *AllocationState) ValidateResourceClaimAllocations(logger logr.Logger, podUID types.UID, containerName string, expected map[types.UID]cpuset.CPUSet) ([]types.UID, error) {
+// Bind validates prepared allocations and atomically binds them to a container.
+// It returns only newly bound claims so callers can roll back their ownership.
+func (s *AllocationState) Bind(logger logr.Logger, podUID types.UID, containerName string, expected map[types.UID]cpuset.CPUSet) ([]types.UID, error) {
 	if len(expected) == 0 {
 		return nil, errors.New("no claims to bind")
 	}
@@ -212,8 +213,8 @@ func (s *AllocationState) ValidateResourceClaimAllocations(logger logr.Logger, p
 	return newOwners, nil
 }
 
-// RemoveResourceClaimAllocation removes a resource claim allocation from the store.
-func (s *AllocationState) RemoveResourceClaimAllocation(logger logr.Logger, claimUID types.UID) {
+// Release removes a prepared claim, releasing its CPUs and ownership.
+func (s *AllocationState) Release(logger logr.Logger, claimUID types.UID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.resourceClaimAllocations[claimUID]; ok {
