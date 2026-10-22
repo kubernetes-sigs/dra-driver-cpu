@@ -85,8 +85,8 @@ func (ca claimAllocation) Clone() claimAllocation {
 	}
 }
 
-// CPUAllocation is the single source of truth for CPU allocations.
-type CPUAllocation struct {
+// AllocationState is the single source of truth for CPU allocations.
+type AllocationState struct {
 	mu                       sync.RWMutex
 	availableCPUs            cpuset.CPUSet
 	reservedCPUs             cpuset.CPUSet
@@ -102,8 +102,8 @@ type AllocationSnapshot struct {
 	ActiveResourceClaims int
 }
 
-// NewCPUAllocation creates a new CPUAllocation.
-func NewCPUAllocation(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUSet) *CPUAllocation {
+// NewAllocationState creates a new AllocationState.
+func NewAllocationState(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUSet) *AllocationState {
 	cpuIDs := []int{}
 	for cpuID := range cpuTopology.CPUDetails {
 		cpuIDs = append(cpuIDs, cpuID)
@@ -111,7 +111,7 @@ func NewCPUAllocation(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUS
 	allCPUsSet := cpuset.New(cpuIDs...)
 	availableCPUs := allCPUsSet.Difference(reservedCPUs)
 
-	return &CPUAllocation{
+	return &AllocationState{
 		availableCPUs:            availableCPUs,
 		reservedCPUs:             reservedCPUs,
 		preparedCPUs:             cpuset.New(),
@@ -123,7 +123,7 @@ func NewCPUAllocation(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUS
 // to shared containers and other exclusive claims until Unprepare. When shared
 // containers are present, the reservation must leave at least one CPU in the
 // shared pool because NRI cannot represent an empty CPUSet.
-func (s *CPUAllocation) ReserveResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet, hasSharedContainers bool) error {
+func (s *AllocationState) ReserveResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet, hasSharedContainers bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if allocation, ok := s.resourceClaimAllocations[claimUID]; ok {
@@ -147,7 +147,7 @@ func (s *CPUAllocation) ReserveResourceClaimAllocation(logger logr.Logger, claim
 	return nil
 }
 
-func (s *CPUAllocation) Cleanup(claimUIDs ...types.UID) {
+func (s *AllocationState) Cleanup(claimUIDs ...types.UID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, claimUID := range claimUIDs {
@@ -159,7 +159,7 @@ func (s *CPUAllocation) Cleanup(claimUIDs ...types.UID) {
 	}
 }
 
-func (s *CPUAllocation) IsOwner(claimUID types.UID, podUID types.UID, containerName string) bool {
+func (s *AllocationState) IsOwner(claimUID types.UID, podUID types.UID, containerName string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	info, found := s.resourceClaimAllocations[claimUID]
@@ -173,7 +173,7 @@ func (s *CPUAllocation) IsOwner(claimUID types.UID, podUID types.UID, containerN
 }
 
 // ValidateResourceClaimAllocations verifies that a container's claims match prepared allocations.
-func (s *CPUAllocation) ValidateResourceClaimAllocations(logger logr.Logger, podUID types.UID, containerName string, expected map[types.UID]cpuset.CPUSet) ([]types.UID, error) {
+func (s *AllocationState) ValidateResourceClaimAllocations(logger logr.Logger, podUID types.UID, containerName string, expected map[types.UID]cpuset.CPUSet) ([]types.UID, error) {
 	if len(expected) == 0 {
 		return nil, errors.New("no claims to bind")
 	}
@@ -213,7 +213,7 @@ func (s *CPUAllocation) ValidateResourceClaimAllocations(logger logr.Logger, pod
 }
 
 // RemoveResourceClaimAllocation removes a resource claim allocation from the store.
-func (s *CPUAllocation) RemoveResourceClaimAllocation(logger logr.Logger, claimUID types.UID) {
+func (s *AllocationState) RemoveResourceClaimAllocation(logger logr.Logger, claimUID types.UID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.resourceClaimAllocations[claimUID]; ok {
@@ -222,7 +222,7 @@ func (s *CPUAllocation) RemoveResourceClaimAllocation(logger logr.Logger, claimU
 	}
 }
 
-func (s *CPUAllocation) removeLocked(claimUID types.UID) {
+func (s *AllocationState) removeLocked(claimUID types.UID) {
 	allocation, ok := s.resourceClaimAllocations[claimUID]
 	if !ok {
 		return
@@ -232,14 +232,14 @@ func (s *CPUAllocation) removeLocked(claimUID types.UID) {
 }
 
 // GetSharedCPUs returns CPUs available to shared containers.
-func (s *CPUAllocation) GetSharedCPUs() cpuset.CPUSet {
+func (s *AllocationState) GetSharedCPUs() cpuset.CPUSet {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.availableCPUs.Difference(s.preparedCPUs)
 }
 
 // GetResourceClaimAllocation returns the cpuset for a given resource claim.
-func (s *CPUAllocation) GetResourceClaimAllocation(claimUID types.UID) (cpuset.CPUSet, bool) {
+func (s *AllocationState) GetResourceClaimAllocation(claimUID types.UID) (cpuset.CPUSet, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	allocation, ok := s.resourceClaimAllocations[claimUID]
@@ -247,21 +247,21 @@ func (s *CPUAllocation) GetResourceClaimAllocation(claimUID types.UID) (cpuset.C
 }
 
 // GetReservedCPUs returns the set of reserved CPUs.
-func (s *CPUAllocation) GetReservedCPUs() cpuset.CPUSet {
+func (s *AllocationState) GetReservedCPUs() cpuset.CPUSet {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.reservedCPUs
 }
 
 // GetPreparedCPUs returns the CPUs reserved for prepared claims.
-func (s *CPUAllocation) GetPreparedCPUs() cpuset.CPUSet {
+func (s *AllocationState) GetPreparedCPUs() cpuset.CPUSet {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.preparedCPUs
 }
 
 // Snapshot returns a point-in-time summary of CPU allocation state.
-func (s *CPUAllocation) Snapshot() AllocationSnapshot {
+func (s *AllocationState) Snapshot() AllocationSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return AllocationSnapshot{
@@ -273,7 +273,7 @@ func (s *CPUAllocation) Snapshot() AllocationSnapshot {
 }
 
 // Clone copies allocation state without sharing maps or locks.
-func (s *CPUAllocation) Clone() *CPUAllocation {
+func (s *AllocationState) Clone() *AllocationState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	allocations := make(map[types.UID]claimAllocation, len(s.resourceClaimAllocations))
@@ -281,7 +281,7 @@ func (s *CPUAllocation) Clone() *CPUAllocation {
 		allocations[uid] = info.Clone()
 	}
 
-	return &CPUAllocation{
+	return &AllocationState{
 		availableCPUs:            s.availableCPUs.Clone(),
 		reservedCPUs:             s.reservedCPUs.Clone(),
 		preparedCPUs:             s.preparedCPUs.Clone(),

@@ -123,8 +123,8 @@ type CPUDriver struct {
 	kubeClient              kubernetes.Interface
 	draPlugin               KubeletPlugin
 	nriPlugin               stub.Stub
-	podConfigStore          *store.PodConfig
-	cpuAllocationStore      *store.CPUAllocation
+	podState                *store.PodState
+	allocationState         *store.AllocationState
 	cdiMgr                  cdiManager
 	topology                deviceTopology
 	cpuDeviceMode           string
@@ -244,9 +244,9 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		}
 	}
 
-	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.topology.CPUTopology, config.ReservedCPUs)
+	plugin.allocationState = store.NewAllocationState(plugin.topology.CPUTopology, config.ReservedCPUs)
 	plugin.refreshAllocationMetrics()
-	plugin.podConfigStore = store.NewPodConfig()
+	plugin.podState = store.NewPodState()
 
 	exposeExtAttrs := false
 	logger.Info("creating CPU allocator", "method", config.Allocator)
