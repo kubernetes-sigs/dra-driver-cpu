@@ -16,7 +16,11 @@ limitations under the License.
 
 package driverconfig
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
+)
 
 func TestValidate(t *testing.T) {
 	for _, tc := range []struct {
@@ -27,6 +31,7 @@ func TestValidate(t *testing.T) {
 		name: "error: unknown allocator",
 		conf: Config{
 			KubeletRootDir: "/var/lib/kubelet",
+			CheckpointDir:  checkpoint.DefaultDirectory,
 			CPUDeviceMode:  "grouped",
 			GroupBy:        "numanode",
 			Allocator:      "other-allocator",
@@ -36,8 +41,28 @@ func TestValidate(t *testing.T) {
 		name: "error: non-external allocator in machine mode",
 		conf: Config{
 			KubeletRootDir: "/var/lib/kubelet",
+			CheckpointDir:  checkpoint.DefaultDirectory,
 			CPUDeviceMode:  "grouped",
 			GroupBy:        "machine",
+			Allocator:      "cpumanager",
+		},
+		expectedErr: true,
+	}, {
+		name: "error: missing checkpoint directory",
+		conf: Config{
+			KubeletRootDir: "/var/lib/kubelet",
+			CPUDeviceMode:  "grouped",
+			GroupBy:        "numanode",
+			Allocator:      "cpumanager",
+		},
+		expectedErr: true,
+	}, {
+		name: "error: relative checkpoint directory",
+		conf: Config{
+			KubeletRootDir: "/var/lib/kubelet",
+			CheckpointDir:  "checkpoints",
+			CPUDeviceMode:  "grouped",
+			GroupBy:        "numanode",
 			Allocator:      "cpumanager",
 		},
 		expectedErr: true,
@@ -45,6 +70,7 @@ func TestValidate(t *testing.T) {
 		name: "valid: external allocator in machine mode",
 		conf: Config{
 			KubeletRootDir: "/var/lib/kubelet",
+			CheckpointDir:  checkpoint.DefaultDirectory,
 			CPUDeviceMode:  "grouped",
 			GroupBy:        "machine",
 			Allocator:      "external",
@@ -54,6 +80,7 @@ func TestValidate(t *testing.T) {
 		name: "valid: allocator: cpumanager",
 		conf: Config{
 			KubeletRootDir: "/var/lib/kubelet",
+			CheckpointDir:  checkpoint.DefaultDirectory,
 			CPUDeviceMode:  "grouped",
 			GroupBy:        "numanode",
 			Allocator:      "cpumanager",
@@ -63,6 +90,7 @@ func TestValidate(t *testing.T) {
 		name: "valid: allocator: external",
 		conf: Config{
 			KubeletRootDir: "/var/lib/kubelet",
+			CheckpointDir:  checkpoint.DefaultDirectory,
 			CPUDeviceMode:  "grouped",
 			GroupBy:        "numanode",
 			Allocator:      "external",

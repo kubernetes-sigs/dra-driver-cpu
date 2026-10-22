@@ -223,6 +223,7 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 		PublishNodeAllocatableResourceMapping: cfg.PublishNodeAllocatableResourceMapping,
 		Metrics:                               cpumetrics.New(prometheus.DefaultRegisterer),
 		KubeletRootDir:                        cfg.KubeletRootDir,
+		CheckpointDir:                         cfg.CheckpointDir,
 		Allocator:                             cfg.Allocator,
 	}
 	driverProviders := driver.Providers{

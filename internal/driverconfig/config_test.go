@@ -29,6 +29,7 @@ import (
 	"github.com/go-logr/logr/funcr"
 	"github.com/go-logr/logr/testr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,6 +71,7 @@ groupBy: socket
 reservedCPUs: "0-3"
 sysfsOverlay: /custom/sysfs
 publishNodeAllocatableResourceMapping: true
+checkpointDir: /custom/checkpoints/
 `)
 
 	result, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
@@ -82,6 +84,17 @@ publishNodeAllocatableResourceMapping: true
 	assert.Equal(t, "0-3", result.ReservedCPUs)
 	assert.Equal(t, "/custom/sysfs", result.SysFSOverlay)
 	assert.True(t, result.PublishNodeAllocatableResourceMapping)
+	assert.Equal(t, "/custom/checkpoints", result.CheckpointDir)
+}
+
+func TestResolve_CheckpointDirIsConfigFileOnly(t *testing.T) {
+	var cfg driverconfig.Config
+	fs := newFlagSet(t, &cfg, nil)
+	require.Nil(t, fs.Lookup("checkpoint-dir"))
+
+	result, err := driverconfig.Resolve(testr.New(t), nil)
+	require.NoError(t, err)
+	assert.Equal(t, checkpoint.DefaultDirectory, result.CheckpointDir)
 }
 
 // TestResolve_CLIFlagWinsOverFile: an explicitly-passed CLI flag beats the file value.
@@ -437,6 +450,7 @@ func TestDefault(t *testing.T) {
 	// The kubelet root defaults to the standard location, so behavior is
 	// unchanged unless the kubelet --root-dir is relocated.
 	assert.Equal(t, driverconfig.DefaultKubeletRootDir, d.KubeletRootDir)
+	assert.Equal(t, checkpoint.DefaultDirectory, d.CheckpointDir)
 	// Fields with no built-in default must be zero/empty.
 	assert.Empty(t, d.Kubeconfig)
 	assert.Empty(t, d.HostnameOverride)

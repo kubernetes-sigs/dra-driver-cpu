@@ -31,6 +31,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
@@ -134,7 +135,9 @@ type CPUDriver struct {
 	metrics                 Recorder
 	health                  healthTracker
 	kubeletRootDir          string
+	checkpointDir           string
 	cpuAllocator            CPUAllocator
+	checkpointMgr           checkpoint.Manager
 }
 
 // deviceHealthEntry is the last known health of a single device.
@@ -187,6 +190,8 @@ type Config struct {
 	// driverconfig.Resolve refuses an empty or relative value, and New takes it as
 	// given rather than checking it again.
 	KubeletRootDir string
+	// CheckpointDir is the directory used by the driver's checkpoint manager.
+	CheckpointDir string
 	// PublishNodeAllocatableResourceMapping publishes KEP-5517 nodeAllocatableResources mappings in
 	// ResourceSlice devices. Requires the DRANodeAllocatableResources feature gate to be enabled in the cluster.
 	PublishNodeAllocatableResourceMapping bool
@@ -226,6 +231,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		metrics:                 metricsRecorder,
 		health:                  newHealthTracker(),
 		kubeletRootDir:          config.KubeletRootDir,
+		checkpointDir:           config.CheckpointDir,
 	}
 	topo, err := providers.EnsureCPUInfo().GetCPUTopology(logger)
 	if err != nil {
@@ -345,6 +351,12 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 		return asyncErr, fmt.Errorf("failed to create CDI manager: %w", err)
 	}
 	cp.cdiMgr = cdiMgr
+
+	checkpointMgr, err := checkpoint.NewManager(cp.checkpointDir)
+	if err != nil {
+		return asyncErr, fmt.Errorf("failed to create checkpoint manager: %w", err)
+	}
+	cp.checkpointMgr = checkpointMgr
 
 	kubeletOpts := []kubeletplugin.Option{
 		kubeletplugin.DriverName(cp.driverName),
