@@ -135,7 +135,7 @@ func TestWarmSynchronizeRejectsConflictingClaims(t *testing.T) {
 			d.cdiMgr = cdi
 			logger := testr.New(t)
 			requirePreparedResourceClaim(t, logger, d.allocationState, "a", cpuset.New(0))
-			_, err = d.allocationState.ValidateResourceClaimAllocations(logger, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
+			_, err = d.allocationState.Bind(logger, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
 			require.NoError(t, err)
 			pod := &api.PodSandbox{Id: "sandbox", Uid: "pod"}
 			app := &api.Container{Id: "app", Name: "app", PodSandboxId: pod.Id, Env: []string{"DRA_CPUSET_a=0"}}
@@ -163,7 +163,7 @@ func TestWarmSynchronizeSkipsUnknownAuthenticatedClaim(t *testing.T) {
 	d.cdiMgr = cdi
 	logger := testr.New(t)
 	requirePreparedResourceClaim(t, logger, d.allocationState, "a", cpuset.New(0))
-	_, err = d.allocationState.ValidateResourceClaimAllocations(logger, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
+	_, err = d.allocationState.Bind(logger, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
 	require.NoError(t, err)
 	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod"}
 	app := &api.Container{Id: "app", Name: "app", PodSandboxId: pod.Id, Env: []string{"DRA_CPUSET_b=1"}}
@@ -393,7 +393,7 @@ func TestWarmSynchronizeIgnoresInvalidEnvFromNonOwner(t *testing.T) {
 			results, err := d.PrepareResourceClaims(t.Context(), []*resourceapi.ResourceClaim{claim})
 			require.NoError(t, err)
 			require.NoError(t, results[claim.UID].Err)
-			_, err = d.allocationState.ValidateResourceClaimAllocations(testr.New(t), "real-pod", "app", map[types.UID]cpuset.CPUSet{claim.UID: cpuset.New(0)})
+			_, err = d.allocationState.Bind(testr.New(t), "real-pod", "app", map[types.UID]cpuset.CPUSet{claim.UID: cpuset.New(0)})
 			require.NoError(t, err)
 			if missingCDI {
 				delete(d.cdiMgr.(*mockCdiMgr).devices, getCDIDeviceName(claim.UID))

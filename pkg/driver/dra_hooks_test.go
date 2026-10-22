@@ -57,7 +57,7 @@ const (
 
 func requirePreparedResourceClaim(t testing.TB, logger logr.Logger, allocationState *store.AllocationState, claimUID types.UID, cpus cpuset.CPUSet) {
 	t.Helper()
-	require.NoError(t, allocationState.ReserveResourceClaimAllocation(logger, claimUID, cpus, false))
+	require.NoError(t, allocationState.Reserve(logger, claimUID, cpus, false))
 }
 
 // testSysFS enables full isolation and full mocking from the host filesystem.
@@ -2011,7 +2011,7 @@ func newDriverWithAllocatedClaim(t *testing.T, logger logr.Logger, claimUID type
 	require.NoError(t, err)
 	allocationState := store.NewAllocationState(topo, cpuset.New())
 	requirePreparedResourceClaim(t, logger, allocationState, claimUID, allocatedCPUs)
-	_, err = allocationState.ValidateResourceClaimAllocations(logger, "pod", "container", map[types.UID]cpuset.CPUSet{claimUID: allocatedCPUs})
+	_, err = allocationState.Bind(logger, "pod", "container", map[types.UID]cpuset.CPUSet{claimUID: allocatedCPUs})
 	require.NoError(t, err)
 
 	return &CPUDriver{
