@@ -152,7 +152,7 @@ func TestCreateContainer(t *testing.T) {
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
 				store := store.NewAllocationState(topo, cpuset.New())
-				requirePreparedResourceClaim(t, logger, store, types.UID(claimUID), cpuset.New(0, 1, 2, 3))
+				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(0, 1, 2, 3), false))
 				return store
 			}(),
 			container: newTestContainer(claimUID, "0-3"),
@@ -177,7 +177,7 @@ func TestCreateContainer(t *testing.T) {
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
 				store := store.NewAllocationState(topo, cpuset.New())
-				requirePreparedResourceClaim(t, logger, store, types.UID(claimUID), cpuset.New(0, 1, 2, 3))
+				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(0, 1, 2, 3), false))
 				return store
 			}(),
 			container: newTestContainer("", ""),
@@ -191,7 +191,7 @@ func TestCreateContainer(t *testing.T) {
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
 				allocation := store.NewAllocationState(topo, cpuset.New())
-				requirePreparedResourceClaim(t, logger, allocation, types.UID(claimUID), allCPUs)
+				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), allCPUs, false))
 				return allocation
 			}(),
 			container:             newTestContainer("", ""),
@@ -207,7 +207,7 @@ func TestCreateContainer(t *testing.T) {
 			}(),
 			allocationState: func() *store.AllocationState {
 				store := store.NewAllocationState(topo, cpuset.New())
-				requirePreparedResourceClaim(t, logger, store, types.UID(claimUID), cpuset.New(2, 3))
+				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(2, 3), false))
 				return store
 			}(),
 			container: newTestContainer(claimUID, "2-3"),
@@ -235,7 +235,7 @@ func TestCreateContainer(t *testing.T) {
 			}(),
 			allocationState: func() *store.AllocationState {
 				allocation := store.NewAllocationState(topo, cpuset.New())
-				requirePreparedResourceClaim(t, logger, allocation, types.UID(claimUID), allCPUs)
+				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), allCPUs, false))
 				return allocation
 			}(),
 			container:             newTestContainer(claimUID, "0-7"),
@@ -246,7 +246,7 @@ func TestCreateContainer(t *testing.T) {
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
 				allocation := store.NewAllocationState(topo, cpuset.New())
-				requirePreparedResourceClaim(t, logger, allocation, types.UID(claimUID), allCPUs)
+				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), allCPUs, false))
 				return allocation
 			}(),
 			container: newTestContainer(claimUID, "0-7"),
@@ -283,7 +283,7 @@ func TestCreateContainer(t *testing.T) {
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
 				store := store.NewAllocationState(topo, cpuset.New())
-				requirePreparedResourceClaim(t, logger, store, types.UID(claimUID), cpuset.New(0, 1))
+				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(0, 1), false))
 				return store
 			}(),
 			container: newTestContainer(claimUID, "0-3"),
@@ -352,7 +352,7 @@ func TestStopContainer(t *testing.T) {
 					metrics:         cpumetrics.Noop(),
 				}
 				claimUID := types.UID("claim-uid-1")
-				requirePreparedResourceClaim(t, logger, driver.allocationState, claimUID, cpuset.New(0, 1))
+				require.NoError(t, driver.allocationState.Reserve(logger, claimUID, cpuset.New(0, 1), false))
 				driver.podState.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id), claimUID))
 				driver.podState.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
 				return driver
@@ -807,7 +807,7 @@ func TestStopContainerKeepsClaimOutOfSharedPoolUntilUnprepare(t *testing.T) {
 	claimedCPUs := cpuset.New(0, 1)
 
 	allocationState := store.NewAllocationState(topo, cpuset.New())
-	requirePreparedResourceClaim(t, logger, allocationState, claimUID, claimedCPUs)
+	require.NoError(t, allocationState.Reserve(logger, claimUID, claimedCPUs, false))
 
 	driver := &CPUDriver{
 		cdiMgr:          newMockCdiMgr(),
