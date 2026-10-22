@@ -41,7 +41,9 @@ const (
 	pollTimeoutRule  = 2 * time.Minute
 )
 
-var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
+// Labeled runtime-conformance: the CRI-O lane runs only this spec, since it covers
+// CDI injection, cgroup and affinity enforcement, shared-pool exclusion and NRI recovery.
+var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.Ordered, ginkgo.ContinueOnFailure, ginkgo.Label("runtime-conformance"), func() {
 	var (
 		rootFxt           *fixture.Fixture
 		targetNode        *v1.Node
@@ -129,6 +131,9 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 		fxt.Log.Info("Pod 1 CPU allocation", "cpuAssigned", alloc1.CPUAssigned.String())
 		gomega.Expect(alloc1.CPUAssigned).To(cpusetmatchers.HaveSize(2), "Pod 1 did not get exclusive CPUs")
 		exclusiveCPUs := alloc1.CPUAssigned
+		// The runtime must agree with the driver: CDI-injected CPUs, cgroup cpuset and affinity.
+		gomega.Expect(alloc1.CPUReported).To(cpusetmatchers.Equal(exclusiveCPUs), "CDI-reported CPUs differ from the cgroup cpuset")
+		gomega.Expect(alloc1.CPUAffinity).To(cpusetmatchers.Equal(exclusiveCPUs), "Pod 1 affinity differs from the cgroup cpuset")
 
 		ginkgo.By("Stopping cpu dra driver pod on target node")
 		// Defer restoration of DaemonSet
