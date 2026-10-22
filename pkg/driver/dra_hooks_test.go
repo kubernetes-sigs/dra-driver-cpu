@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	devattr "github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
@@ -376,6 +377,7 @@ func TestPublishResources(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockPlugin := &mockKubeletPlugin{publishError: tc.publishError}
 			prov := Providers{
+				Checkpoint: checkpoint.NewNOOPManager(),
 				CPUInfo: &cpuinfo.MockCPUInfoProvider{
 					CPUInfos: tc.cpuInfos,
 					Err:      tc.cpuInfoErr,
@@ -515,6 +517,7 @@ func TestPublishResourcesGroupedModeInitializesLookupMaps(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockPlugin := &mockKubeletPlugin{}
 			prov := Providers{
+				Checkpoint: checkpoint.NewNOOPManager(),
 				CPUInfo: &cpuinfo.MockCPUInfoProvider{
 					CPUInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 				},
@@ -577,6 +580,7 @@ func TestPrepareResourceClaimsSucceedsBeforePublishResources(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			prov := Providers{
+				Checkpoint: checkpoint.NewNOOPManager(),
 				CPUInfo: &cpuinfo.MockCPUInfoProvider{
 					CPUInfos: mockCPUInfos_DualSocket_4CPUsPerSocket_HT,
 				},
@@ -610,6 +614,7 @@ func TestPrepareResourceClaims(t *testing.T) {
 	baseCPUDriver := func(t *testing.T) *CPUDriver {
 		t.Helper()
 		prov := Providers{
+			Checkpoint: checkpoint.NewNOOPManager(),
 			CPUInfo: &cpuinfo.MockCPUInfoProvider{
 				CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
 			},
@@ -841,8 +846,9 @@ func TestPrepareResourceClaimsRejectsExhaustingSharedPool(t *testing.T) {
 	newDriver := func(grouped bool) *CPUDriver {
 		t.Helper()
 		prov := Providers{
-			CPUInfo: &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT},
-			SysFS:   testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
+			Checkpoint: checkpoint.NewNOOPManager(),
+			CPUInfo:    &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT},
+			SysFS:      testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
 		}
 		conf := Config{
 			DriverName: testDriverName,
@@ -907,6 +913,7 @@ func TestPrepareResourceClaimsRejectAdminAccess(t *testing.T) {
 	baseCPUDriver := func(t *testing.T) *CPUDriver {
 		t.Helper()
 		prov := Providers{
+			Checkpoint: checkpoint.NewNOOPManager(),
 			CPUInfo: &cpuinfo.MockCPUInfoProvider{
 				CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
 			},
@@ -1170,6 +1177,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 	baseCPUDriver := func(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet) *CPUDriver {
 		t.Helper()
 		prov := Providers{
+			Checkpoint: checkpoint.NewNOOPManager(),
 			CPUInfo: &cpuinfo.MockCPUInfoProvider{
 				CPUInfos: cpuInfos,
 			},
@@ -1563,8 +1571,9 @@ func TestPrepareResourceClaimsGroupedModeRejectsInvalidCPUCapacity(t *testing.T)
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			prov := Providers{
-				CPUInfo: &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT},
-				SysFS:   testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
+				Checkpoint: checkpoint.NewNOOPManager(),
+				CPUInfo:    &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT},
+				SysFS:      testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
 			}
 			conf := Config{
 				DriverName:       testDriverName,
@@ -1607,8 +1616,9 @@ func TestPrepareResourceClaimsGroupedModeRejectsInvalidCPUCapacity(t *testing.T)
 
 func TestPrepareResourceClaimsGroupedModeIgnoresAllocationsFromOtherDrivers(t *testing.T) {
 	prov := Providers{
-		CPUInfo: &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT},
-		SysFS:   testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
+		Checkpoint: checkpoint.NewNOOPManager(),
+		CPUInfo:    &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT},
+		SysFS:      testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
 	}
 	conf := Config{
 		DriverName:       testDriverName,
@@ -1677,6 +1687,7 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockCdiMgr := newMockCdiMgr()
 			prov := Providers{
+				Checkpoint: checkpoint.NewNOOPManager(),
 				CPUInfo: &cpuinfo.MockCPUInfoProvider{
 					CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
 				},
@@ -1902,6 +1913,7 @@ func TestUnprepareResourceClaims(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			prov := Providers{
+				Checkpoint: checkpoint.NewNOOPManager(),
 				CPUInfo: &cpuinfo.MockCPUInfoProvider{
 					CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT,
 				},

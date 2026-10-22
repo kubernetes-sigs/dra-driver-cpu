@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"github.com/go-logr/logr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/cpuset"
@@ -90,6 +91,8 @@ func (ca claimAllocation) Clone() claimAllocation {
 // AllocationState is the single source of truth for CPU allocations.
 type AllocationState struct {
 	mu                       sync.RWMutex
+	checkpointMgr            checkpoint.Manager
+	dirty                    bool // flag to avoid unnecessary checkpointwrites
 	availableCPUs            cpuset.CPUSet
 	reservedCPUs             cpuset.CPUSet
 	preparedCPUs             cpuset.CPUSet
@@ -106,6 +109,10 @@ type AllocationSnapshot struct {
 
 // NewAllocationState creates a new AllocationState.
 func NewAllocationState(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUSet) *AllocationState {
+	return NewCheckpointingAllocationState(checkpoint.NewNOOPManager(), cpuTopology, reservedCPUs)
+}
+
+func NewCheckpointingAllocationState(checkpointMgr checkpoint.Manager, cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUSet) *AllocationState {
 	cpuIDs := []int{}
 	for cpuID := range cpuTopology.CPUDetails {
 		cpuIDs = append(cpuIDs, cpuID)
@@ -114,11 +121,23 @@ func NewAllocationState(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CP
 	availableCPUs := allCPUsSet.Difference(reservedCPUs)
 
 	return &AllocationState{
+		checkpointMgr:            checkpointMgr,
 		availableCPUs:            availableCPUs,
 		reservedCPUs:             reservedCPUs,
 		preparedCPUs:             cpuset.New(),
 		resourceClaimAllocations: make(map[types.UID]claimAllocation),
 	}
+}
+
+func (s *AllocationState) storeStateLocked(logger logr.Logger) {
+	if !s.dirty {
+		return // nothing to do
+	}
+	if err := s.checkpointMgr.CreateCheckpoint(allocationCheckpointName, s.checkpointLocked()); err != nil {
+		logger.Error(err, "failed to write checkpoint")
+		return
+	}
+	s.dirty = false
 }
 
 // Reserve records a prepared claim. Its CPUs remain unavailable
@@ -128,6 +147,8 @@ func NewAllocationState(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CP
 func (s *AllocationState) Reserve(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet, hasSharedContainers bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.storeStateLocked(logger)
+
 	if allocation, ok := s.resourceClaimAllocations[claimUID]; ok {
 		if allocation.cpus.Equals(cpus) {
 			return nil
@@ -146,22 +167,26 @@ func (s *AllocationState) Reserve(logger logr.Logger, claimUID types.UID, cpus c
 	}
 	s.preparedCPUs = s.preparedCPUs.Union(cpus)
 	logger.Info("reserved allocation for resource claim", "cpus", cpus.String())
+	s.dirty = true
 	return nil
 }
 
-func (s *AllocationState) Unbind(claimUIDs ...types.UID) {
+func (s *AllocationState) Unbind(logger logr.Logger, claimUIDs ...types.UID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.storeStateLocked(logger)
+
 	for _, claimUID := range claimUIDs {
 		if allocation, ok := s.resourceClaimAllocations[claimUID]; ok {
 			s.resourceClaimAllocations[claimUID] = allocation.Release()
 		}
 	}
+	s.dirty = true
 }
 
 func (s *AllocationState) IsOwner(claimUID types.UID, podUID types.UID, containerName string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	info, found := s.resourceClaimAllocations[claimUID]
 	if !found {
 		return false
@@ -185,6 +210,7 @@ func (s *AllocationState) Bind(logger logr.Logger, podUID types.UID, containerNa
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.storeStateLocked(logger)
 
 	for claimUID, cpus := range expected {
 		allocation, ok := s.resourceClaimAllocations[claimUID]
@@ -210,6 +236,7 @@ func (s *AllocationState) Bind(logger logr.Logger, podUID types.UID, containerNa
 			newOwners = append(newOwners, claimUID)
 		}
 	}
+	s.dirty = true
 	return newOwners, nil
 }
 
@@ -217,10 +244,13 @@ func (s *AllocationState) Bind(logger logr.Logger, podUID types.UID, containerNa
 func (s *AllocationState) Release(logger logr.Logger, claimUID types.UID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.storeStateLocked(logger)
+
 	if _, ok := s.resourceClaimAllocations[claimUID]; ok {
 		s.removeLocked(claimUID)
 		logger.Info("removed allocation for resource claim")
 	}
+	s.dirty = true
 }
 
 func (s *AllocationState) removeLocked(claimUID types.UID) {
@@ -283,6 +313,7 @@ func (s *AllocationState) Clone() *AllocationState {
 	}
 
 	return &AllocationState{
+		checkpointMgr:            s.checkpointMgr,
 		availableCPUs:            s.availableCPUs.Clone(),
 		reservedCPUs:             s.reservedCPUs.Clone(),
 		preparedCPUs:             s.preparedCPUs.Clone(),

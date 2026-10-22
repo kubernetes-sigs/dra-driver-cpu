@@ -29,6 +29,7 @@ import (
 // TestRunUsesConfigSysFSOverlay: run() must build the sysfs overlay from cfg, not the pre-merge driverFlags.
 func TestRunUsesConfigSysFSOverlay(t *testing.T) {
 	cfg := driverconfig.Default()
+	cfg.CheckpointDir = t.TempDir()
 	cfg.SysFSOverlay = filepath.Join(t.TempDir(), "does-not-exist.yaml")
 
 	err := run(testr.New(t), cfg)
@@ -49,6 +50,7 @@ func TestRunFailsOnHTTPBindError(t *testing.T) {
 	defer listener.Close()
 
 	cfg := driverconfig.Default()
+	cfg.CheckpointDir = t.TempDir()
 	cfg.BindAddress = listener.Addr().String()
 
 	err = run(testr.New(t), cfg)

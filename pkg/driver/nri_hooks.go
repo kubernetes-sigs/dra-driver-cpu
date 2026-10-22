@@ -324,7 +324,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		if len(newOwners) > 0 {
 			updates, err = sharedContainerUpdatesFor(logger, cp.allocationState, cp.podState, containerId)
 			if err != nil {
-				cp.allocationState.Unbind(newOwners...)
+				cp.allocationState.Unbind(logger, newOwners...)
 				return nil, nil, err
 			}
 		}

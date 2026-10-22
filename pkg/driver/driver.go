@@ -135,9 +135,7 @@ type CPUDriver struct {
 	metrics                 Recorder
 	health                  healthTracker
 	kubeletRootDir          string
-	checkpointDir           string
 	cpuAllocator            CPUAllocator
-	checkpointMgr           checkpoint.Manager
 }
 
 // deviceHealthEntry is the last known health of a single device.
@@ -156,9 +154,10 @@ type deviceTopology struct {
 
 // Providers group the interfaces the CPUDriver depends on
 type Providers struct {
-	CPUInfo   CPUInfoProvider
-	SysFS     sysfs.FS
-	K8SClient kubernetes.Interface
+	Checkpoint checkpoint.Manager
+	CPUInfo    CPUInfoProvider
+	SysFS      sysfs.FS
+	K8SClient  kubernetes.Interface
 }
 
 func (pr Providers) EnsureCPUInfo() CPUInfoProvider {
@@ -190,8 +189,6 @@ type Config struct {
 	// driverconfig.Resolve refuses an empty or relative value, and New takes it as
 	// given rather than checking it again.
 	KubeletRootDir string
-	// CheckpointDir is the directory used by the driver's checkpoint manager.
-	CheckpointDir string
 	// PublishNodeAllocatableResourceMapping publishes KEP-5517 nodeAllocatableResources mappings in
 	// ResourceSlice devices. Requires the DRANodeAllocatableResources feature gate to be enabled in the cluster.
 	PublishNodeAllocatableResourceMapping bool
@@ -231,7 +228,6 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		metrics:                 metricsRecorder,
 		health:                  newHealthTracker(),
 		kubeletRootDir:          config.KubeletRootDir,
-		checkpointDir:           config.CheckpointDir,
 	}
 	topo, err := providers.EnsureCPUInfo().GetCPUTopology(logger)
 	if err != nil {
@@ -250,7 +246,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		}
 	}
 
-	plugin.allocationState = store.NewAllocationState(plugin.topology.CPUTopology, config.ReservedCPUs)
+	plugin.allocationState = store.NewCheckpointingAllocationState(providers.Checkpoint, plugin.topology.CPUTopology, config.ReservedCPUs)
 	plugin.refreshAllocationMetrics()
 	plugin.podState = store.NewPodState()
 
@@ -351,12 +347,6 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 		return asyncErr, fmt.Errorf("failed to create CDI manager: %w", err)
 	}
 	cp.cdiMgr = cdiMgr
-
-	checkpointMgr, err := checkpoint.NewManager(cp.checkpointDir)
-	if err != nil {
-		return asyncErr, fmt.Errorf("failed to create checkpoint manager: %w", err)
-	}
-	cp.checkpointMgr = checkpointMgr
 
 	kubeletOpts := []kubeletplugin.Option{
 		kubeletplugin.DriverName(cp.driverName),
