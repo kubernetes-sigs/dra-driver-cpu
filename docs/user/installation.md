@@ -44,7 +44,10 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
 See the [Helm chart README](../../deployment/helm/dra-driver-cpu/README.md) for the full list of configuration options.
 
 Besides the driver DaemonSet, the chart installs the cluster-scoped `dra.cpu` `DeviceClass`
-that workload claims reference — verify it with `kubectl get deviceclass`.
+that workload claims reference — verify it with `kubectl get deviceclass`. The DeviceClass
+name is fixed, so a cluster that runs several releases of the chart (for example one per
+node class with a different `reservedCPUs` or `kubeletRootDir`) keeps `deviceClass.create`
+enabled in only one of them.
 
 For environments with incomplete or synthetic sysfs topology, e.g. Docker Desktop for macOS see the [sysfs overlay example](../../hack/examples/sysfs-overlay/README.md). It demonstrates how to supply an overlay through `driverConfig.sysfsOverlay`, volume mounts, and volumes.
 
