@@ -25,7 +25,7 @@ import (
 )
 
 func TestSetAndGetContainerState(t *testing.T) {
-	store := NewPodConfig()
+	store := NewPodState()
 	podUID := types.UID("pod-uid-1")
 	ctrName := "ctr-name-1"
 	state := NewContainerState(ctrName, "ctr-uid-1", types.UID("claim-uid-1"))
@@ -40,7 +40,7 @@ func TestSetAndGetContainerState(t *testing.T) {
 }
 
 func TestRemoveContainerState(t *testing.T) {
-	store := NewPodConfig()
+	store := NewPodState()
 	podUID := types.UID("pod-uid-1")
 	ctrName1 := "ctr-name-1"
 	ctrName2 := "ctr-name-2"
@@ -88,12 +88,12 @@ func TestGetSharedCPUContainerUIDs(t *testing.T) {
 
 	testCases := []struct {
 		name     string
-		setup    func(s *PodConfig)
+		setup    func(s *PodState)
 		wantUIDs []types.UID
 	}{
 		{
 			name: "some shared, some guaranteed",
-			setup: func(s *PodConfig) {
+			setup: func(s *PodState) {
 				s.SetContainerState("pod1", sharedState1)
 				s.SetContainerState("pod2", sharedState2)
 				s.SetContainerState("pod1", guaranteedState)
@@ -102,21 +102,21 @@ func TestGetSharedCPUContainerUIDs(t *testing.T) {
 		},
 		{
 			name: "only guaranteed",
-			setup: func(s *PodConfig) {
+			setup: func(s *PodState) {
 				s.SetContainerState("pod1", guaranteedState)
 			},
 			wantUIDs: []types.UID{},
 		},
 		{
 			name:     "no containers",
-			setup:    func(s *PodConfig) {},
+			setup:    func(s *PodState) {},
 			wantUIDs: []types.UID{},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			store := NewPodConfig()
+			store := NewPodState()
 			tc.setup(store)
 			gotUIDs := store.GetContainersWithSharedCPUs()
 			require.ElementsMatch(t, tc.wantUIDs, gotUIDs)
@@ -125,7 +125,7 @@ func TestGetSharedCPUContainerUIDs(t *testing.T) {
 }
 
 func TestSharedCPUContainersCacheConsistency(t *testing.T) {
-	store := NewPodConfig()
+	store := NewPodState()
 
 	store.SetContainerState("pod1", NewContainerState("c1", "id1"))
 	store.SetContainerState("pod1", NewContainerState("c2", "id2"))
@@ -156,7 +156,7 @@ func TestSharedCPUContainersCacheConsistency(t *testing.T) {
 }
 
 func TestSetContainerState_ContainerRestart(t *testing.T) {
-	store := NewPodConfig()
+	store := NewPodState()
 	podUID := types.UID("pod1")
 
 	// Initial container with shared CPUs.
@@ -198,7 +198,7 @@ func BenchmarkGetContainersWithSharedCPUs(b *testing.B) {
 
 	for _, tc := range testCases {
 		configs := make(map[types.UID]map[string]*ContainerState)
-		store := NewPodConfig()
+		store := NewPodState()
 
 		ctrIndex := 0
 		for i := 0; i < tc.numPods; i++ {

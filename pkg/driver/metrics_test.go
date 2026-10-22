@@ -66,10 +66,10 @@ func newMetricsTestDriverWithCPUInfos(t *testing.T, cpuInfos []cpuinfo.CPUInfo) 
 				},
 			},
 		},
-		podConfigStore:     store.NewPodConfig(),
-		cpuAllocationStore: store.NewCPUAllocation(topo, cpuset.New()),
-		cdiMgr:             newMockCdiMgr(),
-		metrics:            recorder,
+		podState:        store.NewPodState(),
+		allocationState: store.NewAllocationState(topo, cpuset.New()),
+		cdiMgr:          newMockCdiMgr(),
+		metrics:         recorder,
 	}
 	driver.refreshAllocationMetrics()
 	return driver, reg

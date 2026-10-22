@@ -51,8 +51,8 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	// Runtime inventory is not the prepared-claim inventory: a claim may
 	// have no container yet, or retain its owner between container restarts.
 	// Only Unprepare releases these records while this process survives.
-	cpuAllocationStore := cp.cpuAllocationStore.Clone()
-	podConfigStore := store.NewPodConfig()
+	allocationState := cp.allocationState.Clone()
+	podState := store.NewPodState()
 	var containerUpdates []*api.ContainerUpdate
 	cdiCacheRefreshAttempted := false
 
@@ -72,9 +72,9 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				// infer allocations from malformed env or reuse a replaced ID.
 				if cp.hasSynchronized {
 					podUID := types.UID(pod.GetUid())
-					state := cp.podConfigStore.GetContainerState(podUID, container.Name)
+					state := cp.podState.GetContainerState(podUID, container.Name)
 					if state != nil && state.MatchesContainer(container.Name, types.UID(container.GetId())) {
-						podConfigStore.SetContainerState(podUID, state)
+						podState.SetContainerState(podUID, state)
 						cLogger.Error(err, "retaining known container state with malformed DRA env during synchronize")
 						continue
 					}
@@ -88,8 +88,8 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			for uid, cpus := range claimAllocations {
 				var prepared, owned bool
 				if cp.hasSynchronized {
-					_, prepared = cp.cpuAllocationStore.GetResourceClaimAllocation(uid)
-					owned = cp.cpuAllocationStore.IsOwner(uid, types.UID(pod.Uid), container.Name)
+					_, prepared = cp.allocationState.GetResourceClaimAllocation(uid)
+					owned = cp.allocationState.IsOwner(uid, types.UID(pod.Uid), container.Name)
 				}
 				caLogger := cLogger.WithValues("claimUID", uid)
 				if !cdiCacheRefreshAttempted {
@@ -127,7 +127,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				}
 				// Synchronize restores an allocation that already exists in the runtime;
 				// the shared-pool guard applies only to new reservations.
-				if err := cpuAllocationStore.ReserveResourceClaimAllocation(caLogger, uid, cpus, false); err != nil {
+				if err := allocationState.ReserveResourceClaimAllocation(caLogger, uid, cpus, false); err != nil {
 					return nil, err
 				}
 
@@ -139,7 +139,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			if len(validatedClaimAllocations) == 0 {
 				state = store.NewContainerState(container.GetName(), containerUID)
 			} else {
-				if _, err := cpuAllocationStore.ValidateResourceClaimAllocations(cLogger, types.UID(pod.Uid), container.Name, validatedClaimAllocations); err != nil {
+				if _, err := allocationState.ValidateResourceClaimAllocations(cLogger, types.UID(pod.Uid), container.Name, validatedClaimAllocations); err != nil {
 					return nil, err
 				}
 				cLogger.V(2).Info("found guaranteed CPUs", "cpus", allGuaranteedCPUs.String())
@@ -152,7 +152,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				guaranteedUpdate.SetLinuxCPUSetCPUs(allGuaranteedCPUs.String())
 				containerUpdates = append(containerUpdates, guaranteedUpdate)
 			}
-			podConfigStore.SetContainerState(types.UID(pod.GetUid()), state)
+			podState.SetContainerState(types.UID(pod.GetUid()), state)
 			cLogger.V(6).Info("set container state", "claims", len(validatedClaimAllocations))
 		}
 	}
@@ -160,7 +160,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	// Reconcile container CPU masks to handle cases where the NRI plugin might have crashed
 	// or restarted and missed updating the cgroup settings.
 	// See: https://github.com/containerd/nri/issues/282
-	sharedContainerUpdates, err := sharedContainerUpdatesFor(logger, cpuAllocationStore, podConfigStore, types.UID(""))
+	sharedContainerUpdates, err := sharedContainerUpdatesFor(logger, allocationState, podState, types.UID(""))
 	if err != nil {
 		return nil, err
 	}
@@ -168,8 +168,8 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	cp.podConfigStore = podConfigStore
-	cp.cpuAllocationStore = cpuAllocationStore
+	cp.podState = podState
+	cp.allocationState = allocationState
 	if !cp.hasSynchronized && cp.initialSync != nil {
 		close(cp.initialSync)
 	}
@@ -232,7 +232,7 @@ func validateSynchronizedClaimAllocation(logger logr.Logger, uid types.UID, cpus
 
 // sharedContainerUpdatesFor computes updates from the supplied stores. Callers
 // using the live driver stores must hold stateMu; Synchronize passes candidate stores.
-func sharedContainerUpdatesFor(logger logr.Logger, allocations *store.CPUAllocation, pods *store.PodConfig, excludeID types.UID) ([]*api.ContainerUpdate, error) {
+func sharedContainerUpdatesFor(logger logr.Logger, allocations *store.AllocationState, pods *store.PodState, excludeID types.UID) ([]*api.ContainerUpdate, error) {
 	updates := []*api.ContainerUpdate{}
 	sharedCPUs := allocations.GetSharedCPUs()
 	preparedCPUs := allocations.GetPreparedCPUs()
@@ -292,14 +292,14 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 
 	if claimCount == 0 {
 		// This is a shared container.
-		sharedCPUs := cp.cpuAllocationStore.GetSharedCPUs()
-		if sharedCPUs.IsEmpty() && !cp.cpuAllocationStore.GetPreparedCPUs().IsEmpty() {
+		sharedCPUs := cp.allocationState.GetSharedCPUs()
+		if sharedCPUs.IsEmpty() && !cp.allocationState.GetPreparedCPUs().IsEmpty() {
 			// NRI cannot represent an empty CPUSet as a ContainerAdjustment. Fail
 			// closed instead of allowing the runtime to keep its default affinity.
 			return nil, nil, fmt.Errorf("cannot create shared container: no shared CPUs available")
 		}
 		state := store.NewContainerState(ctr.GetName(), containerId)
-		cp.podConfigStore.SetContainerState(podUID, state)
+		cp.podState.SetContainerState(podUID, state)
 
 		logger.V(2).Info("no guaranteed CPUs found, using shared CPUs", "sharedCPUs", sharedCPUs.String())
 		adjust.SetLinuxCPUSetCPUs(sharedCPUs.String())
@@ -312,7 +312,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 			guaranteedCPUs = guaranteedCPUs.Union(cpus)
 			claimUIDs = append(claimUIDs, uid)
 		}
-		updatedClaims, err := cp.cpuAllocationStore.ValidateResourceClaimAllocations(logger, podUID, ctr.Name, claimAllocations)
+		updatedClaims, err := cp.allocationState.ValidateResourceClaimAllocations(logger, podUID, ctr.Name, claimAllocations)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -325,13 +325,13 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		// On restart the owner already exists and no shared-container updates are
 		// needed.
 		if len(updatedClaims) > 0 {
-			updates, err = sharedContainerUpdatesFor(logger, cp.cpuAllocationStore, cp.podConfigStore, containerId)
+			updates, err = sharedContainerUpdatesFor(logger, cp.allocationState, cp.podState, containerId)
 			if err != nil {
-				cp.cpuAllocationStore.Cleanup(updatedClaims...)
+				cp.allocationState.Cleanup(updatedClaims...)
 				return nil, nil, err
 			}
 		}
-		cp.podConfigStore.SetContainerState(podUID, state)
+		cp.podState.SetContainerState(podUID, state)
 	}
 
 	return adjust, updates, nil
@@ -361,7 +361,7 @@ func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr
 	defer logger.V(2).Info("end: StopContainer")
 
 	updates := []*api.ContainerUpdate{}
-	claimUIDs, removed := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
+	claimUIDs, removed := cp.podState.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
 	if !removed {
 		logger.V(2).Info("ignoring stale or unknown StopContainer event")
 		return updates, nil
@@ -386,14 +386,14 @@ func (cp *CPUDriver) RemoveContainer(ctx context.Context, pod *api.PodSandbox, c
 	logger.V(2).Info("begin: RemoveContainer")
 	defer logger.V(2).Info("end: RemoveContainer")
 
-	claimUIDs, removed := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
+	claimUIDs, removed := cp.podState.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
 	if !removed {
 		logger.V(2).Info("ignoring stale or unknown RemoveContainer event")
 		return nil
 	}
 	if len(claimUIDs) > 0 {
 		// this serves only for debugging purposes. We should never get here
-		updates, err := sharedContainerUpdatesFor(logger, cp.cpuAllocationStore, cp.podConfigStore, types.UID(ctr.GetId()))
+		updates, err := sharedContainerUpdatesFor(logger, cp.allocationState, cp.podState, types.UID(ctr.GetId()))
 		if err != nil {
 			logger.Error(err, "unable to calculate shared container updates after RemoveContainer")
 		} else {
