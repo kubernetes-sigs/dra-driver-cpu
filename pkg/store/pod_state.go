@@ -24,7 +24,7 @@ import (
 
 // ContainerState holds the allocation type and all claim assignments for a container.
 type ContainerState struct {
-	// containerName is used as the primary key for efficient lookups within the PodConfig.
+	// containerName is used as the primary key for efficient lookups within the PodState.
 	containerName string
 	// containerUID is used by the container runtime to apply updates to a container.
 	containerUID types.UID
@@ -44,23 +44,23 @@ func NewContainerState(containerName string, containerUID types.UID, claimUIDs .
 // PodCPUAssignments maps a container name to its state.
 type PodCPUAssignments map[string]*ContainerState
 
-// PodConfig maps a Pod's UID directly to its container-level assignments.
-type PodConfig struct {
+// PodState maps a Pod's UID directly to its container-level assignments.
+type PodState struct {
 	mu                  sync.RWMutex
 	configs             map[types.UID]PodCPUAssignments
 	sharedCPUContainers sets.Set[types.UID]
 }
 
-// NewPodConfig creates a new PodConfig.
-func NewPodConfig() *PodConfig {
-	return &PodConfig{
+// NewPodState creates a new PodState.
+func NewPodState() *PodState {
+	return &PodState{
 		configs:             make(map[types.UID]PodCPUAssignments),
 		sharedCPUContainers: sets.New[types.UID](),
 	}
 }
 
 // SetContainerState records or updates a container's allocation using a state object.
-func (s *PodConfig) SetContainerState(podUID types.UID, state *ContainerState) {
+func (s *PodState) SetContainerState(podUID types.UID, state *ContainerState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -82,7 +82,7 @@ func (s *PodConfig) SetContainerState(podUID types.UID, state *ContainerState) {
 }
 
 // GetContainerState retrieves a container's state.
-func (s *PodConfig) GetContainerState(podUID types.UID, containerName string) *ContainerState {
+func (s *PodState) GetContainerState(podUID types.UID, containerName string) *ContainerState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -96,7 +96,7 @@ func (s *PodConfig) GetContainerState(podUID types.UID, containerName string) *C
 // A replacement container can have the same name while an old Remove event is in flight.
 // It returns the removed state's claim UIDs and whether a matching state was removed. The
 // boolean distinguishes a removed shared container, which has no claims, from a stale event.
-func (s *PodConfig) RemoveContainerState(podUID types.UID, containerName string, containerUID types.UID) ([]types.UID, bool) {
+func (s *PodState) RemoveContainerState(podUID types.UID, containerName string, containerUID types.UID) ([]types.UID, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -127,13 +127,13 @@ func (s *PodConfig) RemoveContainerState(podUID types.UID, containerName string,
 }
 
 // GetContainersWithSharedCPUs returns a list of container UIDs that have shared CPU allocation.
-func (s *PodConfig) GetContainersWithSharedCPUs() []types.UID {
+func (s *PodState) GetContainersWithSharedCPUs() []types.UID {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.sharedCPUContainers.UnsortedList()
 }
 
-func (s *PodConfig) Len() int {
+func (s *PodState) Len() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.configs)

@@ -157,10 +157,10 @@ func TestNRIRuntimeReconnectRetainsPreparedClaim(t *testing.T) {
 	runtime.disconnect()
 	requireNoNRIError(t, runtime.syncResults)
 
-	gotCPUs, found := d.cpuAllocationStore.GetResourceClaimAllocation(claim.UID)
+	gotCPUs, found := d.allocationState.GetResourceClaimAllocation(claim.UID)
 	require.True(t, found, "reconnect discarded the prepared allocation")
 	require.True(t, cpuset.New(0).Equals(gotCPUs))
-	require.True(t, d.claimTracker.IsOwner(claim.UID, types.UID(pod.Uid), container.Name), "reconnect discarded claim ownership")
+	require.True(t, d.allocationState.IsOwner(claim.UID, types.UID(pod.Uid), container.Name), "reconnect discarded claim ownership")
 
 	otherPod := &api.PodSandbox{Id: "other-sandbox", Uid: "other-pod"}
 	_, _, err = d.CreateContainer(ctx, otherPod, &api.Container{

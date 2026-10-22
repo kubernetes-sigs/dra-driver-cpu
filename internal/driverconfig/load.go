@@ -81,6 +81,9 @@ func Resolve(logger logr.Logger, sources []Source) (Config, error) {
 	if cfg.KubeletRootDir != "" {
 		cfg.KubeletRootDir = filepath.Clean(cfg.KubeletRootDir)
 	}
+	if cfg.CheckpointDir != "" {
+		cfg.CheckpointDir = filepath.Clean(cfg.CheckpointDir)
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, fmt.Errorf("cannot validate config: %w", err)
 	}

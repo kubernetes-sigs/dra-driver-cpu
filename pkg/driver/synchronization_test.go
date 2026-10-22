@@ -46,7 +46,7 @@ func TestSynchronizeFailurePreservesState(t *testing.T) {
 	d.metrics = recorder
 	d.refreshAllocationMetrics()
 	oldMetrics := recorder.state
-	oldCPU, oldPods, oldOwners := d.cpuAllocationStore, d.podConfigStore, d.claimTracker
+	oldCPU, oldPods := d.allocationState, d.podState
 	d.cdiMgr = newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{"full": cpuset.New(0, 1, 2, 3)})
 	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod"}
 	updates, err := d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{
@@ -55,12 +55,11 @@ func TestSynchronizeFailurePreservesState(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "no shared CPUs available")
 	require.Nil(t, updates)
-	require.Same(t, oldCPU, d.cpuAllocationStore)
-	require.Same(t, oldPods, d.podConfigStore)
-	require.Same(t, oldOwners, d.claimTracker)
+	require.Same(t, oldCPU, d.allocationState)
+	require.Same(t, oldPods, d.podState)
 	require.Equal(t, oldMetrics, recorder.state)
-	require.True(t, d.cpuAllocationStore.GetPreparedCPUs().IsEmpty())
-	require.Zero(t, d.claimTracker.Len())
+	require.True(t, d.allocationState.GetPreparedCPUs().IsEmpty())
+	require.False(t, d.allocationState.IsOwner("full", types.UID(pod.Uid), "app"))
 	require.False(t, d.hasSynchronized)
 }
 
@@ -79,7 +78,7 @@ func TestSynchronizeRetainsPreparedClaimAndOwner(t *testing.T) {
 	_, err = d.StopContainer(t.Context(), pod, app)
 	require.NoError(t, err)
 	// The old shared-container ID must also be discarded by recovery.
-	d.podConfigStore.SetContainerState("old-pod", store.NewContainerState("old-shared", "stale"))
+	d.podState.SetContainerState("old-pod", store.NewContainerState("old-shared", "stale"))
 	updates, err := d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{
 		{Id: "shared", Name: "sidecar", PodSandboxId: pod.Id},
 	})
@@ -87,11 +86,11 @@ func TestSynchronizeRetainsPreparedClaimAndOwner(t *testing.T) {
 	require.Len(t, updates, 1)
 	require.Equal(t, "shared", updates[0].ContainerId)
 	require.Equal(t, "1-3", updates[0].Linux.Resources.Cpu.Cpus)
-	cpus, found := d.cpuAllocationStore.GetResourceClaimAllocation(claim.UID)
+	cpus, found := d.allocationState.GetResourceClaimAllocation(claim.UID)
 	require.True(t, found)
 	require.Equal(t, "0", cpus.String())
-	require.Equal(t, 1, d.claimTracker.Len())
-	require.Nil(t, d.podConfigStore.GetContainerState("old-pod", "old-shared"))
+	require.True(t, d.allocationState.IsOwner(claim.UID, types.UID(pod.Uid), "app"))
+	require.Nil(t, d.podState.GetContainerState("old-pod", "old-shared"))
 	// Ownership survives an empty snapshot as well.
 	_, err = d.Synchronize(t.Context(), nil, nil)
 	require.NoError(t, err)
@@ -135,20 +134,19 @@ func TestWarmSynchronizeRejectsConflictingClaims(t *testing.T) {
 			cdi := newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
 			d.cdiMgr = cdi
 			logger := testr.New(t)
-			requirePreparedResourceClaim(t, logger, d.cpuAllocationStore, "a", cpuset.New(0))
-			_, err = d.claimTracker.SetOwner(logger, "pod", "app", "a")
+			require.NoError(t, d.allocationState.Reserve(logger, "a", cpuset.New(0), false))
+			_, err = d.allocationState.Bind(logger, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
 			require.NoError(t, err)
 			pod := &api.PodSandbox{Id: "sandbox", Uid: "pod"}
 			app := &api.Container{Id: "app", Name: "app", PodSandboxId: pod.Id, Env: []string{"DRA_CPUSET_a=0"}}
 			testCase.mutate(cdi, app)
 
-			oldCPU, oldPods, oldOwners := d.cpuAllocationStore, d.podConfigStore, d.claimTracker
+			oldCPU, oldPods := d.allocationState, d.podState
 			_, err = d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{app})
 			require.Error(t, err)
-			require.Same(t, oldCPU, d.cpuAllocationStore)
-			require.Same(t, oldPods, d.podConfigStore)
-			require.Same(t, oldOwners, d.claimTracker)
-			require.Equal(t, "0", d.cpuAllocationStore.GetPreparedCPUs().String())
+			require.Same(t, oldCPU, d.allocationState)
+			require.Same(t, oldPods, d.podState)
+			require.Equal(t, "0", d.allocationState.GetPreparedCPUs().String())
 		})
 	}
 }
@@ -164,18 +162,18 @@ func TestWarmSynchronizeSkipsUnknownAuthenticatedClaim(t *testing.T) {
 	cdi.devices[getCDIDeviceName("b")] = "DRA_CPUSET_b=1"
 	d.cdiMgr = cdi
 	logger := testr.New(t)
-	requirePreparedResourceClaim(t, logger, d.cpuAllocationStore, "a", cpuset.New(0))
-	_, err = d.claimTracker.SetOwner(logger, "pod", "app", "a")
+	require.NoError(t, d.allocationState.Reserve(logger, "a", cpuset.New(0), false))
+	_, err = d.allocationState.Bind(logger, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
 	require.NoError(t, err)
 	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod"}
 	app := &api.Container{Id: "app", Name: "app", PodSandboxId: pod.Id, Env: []string{"DRA_CPUSET_b=1"}}
 
 	_, err = d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{app})
 	require.NoError(t, err)
-	require.Equal(t, "0", d.cpuAllocationStore.GetPreparedCPUs().String())
-	_, prepared := d.cpuAllocationStore.GetResourceClaimAllocation("b")
+	require.Equal(t, "0", d.allocationState.GetPreparedCPUs().String())
+	_, prepared := d.allocationState.GetResourceClaimAllocation("b")
 	require.False(t, prepared)
-	state := d.podConfigStore.GetContainerState("pod", "app")
+	state := d.podState.GetContainerState("pod", "app")
 	require.NotNil(t, state)
 	require.False(t, state.HasExclusiveCPUAllocation())
 }
@@ -199,18 +197,18 @@ func TestWarmSynchronizeDoesNotResurrectUnpreparedClaim(t *testing.T) {
 	require.NoError(t, unprepared[claim.UID])
 	_, err = d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{ctr})
 	require.NoError(t, err)
-	require.True(t, d.cpuAllocationStore.GetPreparedCPUs().IsEmpty())
-	require.Zero(t, d.claimTracker.Len())
+	require.True(t, d.allocationState.GetPreparedCPUs().IsEmpty())
+	require.False(t, d.allocationState.IsOwner(claim.UID, types.UID(pod.Uid), ctr.Name))
 	// Even stale CDI cannot override an authoritative in-process release, and the
 	// stale claim must not block recovery of the other containers on the node.
 	d.cdiMgr.(*mockCdiMgr).devices[getCDIDeviceName("a")] = "DRA_CPUSET_a=0"
 	other := &api.Container{Id: "other", Name: "other", PodSandboxId: pod.Id}
 	_, err = d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{ctr, other})
 	require.NoError(t, err)
-	require.True(t, d.cpuAllocationStore.GetPreparedCPUs().IsEmpty())
-	require.Zero(t, d.claimTracker.Len())
+	require.True(t, d.allocationState.GetPreparedCPUs().IsEmpty())
+	require.False(t, d.allocationState.IsOwner(claim.UID, types.UID(pod.Uid), ctr.Name))
 	for _, name := range []string{"app", "other"} {
-		state := d.podConfigStore.GetContainerState("pod", name)
+		state := d.podState.GetContainerState("pod", name)
 		require.NotNil(t, state, "container %q was not recovered", name)
 		require.False(t, state.HasExclusiveCPUAllocation(), "container %q must not be exclusive", name)
 	}
@@ -271,7 +269,7 @@ func TestSynchronizeSerializesPrepare(t *testing.T) {
 	require.NoError(t, <-syncDone)
 	require.NoError(t, <-prepareDone)
 
-	cpus, found := d.cpuAllocationStore.GetResourceClaimAllocation(claim.UID)
+	cpus, found := d.allocationState.GetResourceClaimAllocation(claim.UID)
 	require.True(t, found)
 	require.Equal(t, "0", cpus.String())
 	require.Equal(t, "DRA_CPUSET_pending=0", cdi.devices[getCDIDeviceName(claim.UID)])
@@ -316,7 +314,7 @@ func TestSynchronizeSerializesUnprepare(t *testing.T) {
 	require.NoError(t, <-syncDone)
 	require.NoError(t, <-unprepareDone)
 
-	_, found := d.cpuAllocationStore.GetResourceClaimAllocation(claim.UID)
+	_, found := d.allocationState.GetResourceClaimAllocation(claim.UID)
 	require.False(t, found)
 	require.NotContains(t, cdi.devices, getCDIDeviceName(claim.UID))
 }
@@ -359,7 +357,7 @@ func TestSynchronizeSerializesCancelledPrepare(t *testing.T) {
 	require.NoError(t, <-syncDone)
 	require.ErrorIs(t, <-prepareDone, context.Canceled)
 
-	_, found := d.cpuAllocationStore.GetResourceClaimAllocation(claim.UID)
+	_, found := d.allocationState.GetResourceClaimAllocation(claim.UID)
 	require.False(t, found)
 }
 
@@ -367,7 +365,7 @@ func TestSynchronizeCancelledBeforeCommit(t *testing.T) {
 	d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
 	cdi := &pausedRefreshCDI{mockCdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)}), entered: make(chan struct{}), release: make(chan struct{})}
 	d.cdiMgr = cdi
-	old := d.cpuAllocationStore
+	old := d.allocationState
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
@@ -379,7 +377,7 @@ func TestSynchronizeCancelledBeforeCommit(t *testing.T) {
 	cancel()
 	close(cdi.release)
 	require.ErrorIs(t, <-done, context.Canceled)
-	require.Same(t, old, d.cpuAllocationStore)
+	require.Same(t, old, d.allocationState)
 	require.False(t, d.hasSynchronized)
 }
 
@@ -393,7 +391,7 @@ func TestWarmSynchronizeIgnoresInvalidEnvFromNonOwner(t *testing.T) {
 			results, err := d.PrepareResourceClaims(t.Context(), []*resourceapi.ResourceClaim{claim})
 			require.NoError(t, err)
 			require.NoError(t, results[claim.UID].Err)
-			_, err = d.claimTracker.SetOwner(testr.New(t), "real-pod", "app", claim.UID)
+			_, err = d.allocationState.Bind(testr.New(t), "real-pod", "app", map[types.UID]cpuset.CPUSet{claim.UID: cpuset.New(0)})
 			require.NoError(t, err)
 			if missingCDI {
 				delete(d.cdiMgr.(*mockCdiMgr).devices, getCDIDeviceName(claim.UID))
@@ -401,8 +399,8 @@ func TestWarmSynchronizeIgnoresInvalidEnvFromNonOwner(t *testing.T) {
 			pod := &api.PodSandbox{Id: "sandbox", Uid: "other-pod"}
 			updates, err := d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{{Id: "other", Name: "app", PodSandboxId: pod.Id, Env: []string{"DRA_CPUSET_a=1"}}})
 			require.NoError(t, err, "an untrusted env must not break node-wide recovery")
-			require.Equal(t, "0", d.cpuAllocationStore.GetPreparedCPUs().String())
-			require.True(t, d.claimTracker.IsOwner(claim.UID, "real-pod", "app"))
+			require.Equal(t, "0", d.allocationState.GetPreparedCPUs().String())
+			require.True(t, d.allocationState.IsOwner(claim.UID, "real-pod", "app"))
 			require.Len(t, updates, 1)
 			require.Equal(t, "1-3", updates[0].Linux.Resources.Cpu.Cpus)
 		})

@@ -45,6 +45,8 @@ type Config struct {
 	// <root>/plugins. Set it when the kubelet --root-dir is not the default
 	// /var/lib/kubelet.
 	KubeletRootDir string `json:"kubeletRootDir,omitempty"`
+	// CheckpointDir is the directory used by the driver's checkpoint manager.
+	CheckpointDir string `json:"checkpointDir,omitempty"`
 	// PublishNodeAllocatableResourceMapping publishes KEP-5517 nodeAllocatableResources
 	// mappings in ResourceSlice devices. Requires the DRANodeAllocatableResources
 	// feature gate in the cluster. Defaults to false.
@@ -64,6 +66,7 @@ func (c Config) LogValues() []any {
 		"exposePCIeRoots", c.ExposePCIeRoots,
 		"sysfsOverlay", c.SysFSOverlay,
 		"kubeletRootDir", c.KubeletRootDir,
+		"checkpointDir", c.CheckpointDir,
 		"publishNodeAllocatableResourceMapping", c.PublishNodeAllocatableResourceMapping,
 		"allocator", c.Allocator,
 	}
@@ -81,6 +84,7 @@ type dumpConfig struct {
 	ExposePCIeRoots                       bool   `json:"exposePCIeRoots"`
 	SysFSOverlay                          string `json:"sysfsOverlay"`
 	KubeletRootDir                        string `json:"kubeletRootDir"`
+	CheckpointDir                         string `json:"checkpointDir"`
 	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping"`
 	Allocator                             string `json:"allocator"`
 }

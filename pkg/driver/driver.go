@@ -31,6 +31,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
@@ -123,13 +124,12 @@ type CPUDriver struct {
 	kubeClient              kubernetes.Interface
 	draPlugin               KubeletPlugin
 	nriPlugin               stub.Stub
-	podConfigStore          *store.PodConfig
-	cpuAllocationStore      *store.CPUAllocation
+	podState                *store.PodState
+	allocationState         *store.AllocationState
 	cdiMgr                  cdiManager
 	topology                deviceTopology
 	cpuDeviceMode           string
 	cpuDeviceGroupBy        string
-	claimTracker            *store.ClaimTracker
 	pcieRootMapper          *store.PCIeRootMapper
 	devicesPerResourceSlice int
 	metrics                 Recorder
@@ -154,9 +154,10 @@ type deviceTopology struct {
 
 // Providers group the interfaces the CPUDriver depends on
 type Providers struct {
-	CPUInfo   CPUInfoProvider
-	SysFS     sysfs.FS
-	K8SClient kubernetes.Interface
+	Checkpoint checkpoint.Manager
+	CPUInfo    CPUInfoProvider
+	SysFS      sysfs.FS
+	K8SClient  kubernetes.Interface
 }
 
 func (pr Providers) EnsureCPUInfo() CPUInfoProvider {
@@ -222,7 +223,6 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		},
 		cpuDeviceMode:           config.CPUDeviceMode,
 		cpuDeviceGroupBy:        config.CPUDeviceGroupBy,
-		claimTracker:            store.NewClaimTracker(),
 		pcieRootMapper:          store.NewPCIeRootMapper(),
 		devicesPerResourceSlice: config.DevicesPerResourceSlice(),
 		metrics:                 metricsRecorder,
@@ -246,9 +246,9 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		}
 	}
 
-	plugin.cpuAllocationStore = store.NewCPUAllocation(plugin.topology.CPUTopology, config.ReservedCPUs)
+	plugin.allocationState = store.NewCheckpointingAllocationState(providers.Checkpoint, plugin.topology.CPUTopology, config.ReservedCPUs)
 	plugin.refreshAllocationMetrics()
-	plugin.podConfigStore = store.NewPodConfig()
+	plugin.podState = store.NewPodState()
 
 	exposeExtAttrs := false
 	logger.Info("creating CPU allocator", "method", config.Allocator)

@@ -35,6 +35,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/subcommands"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/driver"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
@@ -140,6 +141,18 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 	printVersion(logger)
 	logger.Info("configuration successfully loaded", "configuration", cfg.Dump())
 
+	var err error
+	var checkpointMgr checkpoint.Manager
+	if cfg.CheckpointDir == "" {
+		logger.Info("checkpoint disabled", "checkpointDirectory", cfg.CheckpointDir)
+		checkpointMgr = checkpoint.NewNOOPManager()
+	} else {
+		checkpointMgr, err = checkpoint.NewManager(cfg.CheckpointDir)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to create checkpoint manager: %w", err)
+	}
+
 	reservedCPUSet, err := cpuset.Parse(cfg.ReservedCPUs)
 	if err != nil {
 		return fmt.Errorf("failed to parse reserved CPUs: %w", err)
@@ -226,8 +239,9 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 		Allocator:                             cfg.Allocator,
 	}
 	driverProviders := driver.Providers{
-		K8SClient: clientset,
-		SysFS:     sfs,
+		Checkpoint: checkpointMgr,
+		K8SClient:  clientset,
+		SysFS:      sfs,
 	}
 	dracpu, err := driver.New(logger, driverProviders, &driverConfig)
 	if err != nil {

@@ -112,8 +112,8 @@ func (cp *CPUDriver) checkAdminAccess(claim *resourceapi.ResourceClaim) error {
 // container from the same pod may not have been created yet when this DRA hook
 // runs, so that case is detected later by the NRI CreateContainer check.
 func (cp *CPUDriver) reserveResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet) error {
-	hasSharedContainers := len(cp.podConfigStore.GetContainersWithSharedCPUs()) > 0
-	return cp.cpuAllocationStore.ReserveResourceClaimAllocation(logger, claimUID, cpus, hasSharedContainers)
+	hasSharedContainers := len(cp.podState.GetContainersWithSharedCPUs()) > 0
+	return cp.allocationState.Reserve(logger, claimUID, cpus, hasSharedContainers)
 }
 
 func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
@@ -133,7 +133,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim
 		}
 	}
 
-	if existingCPUs, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(claim.UID); ok {
+	if existingCPUs, ok := cp.allocationState.GetResourceClaimAllocation(claim.UID); ok {
 		logger.V(2).Info("claim already has allocated CPUs in store, reusing assignment", "cpus", existingCPUs.String())
 		// Even if the claim is already allocated in our in-memory store (which happens when a duplicate prepare
 		// call is invoked without an intermediate unprepare), we must call prepareDevices and return the result back to Kubelet.
@@ -144,7 +144,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim
 	}
 
 	var assignedCPUs cpuset.CPUSet
-	allocatableCPUs := cp.cpuAllocationStore.GetSharedCPUs()
+	allocatableCPUs := cp.allocationState.GetSharedCPUs()
 
 	for _, alloc := range claim.Status.Allocation.Devices.Results {
 		if alloc.Driver != cp.driverName {
@@ -206,7 +206,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim
 		if err != nil {
 			return kubeletplugin.PrepareResult{Err: err}
 		}
-		if err := cp.cpuAllocator.Validate(cur, assignedCPUs, cp.cpuAllocationStore.GetPreparedCPUs()); err != nil {
+		if err := cp.cpuAllocator.Validate(cur, assignedCPUs, cp.allocationState.GetPreparedCPUs()); err != nil {
 			return kubeletplugin.PrepareResult{Err: err}
 		}
 		assignedCPUs = assignedCPUs.Union(cur)
@@ -224,7 +224,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim
 	}
 	result := cp.prepareDevices(logger, claim, assignedCPUs)
 	if result.Err != nil {
-		cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claim.UID)
+		cp.allocationState.Release(logger, claim.UID)
 		return result
 	}
 	cp.metrics.RecordClaimAllocatedCPUs(assignedCPUs.Size())
@@ -276,7 +276,7 @@ func (cp *CPUDriver) prepareIndividualResourceClaimLocked(logger logr.Logger, cl
 	}
 
 	claimCPUSet := cpuset.New(claimCPUIDs...)
-	if existingCPUs, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(claim.UID); ok {
+	if existingCPUs, ok := cp.allocationState.GetResourceClaimAllocation(claim.UID); ok {
 		logger.V(2).Info("claim already has allocated CPUs in store, reusing assignment", "cpus", existingCPUs.String())
 		if !existingCPUs.Equals(claimCPUSet) {
 			// This should realistically never happen as the claim is immutable.
@@ -288,7 +288,7 @@ func (cp *CPUDriver) prepareIndividualResourceClaimLocked(logger logr.Logger, cl
 	}
 
 	// All the CPUs allocated to a claim must not be prepared for another claim.
-	allocatableCPUs := cp.cpuAllocationStore.GetSharedCPUs()
+	allocatableCPUs := cp.allocationState.GetSharedCPUs()
 	if !claimCPUSet.IsSubsetOf(allocatableCPUs) {
 		return kubeletplugin.PrepareResult{
 			Err: fmt.Errorf("claim %s/%s has overlapping device assignment with other claims", claim.Namespace, claim.Name),
@@ -301,7 +301,7 @@ func (cp *CPUDriver) prepareIndividualResourceClaimLocked(logger logr.Logger, cl
 	}
 	result := cp.prepareDevices(logger, claim, claimCPUSet)
 	if result.Err != nil {
-		cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claim.UID)
+		cp.allocationState.Release(logger, claim.UID)
 		return result
 	}
 	cp.metrics.RecordClaimAllocatedCPUs(claimCPUSet.Size())
@@ -397,8 +397,7 @@ func (cp *CPUDriver) unprepareResourceClaim(ctx context.Context, logger logr.Log
 	if err := cp.cdiMgr.RemoveDevice(logger, getCDIDeviceName(claim.UID)); err != nil {
 		return err
 	}
-	cp.cpuAllocationStore.RemoveResourceClaimAllocation(logger, claim.UID)
-	cp.claimTracker.Cleanup(claim.UID)
+	cp.allocationState.Release(logger, claim.UID)
 	cp.refreshAllocationMetrics()
 	// TODO(#279): Update existing shared containers here once all supported runtimes can
 	// safely process unsolicited NRI UpdateContainers calls. Until then, each container
