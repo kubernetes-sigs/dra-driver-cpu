@@ -178,6 +178,15 @@ containers keep their current cpuset until their next lifecycle event, exactly a
 this option. Unprepare does not fail on it, because by then the CPUs are already back in
 the pool and a retry would only re-release a claim that is already gone.
 
+`checkpointDir` (string, default: `/run/dra-driver-cpu`)
+
+- Directory used to store driver checkpoint state.
+- Must be non-empty, absolute, and writable.
+- Since driver state persistence across node restarts is not guaranteed,
+  it is recommended to store the checkpoint on a tmpfs volume (e.g. under `/run`).
+- In addition to the persistence recommendations, storing the checkpoint on a
+  tmpfs volume is also recommended for best performances.
+
 #### Example
 
 ```yaml

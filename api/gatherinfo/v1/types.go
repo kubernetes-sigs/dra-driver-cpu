@@ -80,6 +80,7 @@ type DriverConfig struct {
 	ExposePCIeRoots                       bool   `json:"exposePCIeRoots,omitempty"`
 	SysFSOverlay                          string `json:"sysfsOverlay,omitempty"`
 	KubeletRootDir                        string `json:"kubeletRootDir,omitempty"`
+	CheckpointDir                         string `json:"checkpointDir,omitempty"`
 	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping,omitempty"`
 	Allocator                             string `json:"allocator,omitempty"`
 }

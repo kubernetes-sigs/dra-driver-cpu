@@ -222,6 +222,7 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 		ForceImmediateSharedCPUReclaim:        cfg.ForceImmediateSharedCPUReclaim,
 		Metrics:                               cpumetrics.New(prometheus.DefaultRegisterer),
 		KubeletRootDir:                        cfg.KubeletRootDir,
+		CheckpointDir:                         cfg.CheckpointDir,
 		Allocator:                             cfg.Allocator,
 	}
 	driverProviders := driver.Providers{

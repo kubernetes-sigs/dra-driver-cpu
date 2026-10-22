@@ -40,7 +40,7 @@ func startupWindowFixture(t *testing.T) (*CPUDriver, *api.PodSandbox, []*api.Con
 	t.Helper()
 	infos := mockCPUInfos_SingleSocket_4CPUS_HT
 	driver, err := New(testr.New(t), Providers{CPUInfo: &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}, SysFS: testSysFS(infos)}, &Config{
-		DriverName: testDriverName, NodeName: testNodeName,
+		DriverName: testDriverName, NodeName: testNodeName, CheckpointDir: t.TempDir(),
 		CPUDeviceMode: device.CPU_DEVICE_MODE_GROUPED, CPUDeviceGroupBy: device.GROUP_BY_NUMA_NODE,
 	})
 	require.NoError(t, err)

@@ -382,6 +382,7 @@ func TestPublishResources(t *testing.T) {
 				SysFS: testSysFS(tc.cpuInfos),
 			}
 			conf := Config{
+				CheckpointDir:   t.TempDir(),
 				DriverName:      testDriverName,
 				NodeName:        testNodeName,
 				ReservedCPUs:    tc.reservedCPUs,
@@ -520,6 +521,7 @@ func TestPublishResourcesGroupedModeInitializesLookupMaps(t *testing.T) {
 				SysFS: testSysFS(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
 			}
 			conf := Config{
+				CheckpointDir:    t.TempDir(),
 				DriverName:       testDriverName,
 				NodeName:         testNodeName,
 				CPUDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
@@ -582,6 +584,7 @@ func TestPrepareResourceClaimsSucceedsBeforePublishResources(t *testing.T) {
 				SysFS: testSysFS(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
 			}
 			conf := Config{
+				CheckpointDir:    t.TempDir(),
 				DriverName:       testDriverName,
 				NodeName:         testNodeName,
 				CPUDeviceMode:    tc.cpuDeviceMode,
@@ -617,8 +620,9 @@ func TestPrepareResourceClaims(t *testing.T) {
 			SysFS: testSysFS(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
 		}
 		conf := Config{
-			DriverName: testDriverName,
-			NodeName:   testNodeName,
+			CheckpointDir: t.TempDir(),
+			DriverName:    testDriverName,
+			NodeName:      testNodeName,
 		}
 		cp, err := New(testr.New(t), prov, &conf)
 		require.NoError(t, err)
@@ -848,8 +852,9 @@ func TestPrepareResourceClaimsRejectsExhaustingSharedPool(t *testing.T) {
 			SysFS:   testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
 		}
 		conf := Config{
-			DriverName: testDriverName,
-			NodeName:   testNodeName,
+			CheckpointDir: t.TempDir(),
+			DriverName:    testDriverName,
+			NodeName:      testNodeName,
 		}
 		if grouped {
 			conf.CPUDeviceMode = devattr.CPU_DEVICE_MODE_GROUPED
@@ -920,8 +925,9 @@ func TestPrepareResourceClaimsRejectAdminAccess(t *testing.T) {
 			SysFS: testSysFS(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
 		}
 		conf := Config{
-			DriverName: testDriverName,
-			NodeName:   testNodeName,
+			CheckpointDir: t.TempDir(),
+			DriverName:    testDriverName,
+			NodeName:      testNodeName,
 		}
 		cp, err := New(testr.New(t), prov, &conf)
 		require.NoError(t, err)
@@ -1191,6 +1197,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			allocator = cpuallocator.ModeExternal
 		}
 		conf := Config{
+			CheckpointDir:    t.TempDir(),
 			DriverName:       testDriverName,
 			NodeName:         testNodeName,
 			CPUDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
@@ -1580,6 +1587,7 @@ func TestPrepareResourceClaimsGroupedModeRejectsInvalidCPUCapacity(t *testing.T)
 				SysFS:   testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
 			}
 			conf := Config{
+				CheckpointDir:    t.TempDir(),
 				DriverName:       testDriverName,
 				NodeName:         testNodeName,
 				CPUDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
@@ -1626,6 +1634,7 @@ func TestPrepareResourceClaimsGroupedModeIgnoresAllocationsFromOtherDrivers(t *t
 		SysFS:   testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
 	}
 	conf := Config{
+		CheckpointDir:    t.TempDir(),
 		DriverName:       testDriverName,
 		NodeName:         testNodeName,
 		CPUDeviceMode:    devattr.CPU_DEVICE_MODE_GROUPED,
@@ -1700,8 +1709,9 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 				SysFS: testSysFS(mockCPUInfos_DualSocket_4CPUsPerSocket_HT),
 			}
 			conf := Config{
-				DriverName: testDriverName,
-				NodeName:   testNodeName,
+				CheckpointDir: t.TempDir(),
+				DriverName:    testDriverName,
+				NodeName:      testNodeName,
 			}
 			driver, err := New(testr.New(t), prov, &conf)
 			require.NoError(t, err)
@@ -1929,8 +1939,9 @@ func TestUnprepareResourceClaims(t *testing.T) {
 				SysFS: testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
 			}
 			conf := Config{
-				DriverName: testDriverName,
-				NodeName:   testNodeName,
+				CheckpointDir: t.TempDir(),
+				DriverName:    testDriverName,
+				NodeName:      testNodeName,
 			}
 			cp, err := New(testr.New(t), prov, &conf)
 			require.NoError(t, err)

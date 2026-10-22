@@ -202,6 +202,7 @@ func makeDriverConfigSnapshot(cfg driverconfig.Config) gatherinfoapi.DriverConfi
 		ExposePCIeRoots:                       cfg.ExposePCIeRoots,
 		SysFSOverlay:                          cfg.SysFSOverlay,
 		KubeletRootDir:                        cfg.KubeletRootDir,
+		CheckpointDir:                         cfg.CheckpointDir,
 		PublishNodeAllocatableResourceMapping: cfg.PublishNodeAllocatableResourceMapping,
 		Allocator:                             cfg.Allocator,
 	}
