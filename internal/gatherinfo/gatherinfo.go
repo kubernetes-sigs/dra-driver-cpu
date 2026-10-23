@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	gatherinfoapi "github.com/kubernetes-sigs/dra-driver-cpu/api/gatherinfo/v1"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/buildinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
@@ -35,47 +36,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const LayoutVersion = "v1"
 const driverProcessName = "dracpu"
-
-type Report struct {
-	ToolVersion   ToolVersion         `json:"toolVersion"`
-	LayoutVersion string              `json:"layoutVersion"`
-	CPUDetails    CPUDetails          `json:"cpuDetails"`
-	DriverConfig  driverconfig.Config `json:"driverConfig"`
-}
-
-type CPUDetails struct {
-	Topology TopologySummary `json:"topology"`
-	CPUs     []CPU           `json:"cpus"`
-}
-
-type TopologySummary struct {
-	NumCPUs        int  `json:"numCPUs"`
-	NumCores       int  `json:"numCores"`
-	NumUncoreCache int  `json:"numUncoreCache"`
-	NumSockets     int  `json:"numSockets"`
-	NumNUMANodes   int  `json:"numNUMANodes"`
-	SMTEnabled     bool `json:"smtEnabled"`
-}
-
-type CPU struct {
-	CPUID          int    `json:"cpuID"`
-	CoreID         int    `json:"coreID"`
-	SocketID       int    `json:"socketID"`
-	ClusterID      int    `json:"clusterID"`
-	NUMANodeID     int    `json:"numaNodeID"`
-	NUMANodeCPUSet string `json:"numaNodeCPUSet,omitempty"`
-	Sibling        int    `json:"sibling"`
-	CoreType       string `json:"coreType,omitempty"`
-	UncoreCacheID  int    `json:"uncoreCacheID"`
-}
-
-type ToolVersion struct {
-	GoVersion   string `json:"goVersion,omitempty"`
-	VCSRevision string `json:"vcsRevision,omitempty"`
-	VCSTime     string `json:"vcsTime,omitempty"`
-}
 
 type Options struct {
 	OutputParentDir   string
@@ -191,12 +152,12 @@ func createOutputFile(parentDir string, now time.Time, pid int) (*os.File, strin
 	return f, outputPath, nil
 }
 
-func collectReport(logger logr.Logger, driverCmdlinePath string) (Report, error) {
+func collectReport(logger logr.Logger, driverCmdlinePath string) (gatherinfoapi.Report, error) {
 	driverConfig, err := driverconfig.Resolve(logger, []driverconfig.Source{
 		ConfigSource{DriverCmdlinePath: driverCmdlinePath},
 	})
 	if err != nil {
-		return Report{}, fmt.Errorf("failed to resolve driver config: %w", err)
+		return gatherinfoapi.Report{}, fmt.Errorf("failed to resolve driver config: %w", err)
 	}
 	overlayPath := driverConfig.SysFSOverlay
 	if overlayPath != "" {
@@ -204,29 +165,46 @@ func collectReport(logger logr.Logger, driverCmdlinePath string) (Report, error)
 	}
 	sfs, err := sysfs.NewOverlayFromFile(sysfs.Host(), overlayPath)
 	if err != nil {
-		return Report{}, fmt.Errorf("load configured sysfs overlay %q from driver filesystem: %w", driverConfig.SysFSOverlay, err)
+		return gatherinfoapi.Report{}, fmt.Errorf("load configured sysfs overlay %q from driver filesystem: %w", driverConfig.SysFSOverlay, err)
 	}
 	sys := cpuinfo.NewSystemCPUInfo(sfs)
 
 	topology, err := sys.GetCPUTopology(logger)
 	if err != nil {
-		return Report{}, fmt.Errorf("failed to get CPU topology: %w", err)
+		return gatherinfoapi.Report{}, fmt.Errorf("failed to get CPU topology: %w", err)
 	}
 
 	cpus, err := sys.GetCPUInfos(logger)
 	if err != nil {
-		return Report{}, fmt.Errorf("failed to get CPU infos: %w", err)
+		return gatherinfoapi.Report{}, fmt.Errorf("failed to get CPU infos: %w", err)
 	}
 
-	return Report{
+	return gatherinfoapi.Report{
 		ToolVersion:   readToolVersion(),
-		LayoutVersion: LayoutVersion,
-		CPUDetails: CPUDetails{
+		LayoutVersion: gatherinfoapi.LayoutVersion,
+		CPUDetails: gatherinfoapi.CPUDetails{
 			Topology: makeTopologySummary(topology),
 			CPUs:     makeCPUList(cpus),
 		},
-		DriverConfig: driverConfig,
+		DriverConfig: makeDriverConfigSnapshot(driverConfig),
 	}, nil
+}
+
+// makeDriverConfigSnapshot maps runtime settings to the fixed v1 report schema.
+func makeDriverConfigSnapshot(cfg driverconfig.Config) gatherinfoapi.DriverConfig {
+	return gatherinfoapi.DriverConfig{
+		Kubeconfig:                            cfg.Kubeconfig,
+		HostnameOverride:                      cfg.HostnameOverride,
+		BindAddress:                           cfg.BindAddress,
+		ReservedCPUs:                          cfg.ReservedCPUs,
+		CPUDeviceMode:                         cfg.CPUDeviceMode,
+		GroupBy:                               cfg.GroupBy,
+		ExposePCIeRoots:                       cfg.ExposePCIeRoots,
+		SysFSOverlay:                          cfg.SysFSOverlay,
+		KubeletRootDir:                        cfg.KubeletRootDir,
+		PublishNodeAllocatableResourceMapping: cfg.PublishNodeAllocatableResourceMapping,
+		Allocator:                             cfg.Allocator,
+	}
 }
 
 // driverFilesystemPath resolves a path in the running driver's mount namespace.
@@ -242,12 +220,12 @@ func driverFilesystemPath(driverCmdlinePath, name string) string {
 	return filepath.Join(processDir, "cwd") + string(filepath.Separator) + name
 }
 
-func makeTopologySummary(topology *cpuinfo.CPUTopology) TopologySummary {
+func makeTopologySummary(topology *cpuinfo.CPUTopology) gatherinfoapi.TopologySummary {
 	if topology == nil {
-		return TopologySummary{}
+		return gatherinfoapi.TopologySummary{}
 	}
 
-	return TopologySummary{
+	return gatherinfoapi.TopologySummary{
 		NumCPUs:        topology.NumCPUs,
 		NumCores:       topology.NumCores,
 		NumUncoreCache: topology.NumUncoreCache,
@@ -257,10 +235,10 @@ func makeTopologySummary(topology *cpuinfo.CPUTopology) TopologySummary {
 	}
 }
 
-func makeCPUList(cpus []cpuinfo.CPUInfo) []CPU {
-	out := make([]CPU, 0, len(cpus))
+func makeCPUList(cpus []cpuinfo.CPUInfo) []gatherinfoapi.CPU {
+	out := make([]gatherinfoapi.CPU, 0, len(cpus))
 	for _, info := range cpus {
-		cpu := CPU{
+		cpu := gatherinfoapi.CPU{
 			CPUID:          info.CpuID,
 			CoreID:         info.CoreID,
 			SocketID:       info.SocketID,
@@ -377,9 +355,9 @@ func splitFlag(arg string) (name string, hasValue bool, ok bool) {
 	return name, false, true
 }
 
-func readToolVersion() ToolVersion {
+func readToolVersion() gatherinfoapi.ToolVersion {
 	info := buildinfo.Read()
-	return ToolVersion{
+	return gatherinfoapi.ToolVersion{
 		GoVersion:   info.GoVersion,
 		VCSRevision: info.VCSRevision,
 		VCSTime:     info.VCSTime,

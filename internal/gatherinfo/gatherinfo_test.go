@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
+	gatherinfoapi "github.com/kubernetes-sigs/dra-driver-cpu/api/gatherinfo/v1"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/gatherinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"sigs.k8s.io/yaml"
@@ -217,25 +218,25 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 	return string(data), errors.Join(runErr, closeErr, readErr, readerCloseErr)
 }
 
-func readReport(t *testing.T, data []byte) gatherinfo.Report {
+func readReport(t *testing.T, data []byte) gatherinfoapi.Report {
 	t.Helper()
 
 	if !strings.HasPrefix(string(data), "---\n") {
 		t.Fatalf("yaml output does not start with document marker: %q", string(data))
 	}
 
-	var report gatherinfo.Report
+	var report gatherinfoapi.Report
 	if err := yaml.Unmarshal(data, &report); err != nil {
 		t.Fatalf("failed to unmarshal report YAML: %v", err)
 	}
 	return report
 }
 
-func assertCommonReport(t *testing.T, report gatherinfo.Report) {
+func assertCommonReport(t *testing.T, report gatherinfoapi.Report) {
 	t.Helper()
 
-	if report.LayoutVersion != gatherinfo.LayoutVersion {
-		t.Fatalf("layoutVersion = %q, want %q", report.LayoutVersion, gatherinfo.LayoutVersion)
+	if report.LayoutVersion != gatherinfoapi.LayoutVersion {
+		t.Fatalf("layoutVersion = %q, want %q", report.LayoutVersion, gatherinfoapi.LayoutVersion)
 	}
 	if report.CPUDetails.Topology.NumCPUs != 1 {
 		t.Fatalf("numCPUs = %d, want 1", report.CPUDetails.Topology.NumCPUs)

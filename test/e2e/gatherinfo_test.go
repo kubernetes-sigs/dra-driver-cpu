@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/kubernetes-sigs/dra-driver-cpu/internal/gatherinfo"
+	gatherinfoapi "github.com/kubernetes-sigs/dra-driver-cpu/api/gatherinfo/v1"
 	e2eclient "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/client"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	e2epod "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/pod"
@@ -57,10 +57,10 @@ var _ = ginkgo.Describe("dracpu-gatherinfo", ginkgo.Ordered, func() {
 					"dracpu-gatherinfo failed in pod %q on node %q; stdout: %s; stderr: %s",
 					pod.Name, pod.Spec.NodeName, stdout, stderr)
 
-				var report gatherinfo.Report
+				var report gatherinfoapi.Report
 				gomega.Expect(yaml.Unmarshal([]byte(stdout), &report)).To(gomega.Succeed(),
 					"dracpu-gatherinfo output from pod %q should be valid YAML", pod.Name)
-				gomega.Expect(report.LayoutVersion).To(gomega.Equal(gatherinfo.LayoutVersion),
+				gomega.Expect(report.LayoutVersion).To(gomega.Equal(gatherinfoapi.LayoutVersion),
 					"dracpu-gatherinfo output from pod %q should include the report layout version", pod.Name)
 				gomega.Expect(report.CPUDetails.CPUs).NotTo(gomega.BeEmpty(),
 					"dracpu-gatherinfo output from pod %q should include CPU details", pod.Name)
