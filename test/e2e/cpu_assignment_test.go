@@ -73,6 +73,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		cpuDeviceMode                 string
 		groupBy                       string
 		publishNodeAllocatableMapping bool
+		allocatableCPUs               cpuset.CPUSet
 	)
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
@@ -90,9 +91,6 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 
 		rootFxt, err = fixture.ForGinkgo()
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create root fixture: %v", err)
-		infraFxt := rootFxt.WithPrefix("infra")
-		gomega.Expect(infraFxt.Setup(ctx)).To(gomega.Succeed())
-		ginkgo.DeferCleanup(infraFxt.Teardown)
 
 		ginkgo.By("checking the daemonset configuration matches the test configuration")
 		daemonSet, err := rootFxt.K8SClientset.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, "dracpu", metav1.GetOptions{})
@@ -118,20 +116,13 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		rootFxt.Log.Info("using worker node", "nodeName", targetNode.Name)
 
-		infoPod := discovery.MakePod(infraFxt.Namespace.Name, dracpuTesterImage)
-		infoPod = e2epod.PinToNode(infoPod, targetNode.Name)
-		infoPod, err = e2epod.RunToCompletion(ctx, infraFxt.K8SClientset, infoPod)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create discovery pod: %v", err)
-		data, err := e2epod.GetLogs(ctx, infraFxt.K8SClientset, infoPod)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs from discovery pod: %v", err)
-		gomega.Expect(unmarshalLatestReport(data, &targetNodeCPUInfo)).To(gomega.Succeed())
-
-		allocatableCPUs := makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
+		targetNodeCPUInfo = discoverDriverCPUInfo(ctx, rootFxt.K8SClientset, targetNode.Name)
+		allocatableCPUs = makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
 		availableCPUs = allocatableCPUs.Difference(reservedCPUs)
 		if reservedCPUs.Size() > 0 {
 			gomega.Expect(availableCPUs).To(cpusetmatchers.HaveNoOverlapWith(reservedCPUs))
 		}
-		rootFxt.Log.Info("checking worker node", "nodeName", infoPod.Spec.NodeName, "coreCount", len(targetNodeCPUInfo.CPUs), "allocatableCPUs", allocatableCPUs.String(), "reservedCPUs", reservedCPUs.String(), "availableCPUs", availableCPUs.String())
+		rootFxt.Log.Info("checking worker node", "nodeName", targetNode.Name, "coreCount", allocatableCPUs.Size(), "allocatableCPUs", allocatableCPUs.String(), "reservedCPUs", reservedCPUs.String(), "availableCPUs", availableCPUs.String())
 	})
 
 	ginkgo.When("setting resource claims", func() {
@@ -173,7 +164,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				if availableCPUs.Size() < minCPUsAvailableForPodAllocation {
 					ginkgo.Skip(fmt.Sprintf("exclusive allocation tests require at least %d cpus in the worker node", minCPUsAvailableForPodAllocation))
 				}
-				fixture.By("found target nodes with %d allocatable cpus", len(targetNodeCPUInfo.CPUs))
+				fixture.By("found target node with %d allocatable cpus", allocatableCPUs.Size())
 			})
 
 			ginkgo.It("should allocate exclusive CPUs and remove from the shared pool", func(ctx context.Context) {
@@ -542,7 +533,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				gomega.Expect(alloc.CPUAssigned).To(cpusetmatchers.BeSubsetOf(availableCPUs), "allocated CPUs must be within available set")
 			})
 
-			ginkgo.It("should reuse the same grouped device for request with count > 1 when only one device matches", func(ctx context.Context) {
+			ginkgo.It("should reuse the same grouped device across requests when only one device matches", func(ctx context.Context) {
 				if cpuDeviceMode != device.CPU_DEVICE_MODE_GROUPED {
 					ginkgo.Skip("this test only applies to grouped CPU device mode")
 				}
@@ -570,37 +561,36 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					ginkgo.Skip("need one NUMA-node grouped device with at least 2 allocatable CPUs for this test")
 				}
 
-				fixture.By("creating a ResourceClaim where only one grouped device is eligible")
+				fixture.By("creating separate requests which select the same grouped device")
+				// Count selects distinct devices within one request. Separate requests can
+				// consume capacity from the same device when it allows multiple allocations.
+				requests := make([]resourcev1.DeviceRequest, desiredTotalCPUs)
+				for i := range requests {
+					requests[i] = resourcev1.DeviceRequest{
+						Name: fmt.Sprintf("request-%d", i),
+						Exactly: &resourcev1.ExactDeviceRequest{
+							DeviceClassName: "dra.cpu",
+							Count:           1,
+							Capacity: &resourcev1.CapacityRequirements{
+								Requests: map[resourcev1.QualifiedName]resource.Quantity{
+									"dra.cpu/cpu": *resource.NewQuantity(1, resource.DecimalSI),
+								},
+							},
+							Selectors: []resourcev1.DeviceSelector{{
+								CEL: &resourcev1.CELDeviceSelector{
+									Expression: fmt.Sprintf(`device.attributes["dra.cpu"].numaNodeID == %d`, selectorValue),
+								},
+							}},
+						},
+					}
+				}
 				cpuClaim := &resourcev1.ResourceClaim{
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace:    fxt.Namespace.Name,
-						GenerateName: "claim-same-device-multicount-",
+						GenerateName: "claim-same-device-multirequest-",
 					},
 					Spec: resourcev1.ResourceClaimSpec{
-						Devices: resourcev1.DeviceClaim{
-							Requests: []resourcev1.DeviceRequest{
-								{
-									Name: "request-same-device",
-									Exactly: &resourcev1.ExactDeviceRequest{
-										DeviceClassName: "dra.cpu",
-										Count:           int64(desiredTotalCPUs),
-										Capacity: &resourcev1.CapacityRequirements{
-											Requests: map[resourcev1.QualifiedName]resource.Quantity{
-												"dra.cpu/cpu": *resource.NewQuantity(1, resource.DecimalSI),
-											},
-										},
-										Selectors: []resourcev1.DeviceSelector{
-											{
-												CEL: &resourcev1.CELDeviceSelector{
-													// the 0-th node is always present
-													Expression: fmt.Sprintf(`device.attributes["dra.cpu"].numaNodeID == %d`, selectorValue),
-												},
-											},
-										},
-									},
-								},
-							},
-						},
+						Devices: resourcev1.DeviceClaim{Requests: requests},
 					},
 				}
 				createdClaim, err := fxt.K8SClientset.ResourceV1().ResourceClaims(fxt.Namespace.Name).Create(ctx, cpuClaim, metav1.CreateOptions{})
@@ -611,14 +601,15 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
-				fixture.By("verifying the claim allocation expanded into two results on the same device")
+				fixture.By("verifying both requests allocated capacity from the same device")
 				allocatedClaim, err := fxt.K8SClientset.ResourceV1().ResourceClaims(fxt.Namespace.Name).Get(ctx, createdClaim.Name, metav1.GetOptions{})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
-				gomega.Expect(allocatedClaim).To(resourceclaimmatchers.ReuseSameDeviceForRequest("request-same-device", desiredTotalCPUs))
+				gomega.Expect(allocatedClaim).To(resourceclaimmatchers.ReuseSameDeviceForRequests("request-0", "request-1"))
+				gomega.Expect(allocatedClaim).To(resourceclaimmatchers.HaveAllocationResultsAllConsuming("dra.cpu/cpu", 1))
 
 				fixture.By("verifying the pod got 2 distinct CPUs from the selected grouped device")
 				alloc := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, createdPod)
-				fxt.Log.Info("same-device multi-count allocation", "cpuAssigned", alloc.CPUAssigned.String(), "selectorValue", selectorValue)
+				fxt.Log.Info("same-device multi-request allocation", "cpuAssigned", alloc.CPUAssigned.String(), "selectorValue", selectorValue)
 				gomega.Expect(alloc.CPUAssigned).To(cpusetmatchers.HaveSize(desiredTotalCPUs), "expected 2 distinct CPUs allocated")
 				gomega.Expect(alloc.CPUAssigned).To(cpusetmatchers.BeSubsetOf(eligibleCPUs), "allocated CPUs must come from the selected grouped device")
 			})
