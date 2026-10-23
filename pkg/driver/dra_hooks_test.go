@@ -599,6 +599,8 @@ func TestPrepareResourceClaimsSucceedsBeforePublishResources(t *testing.T) {
 			mockCdiMgr := newMockCdiMgr()
 			driver.cdiMgr = mockCdiMgr
 
+			// This fixture exercises preparation after initial runtime recovery.
+			driver.hasSynchronized = true
 			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{tc.claim})
 			require.NoError(t, err)
 			require.NoError(t, preparedClaims[claimUID].Err)
@@ -814,6 +816,8 @@ func TestPrepareResourceClaims(t *testing.T) {
 			// Inject a mock here because we test New()-only paths.
 			driver.cdiMgr = mockCdiMgr
 
+			// This fixture exercises preparation after initial runtime recovery.
+			driver.hasSynchronized = true
 			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
 			require.NoError(t, err)
 			require.Len(t, preparedClaims, tc.expectedResultsCount)
@@ -885,6 +889,8 @@ func TestPrepareResourceClaimsRejectsExhaustingSharedPool(t *testing.T) {
 			driver := newDriver(grouped)
 			driver.podConfigStore.SetContainerState("shared-pod", store.NewContainerState("shared-ctr", "shared-uid"))
 
+			// This fixture exercises preparation after initial runtime recovery.
+			driver.hasSynchronized = true
 			prepared, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claimForAllCPUs("claim-full", grouped)})
 			require.NoError(t, err)
 			result := prepared[types.UID("claim-full")]
@@ -897,6 +903,8 @@ func TestPrepareResourceClaimsRejectsExhaustingSharedPool(t *testing.T) {
 		t.Run(mode+": allows a claim that would exhaust the shared pool when no shared containers exist", func(t *testing.T) {
 			driver := newDriver(grouped)
 
+			// This fixture exercises preparation after initial runtime recovery.
+			driver.hasSynchronized = true
 			prepared, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claimForAllCPUs("claim-full", grouped)})
 			require.NoError(t, err)
 			result := prepared[types.UID("claim-full")]
@@ -1012,6 +1020,8 @@ func TestPrepareResourceClaimsRejectAdminAccess(t *testing.T) {
 			mockCdiMgr := newMockCdiMgr()
 			driver.cdiMgr = mockCdiMgr
 
+			// This fixture exercises preparation after initial runtime recovery.
+			driver.hasSynchronized = true
 			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
 			require.NoError(t, err)
 			require.Len(t, preparedClaims, 1)
@@ -1155,6 +1165,8 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			mockCdiMgr.addError = fmt.Errorf("cdi add error")
 			tc.driver.cdiMgr = mockCdiMgr
 
+			// This fixture exercises preparation after initial runtime recovery.
+			tc.driver.hasSynchronized = true
 			preparedClaims, err := tc.driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{tc.claim})
 			require.NoError(t, err)
 			require.Error(t, preparedClaims[claimUID].Err)
@@ -1471,6 +1483,8 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 			// Inject a mock here because we test New()-only paths.
 			driver.cdiMgr = mockCdiMgr
 
+			// This fixture exercises preparation after initial runtime recovery.
+			driver.hasSynchronized = true
 			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
 			require.NoError(t, err)
 
@@ -1596,6 +1610,8 @@ func TestPrepareResourceClaimsGroupedModeRejectsInvalidCPUCapacity(t *testing.T)
 			}
 			claim := testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{allocationResult})
 
+			// This fixture exercises preparation after initial runtime recovery.
+			driver.hasSynchronized = true
 			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
 			require.NoError(t, err)
 			result := preparedClaims[claimUID]
@@ -1636,6 +1652,8 @@ func TestPrepareResourceClaimsGroupedModeIgnoresAllocationsFromOtherDrivers(t *t
 		},
 	})
 
+	// This fixture exercises preparation after initial runtime recovery.
+	driver.hasSynchronized = true
 	preparedClaims, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
 	require.NoError(t, err)
 	result := preparedClaims[claimUID]
@@ -1712,6 +1730,8 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 				}
 			}
 
+			// This fixture exercises preparation after initial runtime recovery.
+			driver.hasSynchronized = true
 			_, err = driver.PrepareResourceClaims(context.Background(), makeClaim(tc.firstDevices))
 			require.NoError(t, err)
 
@@ -1848,6 +1868,8 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			driver, cpuStore, cdiMgr := tc.makeDriver(logger)
 
+			// This fixture exercises preparation after initial runtime recovery.
+			driver.hasSynchronized = true
 			_, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{tc.firstClaim})
 			require.NoError(t, err)
 
@@ -2079,6 +2101,8 @@ func TestPrepareGroupedResourceClaimMachineModeRejectsMultiDeviceRequests(t *tes
 				}},
 			}
 
+			// This fixture exercises preparation after initial runtime recovery.
+			driver.hasSynchronized = true
 			preparedClaims, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
 			require.NoError(t, err)
 			result, ok := preparedClaims[claimUID]
@@ -2434,6 +2458,8 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 			mockCdi := newMockCdiMgr()
 			driver := createCPUDriverExternalAllocForTest(t, devattr.GROUP_BY_MACHINE, cpuInfos, tc.initialAllocations, testReserved, mockCdi)
 
+			// This fixture exercises preparation after initial runtime recovery.
+			driver.hasSynchronized = true
 			prepared, err := driver.PrepareResourceClaims(context.Background(), tc.claims)
 			require.NoError(t, err)
 
