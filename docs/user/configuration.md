@@ -266,4 +266,5 @@ the kubelet root. A cluster whose nodes disagree can run one release per node cl
 each release its own `nodeSelector` and keep the cluster-scoped `dra.cpu` `DeviceClass`,
 whose name is fixed, in exactly one of them by setting `deviceClass.create=false` in the
 others. Installing a second release with the DeviceClass still enabled fails with
-`invalid ownership metadata`.
+`invalid ownership metadata`. Uninstall the release that owns the DeviceClass last, since
+removing it deletes the DeviceClass that the other releases' claims reference.

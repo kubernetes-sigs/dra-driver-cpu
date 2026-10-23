@@ -60,7 +60,7 @@
       ],
       "properties": {
         "create": {
-          "description": "Create the `dra.cpu` DeviceClass. The name is fixed, so when several releases of this chart share a cluster (for example one release per node class with a different `reservedCPUs`), leave it enabled in exactly one of them",
+          "description": "Create the `dra.cpu` DeviceClass. The name is fixed, so when several releases of this chart share a cluster (for example one release per node class with a different `reservedCPUs`), leave it enabled in exactly one of them. Each release then needs its own `nodeSelector` or `affinity` so that no node runs two drivers, and the release that owns the DeviceClass is uninstalled last, since removing it deletes the DeviceClass that the other releases' claims reference",
           "type": "boolean"
         }
       },

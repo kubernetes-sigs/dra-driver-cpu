@@ -47,7 +47,10 @@ Besides the driver DaemonSet, the chart installs the cluster-scoped `dra.cpu` `D
 that workload claims reference — verify it with `kubectl get deviceclass`. The DeviceClass
 name is fixed, so a cluster that runs several releases of the chart (for example one per
 node class with a different `reservedCPUs` or `kubeletRootDir`) keeps `deviceClass.create`
-enabled in only one of them.
+enabled in only one of them. Give each release its own `nodeSelector` or `affinity`, since
+the default selects every node and a node must run exactly one driver. Uninstall the release
+that owns the DeviceClass last: removing it deletes the DeviceClass, and claims on the other
+releases' nodes stop allocating until it exists again.
 
 For environments with incomplete or synthetic sysfs topology, e.g. Docker Desktop for macOS see the [sysfs overlay example](../../hack/examples/sysfs-overlay/README.md). It demonstrates how to supply an overlay through `driverConfig.sysfsOverlay`, volume mounts, and volumes.
 
