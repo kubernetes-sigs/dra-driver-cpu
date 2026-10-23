@@ -116,8 +116,10 @@ on - is configured through other Helm values, not through this file.
 
 - Publish `nodeAllocatableResources` mappings in ResourceSlice devices, so the scheduler
   and kubelet account claimed CPUs as node allocatable `cpu`.
-- Requires the `DRANodeAllocatableResources` feature gate (alpha, 1.37+). See
-  [Workload Configuration Requirements](workload-requirements.md).
+- Requires the `DRANodeAllocatableResources` feature gate on the API server, scheduler, and
+  kubelets. The feature is alpha in Kubernetes 1.37 and beta in 1.38. In 1.38 the gate remains
+  disabled by default with the default minimum compatibility version (1.37). See
+  [Workload Configuration Requirements](workload-requirements.md) for version-specific details.
 
 #### Example
 

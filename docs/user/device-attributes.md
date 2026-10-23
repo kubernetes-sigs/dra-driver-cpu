@@ -275,10 +275,13 @@ spec:
 
 ### With node allocatable mapping
 
-When the driver runs with `publishNodeAllocatableResourceMapping: true` (requires the
-`DRANodeAllocatableResources` feature gate, alpha in 1.37+), every device additionally
-carries a `nodeAllocatableResources` entry translating its DRA allocation into node
-allocatable `cpu`.
+When the driver runs with `publishNodeAllocatableResourceMapping: true` and the Kubernetes
+`DRANodeAllocatableResources` feature gate is enabled on the API server, scheduler, and kubelets,
+every device additionally carries a `nodeAllocatableResources` entry translating its DRA
+allocation into node allocatable `cpu`. Kubernetes 1.37 provides this as an alpha feature; 1.38
+promotes it to beta, with a compatibility-dependent default.
+See [Workload Configuration Requirements](workload-requirements.md#with-node-allocatable-accounting)
+for the version-specific enablement details.
 
 Grouped mode maps the consumed `dra.cpu/cpu` capacity 1:1:
 
