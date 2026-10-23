@@ -88,9 +88,7 @@ checkHostnameOverride() {
 }
 
 # refuses <name> <message> <helm args...>; the render has to fail and name the
-# guard the case is for, so an unrelated helm failure cannot satisfy it. Schema
-# validation is off throughout: these cover the template's own refusals, and the
-# schema is checked by helm lint and the generated-schema target.
+# guard the case is for, so an unrelated helm failure cannot satisfy it.
 refuses() {
 	local name=$1 want=$2
 	shift 2
@@ -109,6 +107,11 @@ refuses() {
 
 # Unset: the chart leaves the root to the driver, so there is no flag to check.
 accepts default '' "${default_root}" false
+
+# The driver serves health checks only at /healthz, so the chart intentionally
+# does not expose a probe path override.
+refuses healthz-path healthzPath --set-string healthzPath=/readyz
+
 accepts relocated /var/lib/custom-kubelet /var/lib/custom-kubelet true
 # Cleaned by the template, so the mounts and the flag cannot differ by a slash.
 accepts uncleaned /var/lib/custom-kubelet/ /var/lib/custom-kubelet true

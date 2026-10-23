@@ -84,10 +84,6 @@
         "null"
       ]
     },
-    "healthzPath": {
-      "description": "Path for liveness and readiness probes",
-      "type": "string"
-    },
     "healthzPort": {
       "description": "Port the HTTP server binds to; used for the container port and probes",
       "type": "integer",
