@@ -46,7 +46,7 @@ honor these settings, where applicable.
   the cluster against which the tests run.
   If it is not set, the suit will pick a random node among the workers.
 
-- `DRACPU_E2E_RESERVED_CPUS`: (optional) if set, it is meant to mirror the driver `--reserved-cpus`
+- `DRACPU_E2E_RESERVED_CPUS`: (optional) if set, it is meant to mirror the driver `reservedCPUs`
   setting. The value must be a linux cpuset string. The tests will ensure no containers
   consume these CPUs.
   NOTE: the Makefile defaults to "0" if not set, because a nonempty value is needed internally.
@@ -55,7 +55,7 @@ honor these settings, where applicable.
 
 - `DRACPU_E2E_CPU_DEVICE_MODE`: (optional): If set, change the behavior of the tests to assume
   the driver is configured with the corresponding device mode. Is meant to mirror the driver
-  `--cpu-device-mode` setting.
+  `cpuDeviceMode` setting.
   NOTE: the Makefile defaults to "grouped" if not set, because a nonempty value is needed internally.
   NOTE: Likewise the e2e tests, the Makefile also behaves differently depending on this setting.
   It is recommended to set it before to run targets like `make ci-manifests`.

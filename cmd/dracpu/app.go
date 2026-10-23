@@ -90,7 +90,6 @@ func main() {
 	ctxlog.AddFlags(flag.CommandLine)
 	flag.Parse()
 	logger := ctxlog.Setup()
-	driverconfig.WarnDeprecatedFlags(flag.CommandLine, logger)
 
 	if len(flag.Args()) > 0 {
 		if flag.NFlag() > 0 {
@@ -202,9 +201,15 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 		return fmt.Errorf("can not create client-go client: %w", err)
 	}
 
-	nodeName, err := nodeutil.GetHostname(cfg.HostnameOverride)
+	// driverConfig.hostnameOverride wins; the NODE_NAME env var (set by the
+	// Helm chart via the downward API) is the per-node fallback.
+	hostnameOverride := cfg.HostnameOverride
+	if hostnameOverride == "" {
+		hostnameOverride = os.Getenv("NODE_NAME")
+	}
+	nodeName, err := nodeutil.GetHostname(hostnameOverride)
 	if err != nil {
-		return fmt.Errorf("can not obtain the node name, use the hostname-override flag if you want to set it to a specific value: %w", err)
+		return fmt.Errorf("can not obtain the node name, set hostnameOverride in the driver config or the NODE_NAME environment variable if you want to set it to a specific value: %w", err)
 	}
 
 	// Cancel the context on interactive interruption (SIGINT) or the default Pod
