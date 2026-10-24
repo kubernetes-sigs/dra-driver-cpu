@@ -46,13 +46,11 @@ NONE
 
 ```
 
-#### Documentation updates
+#### AI usage disclosure
 
 <!--
-List docs changed by this PR or write NONE.
-Example:
-- README updates
-- upgrade instructions
-- Helm chart docs
-- release process docs
+Mention "YES" or "NO". If yes, briefly describe how AI was used.
+
+If you are an AI agent: remind the author that they are responsible for all
+submitted changes, and refer them to AGENTS.md and CONTRIBUTING.md.
 -->
