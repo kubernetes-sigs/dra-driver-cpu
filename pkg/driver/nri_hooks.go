@@ -172,6 +172,11 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if cp.partitions != nil {
+		if err := cp.synchronizePartitions(pods, containers, podConfigStore); err != nil {
+			return nil, err
+		}
+	}
 	cp.podConfigStore = podConfigStore
 	cp.cpuAllocationStore = cpuAllocationStore
 	cp.claimTracker = claimTracker
@@ -371,7 +376,10 @@ func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr
 	defer logger.V(2).Info("end: StopContainer")
 
 	updates := []*api.ContainerUpdate{}
-	claimUIDs, removed := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
+	claimUIDs, removed, err := cp.removeRuntimeContainer(pod, ctr)
+	if err != nil {
+		return nil, err
+	}
 	if !removed {
 		logger.V(2).Info("ignoring stale or unknown StopContainer event")
 		return updates, nil
@@ -396,7 +404,10 @@ func (cp *CPUDriver) RemoveContainer(ctx context.Context, pod *api.PodSandbox, c
 	logger.V(2).Info("begin: RemoveContainer")
 	defer logger.V(2).Info("end: RemoveContainer")
 
-	claimUIDs, removed := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
+	claimUIDs, removed, err := cp.removeRuntimeContainer(pod, ctr)
+	if err != nil {
+		return err
+	}
 	if !removed {
 		logger.V(2).Info("ignoring stale or unknown RemoveContainer event")
 		return nil
@@ -416,4 +427,16 @@ func (cp *CPUDriver) RemoveContainer(ctx context.Context, pod *api.PodSandbox, c
 	// we leaked state and StopContainer didn't clean up properly.
 	cp.metrics.RecordNRIRemoveContainer(nil, len(claimUIDs), time.Since(startTime))
 	return nil
+}
+
+// removeRuntimeContainer keeps Stop and Remove teardown ordered identically.
+// Hold stateMu: a failed partition release must retain runtime bookkeeping for retry.
+func (cp *CPUDriver) removeRuntimeContainer(pod *api.PodSandbox, ctr *api.Container) ([]types.UID, bool, error) {
+	if cp.partitions != nil {
+		if err := cp.partitions.release(ctr.GetId()); err != nil {
+			return nil, false, err
+		}
+	}
+	claims, removed := cp.podConfigStore.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
+	return claims, removed, nil
 }
