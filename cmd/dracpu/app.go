@@ -56,8 +56,10 @@ const (
 )
 
 var (
-	driverFlags driverconfig.Config
-	configFile  string
+	driverFlags         driverconfig.Config
+	configFile          string
+	partitionMode       string
+	partitionCgroupRoot string
 
 	ready atomic.Bool
 )
@@ -66,6 +68,9 @@ func init() {
 	// --config is kept outside Config to avoid a self-referential loop,
 	// following the convention used by kubeadm and similar tools.
 	flag.StringVar(&configFile, "config", "", configFlagHelp)
+	// POC-only flags: deliberately outside the supported configuration/Helm schema.
+	flag.StringVar(&partitionMode, "experimental-cpuset-partition", "", "Disposable-node POC: root or isolated; requires exclusive ownership of cpuset partition files, cpuManagerPolicy=none, and no existing DRA containers on cold startup")
+	flag.StringVar(&partitionCgroupRoot, "experimental-cgroup-root", "/sys/fs/cgroup", "Host cgroup v2 root mounted read-write for the partition POC; driver writes existing container ancestors below it")
 	driverFlags.AddFlags(flag.CommandLine)
 	flag.CommandLine.Usage = func() {
 		printRootUsage(flag.CommandLine)
@@ -214,6 +219,8 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 	defer stop()
 
 	driverConfig := driver.Config{
+		ExperimentalCPUSetPartition:           partitionMode,
+		ExperimentalCgroupRoot:                partitionCgroupRoot,
 		DriverName:                            dracpuapi.DriverName,
 		NodeName:                              nodeName,
 		ReservedCPUs:                          reservedCPUSet,

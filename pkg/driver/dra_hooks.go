@@ -420,6 +420,13 @@ func (cp *CPUDriver) unprepareResourceClaim(ctx context.Context, logger logr.Log
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if cp.partitions != nil {
+		if allocation, ok := cp.cpuAllocationStore.GetResourceClaimAllocation(claim.UID); ok {
+			if err := cp.partitions.checkUnprepare(allocation); err != nil {
+				return fmt.Errorf("cannot unprepare claim %s: %w", claim.UID, err)
+			}
+		}
+	}
 	// Remove the CDI spec first. If that fails, keep the allocation recorded so
 	// the driver does not make those CPUs available while stale CDI state remains.
 	if err := cp.cdiMgr.RemoveDevice(logger, getCDIDeviceName(claim.UID)); err != nil {

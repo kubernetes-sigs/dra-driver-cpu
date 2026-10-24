@@ -121,6 +121,7 @@ type CPUDriver struct {
 	// Acquire it before store locks; never call into the runtime while holding it.
 	stateMu         sync.Mutex
 	hasSynchronized bool
+	partitions      *cpusetPartitions
 	// initialSync is closed when hasSynchronized first becomes true.
 	initialSync     chan struct{}
 	initialSyncWait time.Duration
@@ -182,14 +183,17 @@ func (pr Providers) EnsureSysFS() sysfs.FS {
 
 // Config is the configuration for the CPUDriver.
 type Config struct {
-	DriverName       string
-	NodeName         string
-	ReservedCPUs     cpuset.CPUSet
-	CPUDeviceMode    string
-	CPUDeviceGroupBy string
-	Allocator        string
-	ExposePCIeRoots  bool
-	Metrics          Recorder
+	// ExperimentalCPUSetPartition enables the disposable-node lifecycle POC.
+	ExperimentalCPUSetPartition string
+	ExperimentalCgroupRoot      string
+	DriverName                  string
+	NodeName                    string
+	ReservedCPUs                cpuset.CPUSet
+	CPUDeviceMode               string
+	CPUDeviceGroupBy            string
+	Allocator                   string
+	ExposePCIeRoots             bool
+	Metrics                     Recorder
 	// KubeletRootDir is the kubelet root directory, from which the registrar
 	// and plugin data directories are derived. Required and absolute:
 	// driverconfig.Resolve refuses an empty or relative value, and New takes it as
@@ -213,12 +217,17 @@ func (cfg Config) DevicesPerResourceSlice() int {
 // No external listeners or goroutines are started; call Start to begin serving.
 func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, error) {
 	logger = logger.WithValues("driver", config.DriverName)
+	partitions, err := newCPUSetPartitions(config.ExperimentalCgroupRoot, config.ExperimentalCPUSetPartition)
+	if err != nil {
+		return nil, err
+	}
 
 	metricsRecorder := config.Metrics
 	if metricsRecorder == nil {
 		metricsRecorder = cpumetrics.Noop()
 	}
 	plugin := &CPUDriver{
+		partitions:      partitions,
 		initialSync:     make(chan struct{}),
 		initialSyncWait: initialSyncWait,
 		driverName:      config.DriverName,
