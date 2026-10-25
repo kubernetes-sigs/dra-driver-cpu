@@ -61,5 +61,8 @@ func (c Config) Validate() error {
 	if !filepath.IsAbs(c.KubeletRootDir) {
 		return fmt.Errorf("invalid kubeletRootDir %q: must be an absolute path", c.KubeletRootDir)
 	}
+	if err := c.ExperimentalCPUSetPartition.Validate(); err != nil {
+		return fmt.Errorf("invalid experimentalCPUSetPartition: %w", err)
+	}
 	return nil
 }

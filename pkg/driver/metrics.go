@@ -31,6 +31,7 @@ type Recorder interface {
 	RecordNRICreateContainer(err error, claimCount int, elapsed time.Duration)
 	RecordNRIStopContainer(err error, claimCount int, elapsed time.Duration)
 	RecordNRIRemoveContainer(err error, claimCount int, elapsed time.Duration)
+	SetCPUSetPartitions(valid, invalid, releasing int)
 }
 
 // refreshAllocationMetrics requires stateMu once the driver is serving callbacks.
