@@ -17,16 +17,40 @@ limitations under the License.
 package store
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/testr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/cpuset"
 )
+
+var noop = checkpoint.NewNOOPManager()
+
+type failingCheckpointManager struct {
+	err error
+}
+
+func (m failingCheckpointManager) CreateCheckpoint(string, checkpoint.Checkpoint) error {
+	return m.err
+}
+
+func (m failingCheckpointManager) GetCheckpoint(string, checkpoint.Checkpoint) error {
+	return m.err
+}
+
+func (m failingCheckpointManager) RemoveCheckpoint(string) error {
+	return m.err
+}
+
+func (m failingCheckpointManager) ListCheckpoints() ([]string, error) {
+	return nil, m.err
+}
 
 func newTestAllocationState(logger logr.Logger, allCPUs, reserved cpuset.CPUSet) *AllocationState {
 	var infos []cpuinfo.CPUInfo
@@ -40,7 +64,7 @@ func newTestAllocationState(logger logr.Logger, allCPUs, reserved cpuset.CPUSet)
 
 func requirePreparedAllocation(t testing.TB, logger logr.Logger, store *AllocationState, claimUID types.UID, cpus cpuset.CPUSet) {
 	t.Helper()
-	require.NoError(t, store.Reserve(logger, claimUID, cpus, false))
+	require.NoError(t, store.Reserve(logger, noop, claimUID, cpus, false))
 }
 
 func TestAllocationStatePreparedLifecycle(t *testing.T) {
@@ -50,16 +74,16 @@ func TestAllocationStatePreparedLifecycle(t *testing.T) {
 	claimCPUs := cpuset.New(0, 1)
 	store := newTestAllocationState(logger, allCPUs, cpuset.New())
 
-	require.NoError(t, store.Reserve(logger, claimUID, claimCPUs, false))
+	require.NoError(t, store.Reserve(logger, noop, claimUID, claimCPUs, false))
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
-	require.Error(t, store.Reserve(logger, "claim-2", claimCPUs, false))
+	require.Error(t, store.Reserve(logger, noop, "claim-2", claimCPUs, false))
 
-	updatedClaims, err := store.Bind(logger, "pod", "app", map[types.UID]cpuset.CPUSet{claimUID: claimCPUs})
+	updatedClaims, err := store.Bind(logger, noop, "pod", "app", map[types.UID]cpuset.CPUSet{claimUID: claimCPUs})
 	require.NoError(t, err)
 	require.Equal(t, []types.UID{claimUID}, updatedClaims)
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
 
-	store.Release(logger, claimUID)
+	require.NoError(t, store.Release(logger, noop, claimUID))
 	require.False(t, store.IsOwner(claimUID, "pod", "app"))
 	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
 }
@@ -131,11 +155,11 @@ func TestAllocationStateBind(t *testing.T) {
 				requirePreparedAllocation(t, logger, store, uid, cpus)
 			}
 			if tc.initial != nil {
-				_, err := store.Bind(logger, tc.initial.PodUID, tc.initial.ContainerName, map[types.UID]cpuset.CPUSet{"b": cpuset.New(1)})
+				_, err := store.Bind(logger, noop, tc.initial.PodUID, tc.initial.ContainerName, map[types.UID]cpuset.CPUSet{"b": cpuset.New(1)})
 				require.NoError(t, err)
 			}
 			before := store.Clone()
-			updatedClaims, err := store.Bind(logger, owner.PodUID, owner.ContainerName, tc.expected)
+			updatedClaims, err := store.Bind(logger, noop, owner.PodUID, owner.ContainerName, tc.expected)
 			if tc.wantErrIs != nil {
 				require.ErrorIs(t, err, tc.wantErrIs)
 				require.Equal(t, before.resourceClaimAllocations, store.resourceClaimAllocations, "failed validation must not change any claim")
@@ -148,7 +172,7 @@ func TestAllocationStateBind(t *testing.T) {
 			require.ElementsMatch(t, tc.wantUpdatedClaims, updatedClaims)
 			require.Equal(t, before.Snapshot(), store.Snapshot())
 			// Unbind clears only updated claims, preserving prior owners and CPU reservations.
-			store.Unbind(logger, append(updatedClaims, "missing")...)
+			require.NoError(t, store.Unbind(logger, noop, append(updatedClaims, "missing")...))
 			require.Equal(t, before.resourceClaimAllocations, store.resourceClaimAllocations)
 			require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2)))
 		})
@@ -160,12 +184,12 @@ func TestAllocationStateBindErrorDetails(t *testing.T) {
 	store := newTestAllocationState(logger, cpuset.New(0, 1, 2), cpuset.New())
 	requirePreparedAllocation(t, logger, store, "a", cpuset.New(0))
 
-	_, err := store.Bind(logger, "pod", "app", map[types.UID]cpuset.CPUSet{"missing": cpuset.New(2)})
+	_, err := store.Bind(logger, noop, "pod", "app", map[types.UID]cpuset.CPUSet{"missing": cpuset.New(2)})
 	var unknownClaimErr UnknownClaimError
 	require.ErrorAs(t, err, &unknownClaimErr)
 	require.Equal(t, types.UID("missing"), unknownClaimErr.ClaimUID)
 
-	_, err = store.Bind(logger, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(2)})
+	_, err = store.Bind(logger, noop, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(2)})
 	var mismatchErr ClaimCPUMismatchError
 	require.ErrorAs(t, err, &mismatchErr)
 	require.Equal(t, types.UID("a"), mismatchErr.ClaimUID)
@@ -178,7 +202,7 @@ func TestAllocationStateCloneRetainsOwnership(t *testing.T) {
 	store := newTestAllocationState(logger, cpuset.New(0, 1, 2), cpuset.New())
 	requirePreparedAllocation(t, logger, store, "a", cpuset.New(0))
 	requirePreparedAllocation(t, logger, store, "b", cpuset.New(1))
-	_, err := store.Bind(logger, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
+	_, err := store.Bind(logger, noop, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
 	require.NoError(t, err)
 	require.True(t, store.IsOwner("a", "pod", "app"))
 	require.False(t, store.IsOwner("b", "pod", "app"))
@@ -188,13 +212,10 @@ func TestAllocationStateCloneRetainsOwnership(t *testing.T) {
 	require.True(t, clone.IsOwner("a", "pod", "app"))
 	require.False(t, clone.IsOwner("b", "pod", "app"))
 	require.Equal(t, store.Snapshot(), clone.Snapshot())
-	// unbind
-	clone.Unbind(logger, "a")
-	// rebind, now succeeds
-	_, err = clone.Bind(logger, "other", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
+	require.NoError(t, clone.Unbind(logger, noop, "a"))
+	_, err = clone.Bind(logger, noop, "other", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
 	require.NoError(t, err)
-	clone.Release(logger, "b")
-	// rebound clone
+	require.NoError(t, clone.Release(logger, noop, "b"))
 	require.True(t, clone.IsOwner("a", "other", "app"))
 	require.True(t, clone.GetSharedCPUs().Equals(cpuset.New(1, 2)))
 
@@ -252,12 +273,12 @@ func TestAllocationStateResourceClaimAllocation(t *testing.T) {
 	require.True(t, cpus.Equals(gotCPUs))
 
 	// Remove allocation
-	store.Release(logger, claimUID)
+	require.NoError(t, store.Release(logger, noop, claimUID))
 	_, ok = store.GetResourceClaimAllocation(claimUID)
 	require.False(t, ok)
 
 	// Remove non-existent allocation
-	store.Release(logger, types.UID("non-existent"))
+	require.NoError(t, store.Release(logger, noop, types.UID("non-existent")))
 }
 
 func TestAllocationStateGetSharedCPUs(t *testing.T) {
@@ -317,8 +338,8 @@ func TestAllocationStateReserveRepeatedCalls(t *testing.T) {
 			store := newTestAllocationState(logger, allCPUs, cpuset.New())
 			claimUID := types.UID("claim-uid-1")
 
-			require.NoError(t, store.Reserve(logger, claimUID, tc.firstCPUs, false))
-			err := store.Reserve(logger, claimUID, tc.secondCPUs, false)
+			require.NoError(t, store.Reserve(logger, noop, claimUID, tc.firstCPUs, false))
+			err := store.Reserve(logger, noop, claimUID, tc.secondCPUs, false)
 			if tc.expectError {
 				require.Error(t, err)
 			} else {
@@ -364,7 +385,7 @@ func TestAllocationStateReserveSharedPoolGuard(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			store := newTestAllocationState(logger, allCPUs, cpuset.New())
-			err := store.Reserve(logger, "claim", test.cpus, test.hasSharedContainers)
+			err := store.Reserve(logger, noop, "claim", test.cpus, test.hasSharedContainers)
 			if test.wantErr {
 				require.ErrorContains(t, err, "would exhaust the shared CPU pool")
 				_, ok := store.GetResourceClaimAllocation("claim")
@@ -390,16 +411,60 @@ func TestAllocationStateStoreCacheConsistency(t *testing.T) {
 	expectedShared := cpuset.New(6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
 	require.True(t, store.GetSharedCPUs().Equals(expectedShared))
 
-	store.Release(logger, "claim-2")
+	require.NoError(t, store.Release(logger, noop, "claim-2"))
 	expectedShared = cpuset.New(2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
 	require.True(t, store.GetSharedCPUs().Equals(expectedShared))
 
-	store.Release(logger, "claim-1")
+	require.NoError(t, store.Release(logger, noop, "claim-1"))
 	expectedShared = cpuset.New(0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
 	require.True(t, store.GetSharedCPUs().Equals(expectedShared))
 
-	store.Release(logger, "claim-3")
+	require.NoError(t, store.Release(logger, noop, "claim-3"))
 	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
+}
+
+func TestAllocationStateMutationsFailClosedWhenCheckpointWriteFails(t *testing.T) {
+	logger := testr.New(t)
+	manager := failingCheckpointManager{err: errors.New("checkpoint write failed")}
+	allCPUs := cpuset.New(0, 1, 2, 3)
+	store := newTestAllocationState(logger, allCPUs, cpuset.New())
+
+	t.Run("reserve", func(t *testing.T) {
+		before := store.Clone()
+		err := store.Reserve(logger, manager, "claim", cpuset.New(0), false)
+		require.ErrorContains(t, err, "checkpoint write failed")
+		require.Equal(t, before.Snapshot(), store.Snapshot())
+		_, ok := store.GetResourceClaimAllocation("claim")
+		require.False(t, ok)
+	})
+
+	t.Run("bind", func(t *testing.T) {
+		require.NoError(t, store.Reserve(logger, noop, "claim", cpuset.New(0), false))
+		before := store.Clone()
+		_, err := store.Bind(logger, manager, "pod", "container", map[types.UID]cpuset.CPUSet{"claim": cpuset.New(0)})
+		require.ErrorContains(t, err, "checkpoint write failed")
+		require.Equal(t, before.resourceClaimAllocations, store.resourceClaimAllocations)
+		require.False(t, store.IsOwner("claim", "pod", "container"))
+	})
+
+	t.Run("unbind", func(t *testing.T) {
+		_, err := store.Bind(logger, noop, "pod", "container", map[types.UID]cpuset.CPUSet{"claim": cpuset.New(0)})
+		require.NoError(t, err)
+		before := store.Clone()
+		err = store.Unbind(logger, manager, "claim")
+		require.ErrorContains(t, err, "checkpoint write failed")
+		require.Equal(t, before.resourceClaimAllocations, store.resourceClaimAllocations)
+		require.True(t, store.IsOwner("claim", "pod", "container"))
+	})
+
+	t.Run("release", func(t *testing.T) {
+		before := store.Clone()
+		err := store.Release(logger, manager, "claim")
+		require.ErrorContains(t, err, "checkpoint write failed")
+		require.Equal(t, before.Snapshot(), store.Snapshot())
+		_, ok := store.GetResourceClaimAllocation("claim")
+		require.True(t, ok)
+	})
 }
 
 func TestAllocationStateGetReservedCPUs(t *testing.T) {
@@ -422,7 +487,7 @@ func TestAllocationStateGetPreparedCPUs(t *testing.T) {
 	requirePreparedAllocation(t, logger, store, claimUID, cpus)
 	require.True(t, store.GetPreparedCPUs().Equals(cpus))
 
-	store.Release(logger, claimUID)
+	require.NoError(t, store.Release(logger, noop, claimUID))
 	require.True(t, store.GetPreparedCPUs().IsEmpty())
 }
 
@@ -447,7 +512,7 @@ func TestAllocationStateSnapshot(t *testing.T) {
 		ActiveResourceClaims: 1,
 	}, store.Snapshot())
 
-	store.Release(logger, "claim-1")
+	require.NoError(t, store.Release(logger, noop, "claim-1"))
 	requirePreparedAllocation(t, logger, store, "claim-1", cpuset.New(4, 5, 6))
 	require.Equal(t, AllocationSnapshot{
 		AllocatedCPUs:        3,
@@ -464,7 +529,7 @@ func TestAllocationStateSnapshot(t *testing.T) {
 		ActiveResourceClaims: 2,
 	}, store.Snapshot())
 
-	store.Release(logger, "claim-1")
+	require.NoError(t, store.Release(logger, noop, "claim-1"))
 	require.Equal(t, AllocationSnapshot{
 		AllocatedCPUs:        2,
 		AvailableCPUs:        4,

@@ -18,6 +18,7 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -127,7 +128,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				}
 				// Synchronize restores an allocation that already exists in the runtime;
 				// the shared-pool guard applies only to new reservations.
-				if err := allocationState.Reserve(caLogger, uid, cpus, false); err != nil {
+				if err := allocationState.Reserve(caLogger, cp.checkpointMgr, uid, cpus, false); err != nil {
 					return nil, err
 				}
 
@@ -139,7 +140,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			if len(validatedClaimAllocations) == 0 {
 				state = store.NewContainerState(container.GetName(), containerUID)
 			} else {
-				if _, err := allocationState.Bind(cLogger, types.UID(pod.Uid), container.Name, validatedClaimAllocations); err != nil {
+				if _, err := allocationState.Bind(cLogger, cp.checkpointMgr, types.UID(pod.Uid), container.Name, validatedClaimAllocations); err != nil {
 					return nil, err
 				}
 				cLogger.V(2).Info("found guaranteed CPUs", "cpus", allGuaranteedCPUs.String())
@@ -312,7 +313,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 			guaranteedCPUs = guaranteedCPUs.Union(cpus)
 			claimUIDs = append(claimUIDs, uid)
 		}
-		updatedClaims, err := cp.allocationState.Bind(logger, podUID, ctr.Name, claimAllocations)
+		updatedClaims, err := cp.allocationState.Bind(logger, cp.checkpointMgr, podUID, ctr.Name, claimAllocations)
 		if err != nil {
 			return nil, nil, fmt.Errorf("cannot bind claim to container %q in pod %q: %w", ctr.Name, pod.Uid, err)
 		}
@@ -327,7 +328,12 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		if len(updatedClaims) > 0 {
 			updates, err = sharedContainerUpdatesFor(logger, cp.allocationState, cp.podState, containerId)
 			if err != nil {
-				cp.allocationState.Unbind(logger, updatedClaims...)
+				if unbindErr := cp.allocationState.Unbind(logger, cp.checkpointMgr, updatedClaims...); unbindErr != nil {
+					return nil, nil, errors.Join(
+						fmt.Errorf("cannot update shared CPU pool after creating container %q in pod %q: %w", ctr.Name, pod.Uid, err),
+						fmt.Errorf("cannot roll back claim bindings: %w", unbindErr),
+					)
+				}
 				return nil, nil, fmt.Errorf("cannot update shared CPU pool after creating container %q in pod %q: %w", ctr.Name, pod.Uid, err)
 			}
 		}
