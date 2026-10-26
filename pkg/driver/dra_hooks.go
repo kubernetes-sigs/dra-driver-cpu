@@ -140,7 +140,7 @@ func (cp *CPUDriver) reserveResourceClaimAllocation(logger logr.Logger, claimUID
 	// See: https://github.com/kubernetes-sigs/dra-driver-cpu/issues/389
 	// For now, use the empty request name (the entire claim), because every
 	// container that references the claim gets all claim CPUs.
-	return cp.allocationState.Reserve(logger, claimUID, map[string]cpuset.CPUSet{"": cpus}, hasSharedContainers)
+	return cp.allocationState.Reserve(logger, cp.checkpointMgr, claimUID, map[string]cpuset.CPUSet{"": cpus}, hasSharedContainers)
 }
 
 func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
@@ -242,7 +242,9 @@ func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim
 	}
 	result := cp.prepareDevices(logger, claim, assignedCPUs)
 	if result.Err != nil {
-		cp.allocationState.Release(logger, claim.UID)
+		if err := cp.allocationState.Release(logger, cp.checkpointMgr, claim.UID); err != nil {
+			result.Err = errors.Join(result.Err, err)
+		}
 		return result
 	}
 	cp.metrics.RecordClaimAllocatedCPUs(assignedCPUs.Size())
@@ -324,7 +326,9 @@ func (cp *CPUDriver) prepareIndividualResourceClaimLocked(logger logr.Logger, cl
 	}
 	result := cp.prepareDevices(logger, claim, claimCPUSet)
 	if result.Err != nil {
-		cp.allocationState.Release(logger, claim.UID)
+		if err := cp.allocationState.Release(logger, cp.checkpointMgr, claim.UID); err != nil {
+			result.Err = errors.Join(result.Err, err)
+		}
 		return result
 	}
 	cp.metrics.RecordClaimAllocatedCPUs(claimCPUSet.Size())
@@ -420,7 +424,9 @@ func (cp *CPUDriver) unprepareResourceClaim(ctx context.Context, logger logr.Log
 	if err := cp.cdiMgr.RemoveDevice(logger, getCDIDeviceName(claim.UID)); err != nil {
 		return err
 	}
-	cp.allocationState.Release(logger, claim.UID)
+	if err := cp.allocationState.Release(logger, cp.checkpointMgr, claim.UID); err != nil {
+		return err
+	}
 	cp.refreshAllocationMetrics()
 	// TODO(#279): Update existing shared containers here once all supported runtimes can
 	// safely process unsolicited NRI UpdateContainers calls. Until then, each container
