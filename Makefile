@@ -276,7 +276,7 @@ helm-docs: ## regenerate helm chart README from values.yaml annotations and READ
 
 .PHONY: helm-docs-check
 helm-docs-check: helm-docs ## verify helm chart README is up to date; fails if regeneration produces a diff
-	@git diff --exit-code deployment/helm/ || \
+	@git diff --exit-code ${HELM_CHART}/README.md || \
 		(echo "ERROR: Helm chart README.md is out of date. Run 'make helm-docs' to update it." && exit 1)
 
 .PHONY: driverconfig-schema

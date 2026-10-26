@@ -19,6 +19,8 @@ limitations under the License.
 // registers where the kubelet is not watching, which is issue #231. The node
 // name the driver registers under has to come from the Node object, not the
 // kernel hostname, or ResourceSlice publishing fails to find the node owner.
+// The checkpoint directory has to reach both the container mount and the
+// hostPath volume, or the durable ledger is recreated with every pod.
 // Rendering and the expected values come from hack/ci/helm-render-check.sh.
 package render
 
@@ -45,6 +47,8 @@ const (
 	driverContainer    = "dracpu"
 	pluginsVolume      = "device-plugin"
 	registryVolume     = "plugin-registry"
+	checkpointVolume   = "checkpoint-dir"
+	defaultCheckpoint  = "/run/dra-driver-cpu"
 	rootFlag           = "--kubelet-root-dir"
 	rootFlagShort      = "-kubelet-root-dir"
 	nodeNameEnv        = "NODE_NAME"
@@ -55,11 +59,12 @@ const (
 )
 
 var (
-	manifest         = flag.String("manifest", "", "path to a rendered DaemonSet")
-	expectedRoot     = flag.String("expected-root", "", "the kubelet root the mounts and the flag must derive from")
-	expectFlag       = flag.Bool("expect-root-flag", false, "whether the chart should pass "+rootFlag)
-	checkOverride    = flag.Bool("check-hostname-override", false, "whether to judge the hostname-override behavior")
-	expectedOverride = flag.String("expected-override", nodeNameExpandable, "the hostname-override value the chart must pass; empty means none, default is "+nodeNameExpandable)
+	manifest           = flag.String("manifest", "", "path to a rendered DaemonSet")
+	expectedRoot       = flag.String("expected-root", "", "the kubelet root the mounts and the flag must derive from")
+	expectedCheckpoint = flag.String("expected-checkpoint-dir", defaultCheckpoint, "the checkpoint directory the mount and hostPath must use")
+	expectFlag         = flag.Bool("expect-root-flag", false, "whether the chart should pass "+rootFlag)
+	checkOverride      = flag.Bool("check-hostname-override", false, "whether to judge the hostname-override behavior")
+	expectedOverride   = flag.String("expected-override", nodeNameExpandable, "the hostname-override value the chart must pass; empty means none, default is "+nodeNameExpandable)
 )
 
 // validated says the checks below ran to the end. `go test -run` exits 0 when
@@ -86,6 +91,9 @@ func TestRenderedDaemonSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := checkRoot(ds, *expectedRoot, *expectFlag); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkCheckpoint(ds, *expectedCheckpoint); err != nil {
 		t.Fatal(err)
 	}
 	if *checkOverride {
@@ -171,6 +179,28 @@ func checkRoot(ds *appsv1.DaemonSet, root string, wantFlag bool) error {
 		checkFlag(c, root, wantFlag),
 	}
 	return errors.Join(errs...)
+}
+
+// checkCheckpoint judges the durable-ledger path as one binding, then pins the
+// hostPath type: the standard directory does not have to exist before the first
+// driver pod starts on a node.
+func checkCheckpoint(ds *appsv1.DaemonSet, want string) error {
+	c, err := driver(ds)
+	if err != nil {
+		return err
+	}
+	if err := checkBinding(ds, c, checkpointVolume, want); err != nil {
+		return err
+	}
+	for _, v := range ds.Spec.Template.Spec.Volumes {
+		if v.Name != checkpointVolume {
+			continue
+		}
+		if v.HostPath == nil || v.HostPath.Type == nil || *v.HostPath.Type != corev1.HostPathDirectoryOrCreate {
+			return fmt.Errorf("volume %q is not a DirectoryOrCreate hostPath", checkpointVolume)
+		}
+	}
+	return nil
 }
 
 func driver(ds *appsv1.DaemonSet) (*corev1.Container, error) {

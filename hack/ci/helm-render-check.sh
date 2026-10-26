@@ -9,6 +9,7 @@ set -euo pipefail
 chart=${CHART:-deployment/helm/dra-driver-cpu}
 helm=${HELM:-helm}
 default_root=/var/lib/kubelet
+default_checkpoint_dir=/run/dra-driver-cpu
 
 # With no cluster to ask, helm renders against its own built-in Kubernetes
 # version, and in the helm the Makefile installs that version is below the
@@ -46,7 +47,33 @@ accepts() {
 	go test -count=1 ./test/render/ -args \
 		-manifest "${tmp}/${name}.yaml" \
 		-expected-root "${expected}" \
+		-expected-checkpoint-dir "${default_checkpoint_dir}" \
 		-expect-root-flag="${want_flag}"
+}
+
+# checkCheckpointDir <name> <expected> [helm args...]; the configured value
+# must reach the ConfigMap, the container mount, and the hostPath as one path.
+checkCheckpointDir() {
+	local name=$1 expected=$2
+	shift 2
+
+	echo "checkpoint render check: ${name}"
+	"${helm}" template test "${chart}" --kube-version "${kube_version}" \
+		--show-only templates/daemonset.yaml "$@" \
+		>"${tmp}/${name}-daemonset.yaml"
+	go test -count=1 ./test/render/ -args \
+		-manifest "${tmp}/${name}-daemonset.yaml" \
+		-expected-root "${default_root}" \
+		-expected-checkpoint-dir "${expected}" \
+		-expect-root-flag=false
+
+	"${helm}" template test "${chart}" --kube-version "${kube_version}" \
+		--show-only templates/configmap.yaml "$@" \
+		>"${tmp}/${name}-configmap.yaml"
+	if ! grep -Fq "checkpointDir: ${expected}" "${tmp}/${name}-configmap.yaml"; then
+		echo "the rendered config does not contain checkpointDir: ${expected}" >&2
+		return 1
+	fi
 }
 
 # checkHostnameOverride <name> <want_config> [helm args...]; runs one node
@@ -123,6 +150,13 @@ accepts single-dollar '/var/lib/$kubelet' '/var/lib/$kubelet' true
 # 73 bytes, the most the root can spend and still leave the socket at 107.
 accepts socket-budget "/$(printf 'x%.0s' {1..72})" "/$(printf 'x%.0s' {1..72})" true
 
+# The checkpoint path is config-owned, so the chart has to move the ConfigMap,
+# mount, and hostPath together.
+checkCheckpointDir custom /var/lib/custom-checkpoints \
+	--set-string 'driverConfig.checkpointDir=/var/lib/custom-checkpoints'
+checkCheckpointDir cleaned /var/lib/checkpoints \
+	--set-string 'driverConfig.checkpointDir=/var/lib/custom-checkpoints/../checkpoints/'
+
 # The node name override cases, judged by their own dedicated checks.
 checkHostnameOverride fallback ''
 checkHostnameOverride args-override mynode \
@@ -140,6 +174,9 @@ refuses double-dollar 'must not contain' \
 # mounts and the flag together to somewhere the kubelet is not.
 refuses trailing-space 'must not begin or end with whitespace' \
 	--skip-schema-validation --set-string 'kubeletRootDir=/var/lib/custom-kubelet '
+
+refuses relative-checkpoint 'checkpointDir must be an absolute path' \
+	--skip-schema-validation --set-string 'driverConfig.checkpointDir=checkpoints'
 
 # A key helm looks up by exact name, so a miscased one renders the default while
 # the operator believes the kubelet was relocated.
