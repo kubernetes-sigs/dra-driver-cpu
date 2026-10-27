@@ -195,7 +195,7 @@ func TestCreateContainer(t *testing.T) {
 				return allocation
 			}(),
 			container:             newTestContainer("", ""),
-			expectedErrorContains: "cannot create shared container: no shared CPUs available",
+			expectedErrorContains: "no shared CPUs available",
 		},
 		{
 			name: "guaranteed container triggers container adjustment and update for other shared container",
@@ -239,7 +239,7 @@ func TestCreateContainer(t *testing.T) {
 				return allocation
 			}(),
 			container:             newTestContainer(claimUID, "0-7"),
-			expectedErrorContains: "cannot update shared containers: no shared CPUs available",
+			expectedErrorContains: "no shared CPUs available",
 		},
 		{
 			name:     "guaranteed container may consume the full pool when no shared containers exist",
@@ -611,7 +611,7 @@ func TestNRISynchronize(t *testing.T) {
 				{Id: "p1-guaranteed", PodSandboxId: pod1.Id, Name: "guaranteed-ctr", Env: []string{fmt.Sprintf("%s_claim-full=%s", cdiEnvVarPrefix, allCPUs.String())}},
 				{Id: "p1-shared", PodSandboxId: pod1.Id, Name: "shared-ctr"},
 			},
-			expectedError:        "cannot update shared containers: no shared CPUs available",
+			expectedError:        "no shared CPUs available",
 			expectedRefreshCalls: 1,
 		},
 		{

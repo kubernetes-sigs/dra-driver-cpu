@@ -72,11 +72,11 @@ func TestAllocationStateBind(t *testing.T) {
 		initial           *OwnerIdent // Initial owner of claim b.
 		expected          map[types.UID]cpuset.CPUSet
 		wantUpdatedClaims []types.UID
-		wantErr           string
+		wantErrIs         error
 	}{
 		{
-			name:    "empty",
-			wantErr: "no claims to bind",
+			name:      "empty claim list",
+			wantErrIs: ErrEmptyClaimList,
 		},
 		{
 			name:              "first binding",
@@ -95,32 +95,32 @@ func TestAllocationStateBind(t *testing.T) {
 			wantUpdatedClaims: []types.UID{"a"},
 		},
 		{
-			name:     "pod conflict",
-			initial:  &OwnerIdent{PodUID: "other", ContainerName: "app"},
-			expected: allocations,
-			wantErr:  "already bound",
+			name:      "pod conflict",
+			initial:   &OwnerIdent{PodUID: "other", ContainerName: "app"},
+			expected:  allocations,
+			wantErrIs: ErrClaimAlreadyBound,
 		},
 		{
-			name:     "container conflict",
-			initial:  &OwnerIdent{PodUID: "pod", ContainerName: "other"},
-			expected: allocations,
-			wantErr:  "already bound",
+			name:      "container conflict",
+			initial:   &OwnerIdent{PodUID: "pod", ContainerName: "other"},
+			expected:  allocations,
+			wantErrIs: ErrClaimAlreadyBound,
 		},
 		{
-			name:     "missing claim",
-			expected: map[types.UID]cpuset.CPUSet{"a": cpuset.New(0), "missing": cpuset.New(2)},
-			wantErr:  "not prepared",
+			name:      "missing claim",
+			expected:  map[types.UID]cpuset.CPUSet{"a": cpuset.New(0), "missing": cpuset.New(2)},
+			wantErrIs: ErrUnknownClaim,
 		},
 		{
-			name:     "CPU mismatch",
-			expected: map[types.UID]cpuset.CPUSet{"a": cpuset.New(0), "b": cpuset.New(2)},
-			wantErr:  "cpuset mismatch",
+			name:      "CPU mismatch",
+			expected:  map[types.UID]cpuset.CPUSet{"a": cpuset.New(0), "b": cpuset.New(2)},
+			wantErrIs: ErrClaimCPUMismatch,
 		},
 		{
-			name:     "CPU mismatch for existing owner",
-			initial:  &owner,
-			expected: map[types.UID]cpuset.CPUSet{"a": cpuset.New(0), "b": cpuset.New(2)},
-			wantErr:  "cpuset mismatch",
+			name:      "CPU mismatch for existing owner",
+			initial:   &owner,
+			expected:  map[types.UID]cpuset.CPUSet{"a": cpuset.New(0), "b": cpuset.New(2)},
+			wantErrIs: ErrClaimCPUMismatch,
 		},
 	}
 	for _, tc := range tests {
@@ -136,8 +136,8 @@ func TestAllocationStateBind(t *testing.T) {
 			}
 			before := store.Clone()
 			updatedClaims, err := store.Bind(logger, owner.PodUID, owner.ContainerName, tc.expected)
-			if tc.wantErr != "" {
-				require.ErrorContains(t, err, tc.wantErr)
+			if tc.wantErrIs != nil {
+				require.ErrorIs(t, err, tc.wantErrIs)
 				require.Equal(t, before.resourceClaimAllocations, store.resourceClaimAllocations, "failed validation must not change any claim")
 			} else {
 				require.NoError(t, err)
@@ -153,6 +153,24 @@ func TestAllocationStateBind(t *testing.T) {
 			require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2)))
 		})
 	}
+}
+
+func TestAllocationStateBindErrorDetails(t *testing.T) {
+	logger := testr.New(t)
+	store := newTestAllocationState(logger, cpuset.New(0, 1, 2), cpuset.New())
+	requirePreparedAllocation(t, logger, store, "a", cpuset.New(0))
+
+	_, err := store.Bind(logger, "pod", "app", map[types.UID]cpuset.CPUSet{"missing": cpuset.New(2)})
+	var unknownClaimErr UnknownClaimError
+	require.ErrorAs(t, err, &unknownClaimErr)
+	require.Equal(t, types.UID("missing"), unknownClaimErr.ClaimUID)
+
+	_, err = store.Bind(logger, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(2)})
+	var mismatchErr ClaimCPUMismatchError
+	require.ErrorAs(t, err, &mismatchErr)
+	require.Equal(t, types.UID("a"), mismatchErr.ClaimUID)
+	require.True(t, mismatchErr.Expected.Equals(cpuset.New(0)))
+	require.True(t, mismatchErr.Got.Equals(cpuset.New(2)))
 }
 
 func TestAllocationStateCloneRetainsOwnership(t *testing.T) {

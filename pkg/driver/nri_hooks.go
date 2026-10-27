@@ -283,7 +283,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 	defer func() { cp.metrics.RecordNRICreateContainer(rerr, claimCount, time.Since(startTime)) }()
 	if err != nil {
 		logger.Error(err, "error parsing DRA env for container")
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed to parse DRA environment for container %q in pod %q: %w", ctr.Name, pod.Uid, err)
 	}
 	claimCount = len(claimAllocations)
 
@@ -296,7 +296,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		if sharedCPUs.IsEmpty() && !cp.allocationState.GetPreparedCPUs().IsEmpty() {
 			// NRI cannot represent an empty CPUSet as a ContainerAdjustment. Fail
 			// closed instead of allowing the runtime to keep its default affinity.
-			return nil, nil, fmt.Errorf("cannot create shared container: no shared CPUs available")
+			return nil, nil, fmt.Errorf("cannot create shared container %q in pod %q: no shared CPUs available", ctr.Name, pod.Uid)
 		}
 		state := store.NewContainerState(ctr.GetName(), containerId)
 		cp.podState.SetContainerState(podUID, state)
@@ -314,7 +314,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		}
 		updatedClaims, err := cp.allocationState.Bind(logger, podUID, ctr.Name, claimAllocations)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("cannot bind claim to container %q in pod %q: %w", ctr.Name, pod.Uid, err)
 		}
 		logger.V(2).Info("guaranteed CPUs found", "cpus", guaranteedCPUs.String())
 		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs...)
@@ -328,7 +328,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 			updates, err = sharedContainerUpdatesFor(logger, cp.allocationState, cp.podState, containerId)
 			if err != nil {
 				cp.allocationState.Unbind(updatedClaims...)
-				return nil, nil, err
+				return nil, nil, fmt.Errorf("cannot update shared CPU pool after creating container %q in pod %q: %w", ctr.Name, pod.Uid, err)
 			}
 		}
 		cp.podState.SetContainerState(podUID, state)

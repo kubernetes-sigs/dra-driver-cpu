@@ -27,13 +27,50 @@ import (
 	"k8s.io/utils/cpuset"
 )
 
-type AlreadyOwned struct {
+var (
+	ErrClaimAlreadyBound = errors.New("claim is already bound to another container")
+	ErrClaimCPUMismatch  = errors.New("claim cpuset does not match the prepared allocation")
+	ErrUnknownClaim      = errors.New("claim is not prepared by this driver")
+	ErrEmptyClaimList    = errors.New("claim list is empty")
+)
+
+type ClaimAlreadyBoundError struct {
 	ClaimUID types.UID
 	Owner    OwnerIdent
 }
 
-func (ao AlreadyOwned) Error() string {
-	return fmt.Sprintf("claimUID %q already bound to pod %q container %q", ao.ClaimUID, ao.Owner.PodUID, ao.Owner.ContainerName)
+func (err ClaimAlreadyBoundError) Error() string {
+	return fmt.Sprintf("claimUID %q is already bound to pod %q container %q", err.ClaimUID, err.Owner.PodUID, err.Owner.ContainerName)
+}
+
+func (err ClaimAlreadyBoundError) Unwrap() error {
+	return ErrClaimAlreadyBound
+}
+
+type ClaimCPUMismatchError struct {
+	ClaimUID types.UID
+	Expected cpuset.CPUSet
+	Got      cpuset.CPUSet
+}
+
+func (err ClaimCPUMismatchError) Error() string {
+	return fmt.Sprintf("validation failed for claim %q: cpuset mismatch (expected %q, got %q)", err.ClaimUID, err.Expected.String(), err.Got.String())
+}
+
+func (err ClaimCPUMismatchError) Unwrap() error {
+	return ErrClaimCPUMismatch
+}
+
+type UnknownClaimError struct {
+	ClaimUID types.UID
+}
+
+func (err UnknownClaimError) Error() string {
+	return fmt.Sprintf("claim %q is not prepared by this driver", err.ClaimUID)
+}
+
+func (err UnknownClaimError) Unwrap() error {
+	return ErrUnknownClaim
 }
 
 type OwnerIdent struct {
@@ -159,7 +196,7 @@ func (s *AllocationState) Release(logger logr.Logger, claimUID types.UID) {
 // It returns only newly bound claims so callers can roll back their ownership.
 func (s *AllocationState) Bind(logger logr.Logger, podUID types.UID, containerName string, expected map[types.UID]cpuset.CPUSet) ([]types.UID, error) {
 	if len(expected) == 0 {
-		return nil, errors.New("no claims to bind")
+		return nil, ErrEmptyClaimList
 	}
 	curIdent := OwnerIdent{
 		PodUID:        podUID,
@@ -172,13 +209,19 @@ func (s *AllocationState) Bind(logger logr.Logger, podUID types.UID, containerNa
 	for claimUID, cpus := range expected {
 		allocation, ok := s.resourceClaimAllocations[claimUID]
 		if !ok {
-			return nil, fmt.Errorf("claim %q is not prepared by this driver", claimUID)
+			return nil, UnknownClaimError{
+				ClaimUID: claimUID,
+			}
 		}
 		if !allocation.cpus.Equals(cpus) {
-			return nil, fmt.Errorf("validation failed for claim %q: cpuset mismatch (expected %q, got %q)", claimUID, allocation.cpus.String(), cpus.String())
+			return nil, ClaimCPUMismatchError{
+				ClaimUID: claimUID,
+				Expected: allocation.cpus,
+				Got:      cpus,
+			}
 		}
 		if !allocation.owner.Vacant() && !allocation.owner.Equal(curIdent) {
-			return nil, AlreadyOwned{
+			return nil, ClaimAlreadyBoundError{
 				ClaimUID: claimUID,
 				Owner:    allocation.owner,
 			}
@@ -188,10 +231,14 @@ func (s *AllocationState) Bind(logger logr.Logger, podUID types.UID, containerNa
 	updatedClaims := []types.UID{}
 	for claimUID := range expected {
 		allocation := s.resourceClaimAllocations[claimUID]
-		if allocation, ok := allocation.Acquire(curIdent); ok {
-			s.resourceClaimAllocations[claimUID] = allocation
-			updatedClaims = append(updatedClaims, claimUID)
+		acquired, ok := allocation.Acquire(curIdent)
+		if !ok {
+			logger.V(2).Info("claim bound again to the same owner", "claimUID", claimUID)
+			continue
 		}
+		s.resourceClaimAllocations[claimUID] = acquired
+		updatedClaims = append(updatedClaims, claimUID)
+		logger.V(4).Info("claim bound", "claimUID", claimUID)
 	}
 	return updatedClaims, nil
 }
