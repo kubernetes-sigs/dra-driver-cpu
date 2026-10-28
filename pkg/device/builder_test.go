@@ -347,3 +347,33 @@ func TestLookupConsumedCapacity(t *testing.T) {
 		})
 	}
 }
+
+func TestConsumedCPUCount(t *testing.T) {
+	tests := []struct {
+		name      string
+		capacity  map[resourceapi.QualifiedName]resource.Quantity
+		wantCount int
+		wantErr   string
+	}{
+		{name: "whole number", capacity: map[resourceapi.QualifiedName]resource.Quantity{"dra.cpu/cpu": resource.MustParse("4")}, wantCount: 4},
+		{name: "unqualified key", capacity: map[resourceapi.QualifiedName]resource.Quantity{"cpu": resource.MustParse("2")}, wantCount: 2},
+		{name: "whole number in milli units", capacity: map[resourceapi.QualifiedName]resource.Quantity{"dra.cpu/cpu": resource.MustParse("3000m")}, wantCount: 3},
+		{name: "missing", capacity: map[resourceapi.QualifiedName]resource.Quantity{"memory": resource.MustParse("1")}, wantErr: `CPU capacity "dra.cpu/cpu" for device "dev0" is missing`},
+		{name: "zero", capacity: map[resourceapi.QualifiedName]resource.Quantity{"dra.cpu/cpu": resource.MustParse("0")}, wantErr: "must be positive, got 0"},
+		{name: "negative", capacity: map[resourceapi.QualifiedName]resource.Quantity{"dra.cpu/cpu": resource.MustParse("-1")}, wantErr: "must be positive, got -1"},
+		{name: "fractional", capacity: map[resourceapi.QualifiedName]resource.Quantity{"dra.cpu/cpu": resource.MustParse("1500m")}, wantErr: "must be a whole number, got 1500m"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := resourceapi.DeviceRequestAllocationResult{Device: "dev0", ConsumedCapacity: tc.capacity}
+			got, err := device.ConsumedCPUCount(result, "dra.cpu")
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.wantCount, got)
+		})
+	}
+}

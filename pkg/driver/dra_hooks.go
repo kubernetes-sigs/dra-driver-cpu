@@ -173,19 +173,10 @@ func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim
 		if alloc.Driver != cp.driverName {
 			continue
 		}
-		quantity, ok := device.LookupConsumedCapacity(alloc.ConsumedCapacity, cp.driverName)
-		if !ok {
-			return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity %q for device %q is missing", device.CPUResourceQualifiedName, alloc.Device)}
+		claimCPUCount, err := device.ConsumedCPUCount(alloc, cp.driverName)
+		if err != nil {
+			return kubeletplugin.PrepareResult{Err: err}
 		}
-		if quantity.Sign() <= 0 {
-			return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity for device %q must be positive, got %s", alloc.Device, quantity.String())}
-		}
-		count := quantity.Value()
-		if quantity.CmpInt64(count) != 0 {
-			return kubeletplugin.PrepareResult{Err: fmt.Errorf("CPU capacity for device %q must be a whole number, got %s", alloc.Device, quantity.String())}
-		}
-
-		claimCPUCount := int(count)
 		logger.V(4).Info("found CPU request", "numCPUs", claimCPUCount, "device", alloc.Device)
 
 		topo := cp.topology.CPUTopology

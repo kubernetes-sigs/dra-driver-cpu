@@ -525,3 +525,21 @@ func LookupConsumedCapacity(consumedCapacity map[resourceapi.QualifiedName]resou
 	}
 	return LookupByQualifiedName(consumedCapacity, CPUResourceQualifiedName, driverName)
 }
+
+// ConsumedCPUCount returns the number of CPUs an allocation result consumes.
+// The prepare loop and the external allocator's request total both rely on
+// it, so a capacity one of them rejects cannot slip through the other.
+func ConsumedCPUCount(result resourceapi.DeviceRequestAllocationResult, driverName string) (int, error) {
+	quantity, ok := LookupConsumedCapacity(result.ConsumedCapacity, driverName)
+	if !ok {
+		return 0, fmt.Errorf("CPU capacity %q for device %q is missing", CPUResourceQualifiedName, result.Device)
+	}
+	if quantity.Sign() <= 0 {
+		return 0, fmt.Errorf("CPU capacity for device %q must be positive, got %s", result.Device, quantity.String())
+	}
+	count := quantity.Value()
+	if quantity.CmpInt64(count) != 0 {
+		return 0, fmt.Errorf("CPU capacity for device %q must be a whole number, got %s", result.Device, quantity.String())
+	}
+	return int(count), nil
+}
