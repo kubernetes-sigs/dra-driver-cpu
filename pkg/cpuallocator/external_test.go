@@ -17,6 +17,7 @@ limitations under the License.
 package cpuallocator
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/go-logr/logr/testr"
@@ -214,12 +215,13 @@ func TestExternalValidate(t *testing.T) {
 
 func TestExternalGetPreferredCPUs(t *testing.T) {
 	tests := []struct {
-		name         string
-		managedCPUs  cpuset.CPUSet
-		reservedCPUs cpuset.CPUSet
-		allocation   *resourceapi.AllocationResult
-		expectedCPUs cpuset.CPUSet
-		expectErr    bool
+		name              string
+		managedCPUs       cpuset.CPUSet
+		reservedCPUs      cpuset.CPUSet
+		allocation        *resourceapi.AllocationResult
+		expectedCPUs      cpuset.CPUSet
+		expectErr         bool
+		expectErrContains string
 	}{
 		{
 			name:        "error: no opaque config targets the request",
@@ -543,6 +545,120 @@ func TestExternalGetPreferredCPUs(t *testing.T) {
 			},
 			expectedCPUs: cpuset.New(1, 3),
 		},
+		// Each of the following totals matches the opaque cpuset size, so only
+		// per-result capacity validation rejects them.
+		{
+			name:        "forged: error: negative capacity in a multi-result request",
+			managedCPUs: cpuset.New(0, 1, 2, 3),
+			allocation: &resourceapi.AllocationResult{
+				Devices: resourceapi.DeviceAllocationResult{
+					Config: []resourceapi.DeviceAllocationConfiguration{
+						{
+							Source:   resourceapi.AllocationConfigSourceClaim,
+							Requests: []string{"req"},
+							DeviceConfiguration: resourceapi.DeviceConfiguration{
+								Opaque: &resourceapi.OpaqueDeviceConfiguration{
+									Driver:     "dra.cpu",
+									Parameters: runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1alpha1","cpuConfig":{"cpuset":"0"}}`)},
+								},
+							},
+						},
+					},
+					Results: []resourceapi.DeviceRequestAllocationResult{
+						{
+							Request: "req",
+							Driver:  "dra.cpu",
+							Device:  "cpudev0",
+							ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{
+								resourceapi.QualifiedName(device.CPUResourceQualifiedName): *resource.NewQuantity(2, resource.DecimalSI),
+							},
+						},
+						{
+							Request: "req",
+							Driver:  "dra.cpu",
+							Device:  "cpudev1",
+							ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{
+								resourceapi.QualifiedName(device.CPUResourceQualifiedName): *resource.NewQuantity(-1, resource.DecimalSI),
+							},
+						},
+					},
+				},
+			},
+			expectErr:         true,
+			expectErrContains: `CPU capacity for device "cpudev1" must be positive`,
+		},
+		{
+			name:        "forged: error: zero capacity in a multi-result request",
+			managedCPUs: cpuset.New(0, 1, 2, 3),
+			allocation: &resourceapi.AllocationResult{
+				Devices: resourceapi.DeviceAllocationResult{
+					Config: []resourceapi.DeviceAllocationConfiguration{
+						{
+							Source:   resourceapi.AllocationConfigSourceClaim,
+							Requests: []string{"req"},
+							DeviceConfiguration: resourceapi.DeviceConfiguration{
+								Opaque: &resourceapi.OpaqueDeviceConfiguration{
+									Driver:     "dra.cpu",
+									Parameters: runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1alpha1","cpuConfig":{"cpuset":"0,1"}}`)},
+								},
+							},
+						},
+					},
+					Results: []resourceapi.DeviceRequestAllocationResult{
+						{
+							Request: "req",
+							Driver:  "dra.cpu",
+							Device:  "cpudev0",
+							ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{
+								resourceapi.QualifiedName(device.CPUResourceQualifiedName): *resource.NewQuantity(2, resource.DecimalSI),
+							},
+						},
+						{
+							Request: "req",
+							Driver:  "dra.cpu",
+							Device:  "cpudev1",
+							ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{
+								resourceapi.QualifiedName(device.CPUResourceQualifiedName): *resource.NewQuantity(0, resource.DecimalSI),
+							},
+						},
+					},
+				},
+			},
+			expectErr:         true,
+			expectErrContains: `CPU capacity for device "cpudev1" must be positive`,
+		},
+		{
+			name:        "forged: error: fractional capacity rounds up to the opaque cpuset size",
+			managedCPUs: cpuset.New(0, 1, 2, 3),
+			allocation: &resourceapi.AllocationResult{
+				Devices: resourceapi.DeviceAllocationResult{
+					Config: []resourceapi.DeviceAllocationConfiguration{
+						{
+							Source:   resourceapi.AllocationConfigSourceClaim,
+							Requests: []string{"req"},
+							DeviceConfiguration: resourceapi.DeviceConfiguration{
+								Opaque: &resourceapi.OpaqueDeviceConfiguration{
+									Driver:     "dra.cpu",
+									Parameters: runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1alpha1","cpuConfig":{"cpuset":"0,1"}}`)},
+								},
+							},
+						},
+					},
+					Results: []resourceapi.DeviceRequestAllocationResult{
+						{
+							Request: "req",
+							Driver:  "dra.cpu",
+							Device:  "cpudev0",
+							ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{
+								resourceapi.QualifiedName(device.CPUResourceQualifiedName): resource.MustParse("1500m"),
+							},
+						},
+					},
+				},
+			},
+			expectErr:         true,
+			expectErrContains: `CPU capacity for device "cpudev0" must be a whole number`,
+		},
 	}
 
 	logger := testr.New(t)
@@ -557,6 +673,9 @@ func TestExternalGetPreferredCPUs(t *testing.T) {
 				if tt.expectErr {
 					if err == nil {
 						t.Fatalf("GetPreferredCPUs() = %v, expected error", got)
+					}
+					if tt.expectErrContains != "" && !strings.Contains(err.Error(), tt.expectErrContains) {
+						t.Fatalf("GetPreferredCPUs() error = %q, expected it to contain %q", err, tt.expectErrContains)
 					}
 					return
 				}
