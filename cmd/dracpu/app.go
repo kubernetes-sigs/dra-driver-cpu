@@ -214,6 +214,7 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 	defer stop()
 
 	driverConfig := driver.Config{
+		CPUSetPartition:                       cfg.ExperimentalCPUSetPartition,
 		DriverName:                            dracpuapi.DriverName,
 		NodeName:                              nodeName,
 		ReservedCPUs:                          reservedCPUSet,

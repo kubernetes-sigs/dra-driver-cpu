@@ -19,6 +19,7 @@ package driverconfig
 import (
 	"fmt"
 
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpupartition"
 	"sigs.k8s.io/yaml"
 )
 
@@ -50,6 +51,9 @@ type Config struct {
 	// feature gate in the cluster. Defaults to false.
 	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping,omitempty"`
 	Allocator                             string `json:"allocator,omitempty"`
+	// ExperimentalCPUSetPartition makes the cgroups of containers with
+	// exclusive CPUs cgroup v2 cpuset partitions. Experimental.
+	ExperimentalCPUSetPartition cpupartition.Config `json:"experimentalCPUSetPartition,omitzero"`
 }
 
 // LogValues returns key-value pairs for structured logging of the config.
@@ -66,23 +70,25 @@ func (c Config) LogValues() []any {
 		"kubeletRootDir", c.KubeletRootDir,
 		"publishNodeAllocatableResourceMapping", c.PublishNodeAllocatableResourceMapping,
 		"allocator", c.Allocator,
+		"experimentalCPUSetPartition", c.ExperimentalCPUSetPartition,
 	}
 }
 
 // dumpConfig mirrors Config field-for-field but drops the omitempty json
 // tags, so Dump also prints zero values (e.g. exposePCIeRoots=false).
 type dumpConfig struct {
-	Kubeconfig                            string `json:"kubeconfig"`
-	HostnameOverride                      string `json:"hostnameOverride"`
-	BindAddress                           string `json:"bindAddress"`
-	ReservedCPUs                          string `json:"reservedCPUs"`
-	CPUDeviceMode                         string `json:"cpuDeviceMode"`
-	GroupBy                               string `json:"groupBy"`
-	ExposePCIeRoots                       bool   `json:"exposePCIeRoots"`
-	SysFSOverlay                          string `json:"sysfsOverlay"`
-	KubeletRootDir                        string `json:"kubeletRootDir"`
-	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping"`
-	Allocator                             string `json:"allocator"`
+	Kubeconfig                            string              `json:"kubeconfig"`
+	HostnameOverride                      string              `json:"hostnameOverride"`
+	BindAddress                           string              `json:"bindAddress"`
+	ReservedCPUs                          string              `json:"reservedCPUs"`
+	CPUDeviceMode                         string              `json:"cpuDeviceMode"`
+	GroupBy                               string              `json:"groupBy"`
+	ExposePCIeRoots                       bool                `json:"exposePCIeRoots"`
+	SysFSOverlay                          string              `json:"sysfsOverlay"`
+	KubeletRootDir                        string              `json:"kubeletRootDir"`
+	PublishNodeAllocatableResourceMapping bool                `json:"publishNodeAllocatableResourceMapping"`
+	Allocator                             string              `json:"allocator"`
+	ExperimentalCPUSetPartition           cpupartition.Config `json:"experimentalCPUSetPartition"`
 }
 
 // Dump renders the Config as YAML, for logging a human-readable snapshot of

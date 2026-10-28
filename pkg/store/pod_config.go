@@ -150,3 +150,8 @@ func (cs *ContainerState) HasExclusiveCPUAllocation() bool {
 func (cs *ContainerState) MatchesContainer(name string, uid types.UID) bool {
 	return cs.containerName == name && cs.containerUID == uid
 }
+
+// ClaimUIDs returns a copy of the trusted claims recorded for this runtime container.
+func (cs *ContainerState) ClaimUIDs() []types.UID {
+	return append([]types.UID(nil), cs.resourceClaimUIDs...)
+}

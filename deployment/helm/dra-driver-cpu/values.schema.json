@@ -246,6 +246,25 @@
             "individual"
           ]
         },
+        "experimentalCPUSetPartition": {
+          "type": "object",
+          "properties": {
+            "cgroupRoot": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "root",
+                "isolated"
+              ]
+            },
+            "scope": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
         "groupBy": {
           "type": "string",
           "enum": [
