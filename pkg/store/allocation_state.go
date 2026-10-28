@@ -159,6 +159,7 @@ func NewAllocationState(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CP
 // containers are present, the reservation must leave at least one CPU in the
 // shared pool because NRI cannot represent an empty CPUSet.
 func (s *AllocationState) Reserve(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet, hasSharedContainers bool) error {
+	logger = logger.WithValues("claimUID", claimUID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if allocation, ok := s.resourceClaimAllocations[claimUID]; ok {
@@ -184,11 +185,12 @@ func (s *AllocationState) Reserve(logger logr.Logger, claimUID types.UID, cpus c
 
 // Release removes a prepared claim, releasing its CPUs and ownership.
 func (s *AllocationState) Release(logger logr.Logger, claimUID types.UID) {
+	logger = logger.WithValues("claimUID", claimUID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.resourceClaimAllocations[claimUID]; ok {
+	if allocInfo, ok := s.resourceClaimAllocations[claimUID]; ok {
 		s.removeLocked(claimUID)
-		logger.Info("removed allocation for resource claim")
+		logger.Info("removed allocation for resource claim", "cpus", allocInfo.cpus.String())
 	}
 }
 
@@ -198,6 +200,7 @@ func (s *AllocationState) Bind(logger logr.Logger, podUID types.UID, containerNa
 	if len(expected) == 0 {
 		return nil, ErrEmptyClaimList
 	}
+	logger = logger.WithValues("podUID", podUID, "containerName", containerName)
 	curIdent := OwnerIdent{
 		PodUID:        podUID,
 		ContainerName: containerName,
@@ -231,12 +234,12 @@ func (s *AllocationState) Bind(logger logr.Logger, podUID types.UID, containerNa
 	updatedClaims := []types.UID{}
 	for claimUID := range expected {
 		allocation := s.resourceClaimAllocations[claimUID]
-		acquired, ok := allocation.Acquire(curIdent)
-		if !ok {
+		allocInfo, acquired := allocation.Acquire(curIdent)
+		if !acquired {
 			logger.V(2).Info("claim bound again to the same owner", "claimUID", claimUID)
 			continue
 		}
-		s.resourceClaimAllocations[claimUID] = acquired
+		s.resourceClaimAllocations[claimUID] = allocInfo
 		updatedClaims = append(updatedClaims, claimUID)
 		logger.V(4).Info("claim bound", "claimUID", claimUID)
 	}
@@ -244,12 +247,14 @@ func (s *AllocationState) Bind(logger logr.Logger, podUID types.UID, containerNa
 }
 
 // Unbind detaches a claim from the container it was bound to, but doesn't release the prepared claim.
-func (s *AllocationState) Unbind(claimUIDs ...types.UID) {
+func (s *AllocationState) Unbind(logger logr.Logger, claimUIDs ...types.UID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, claimUID := range claimUIDs {
 		if allocation, ok := s.resourceClaimAllocations[claimUID]; ok {
+			oldOwner := allocation.owner
 			s.resourceClaimAllocations[claimUID] = allocation.Release()
+			logger.V(4).Info("claim unbound", "claimUID", claimUID, "previousPodUID", oldOwner.PodUID, "previousContainerName", oldOwner.ContainerName)
 		}
 	}
 }

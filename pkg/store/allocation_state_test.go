@@ -148,7 +148,7 @@ func TestAllocationStateBind(t *testing.T) {
 			require.ElementsMatch(t, tc.wantUpdatedClaims, updatedClaims)
 			require.Equal(t, before.Snapshot(), store.Snapshot())
 			// Unbind clears only updated claims, preserving prior owners and CPU reservations.
-			store.Unbind(append(updatedClaims, "missing")...)
+			store.Unbind(logger, append(updatedClaims, "missing")...)
 			require.Equal(t, before.resourceClaimAllocations, store.resourceClaimAllocations)
 			require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2)))
 		})
@@ -189,7 +189,7 @@ func TestAllocationStateCloneRetainsOwnership(t *testing.T) {
 	require.False(t, clone.IsOwner("b", "pod", "app"))
 	require.Equal(t, store.Snapshot(), clone.Snapshot())
 	// unbind
-	clone.Unbind("a")
+	clone.Unbind(logger, "a")
 	// rebind, now succeeds
 	_, err = clone.Bind(logger, "other", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
 	require.NoError(t, err)

@@ -327,7 +327,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		if len(updatedClaims) > 0 {
 			updates, err = sharedContainerUpdatesFor(logger, cp.allocationState, cp.podState, containerId)
 			if err != nil {
-				cp.allocationState.Unbind(updatedClaims...)
+				cp.allocationState.Unbind(logger, updatedClaims...)
 				return nil, nil, fmt.Errorf("cannot update shared CPU pool after creating container %q in pod %q: %w", ctr.Name, pod.Uid, err)
 			}
 		}
