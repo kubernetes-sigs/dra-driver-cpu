@@ -21,8 +21,8 @@ All of it is selected by `KIND_NODE_RUNTIME=crio`:
   only the CRI socket differs between the lanes.
 - **Image loading**: `load-images.sh` uses Podman, because `kind load` populates
   containerd only.
-- **Runtime config**: `crio.conf` enables CDI (`/var/run/cdi`) and NRI
-  (`/var/run/nri/nri.sock`).
+- **Runtime config**: `crio.conf` pins the pause image kind preloads and selects
+  kind's runc instead of the packaged crun. CDI and NRI use the CRI-O defaults.
 
 `run.sh` also pins kind (`KIND_VERSION`), gives the driver a deterministic
 four-CPU topology through the sysfs overlay (`CI_SYSFS_OVERLAY=true`), and
