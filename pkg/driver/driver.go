@@ -269,7 +269,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		}
 	}
 
-	plugin.allocationState = store.NewAllocationState(plugin.topology.CPUTopology, config.ReservedCPUs)
+	plugin.allocationState = store.NewAllocationState(config.NodeName, topo, config.ReservedCPUs)
 	plugin.refreshAllocationMetrics()
 	plugin.podState = store.NewPodState()
 

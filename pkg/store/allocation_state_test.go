@@ -59,12 +59,12 @@ func newTestAllocationState(logger logr.Logger, allCPUs, reserved cpuset.CPUSet)
 	}
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
 	topo, _ := mockProvider.GetCPUTopology(logger)
-	return NewAllocationState(topo, reserved)
+	return NewAllocationState("node", topo, reserved)
 }
 
 func requirePreparedAllocation(t testing.TB, logger logr.Logger, store *AllocationState, claimUID types.UID, cpus cpuset.CPUSet) {
 	t.Helper()
-	require.NoError(t, store.Reserve(logger, noop, claimUID, cpus, false))
+	require.NoError(t, store.Reserve(logger, noop, ClaimIdent{UID: claimUID}, cpus, false))
 }
 
 func TestAllocationStatePreparedLifecycle(t *testing.T) {
@@ -74,9 +74,9 @@ func TestAllocationStatePreparedLifecycle(t *testing.T) {
 	claimCPUs := cpuset.New(0, 1)
 	store := newTestAllocationState(logger, allCPUs, cpuset.New())
 
-	require.NoError(t, store.Reserve(logger, noop, claimUID, claimCPUs, false))
+	require.NoError(t, store.Reserve(logger, noop, ClaimIdent{UID: claimUID}, claimCPUs, false))
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
-	require.Error(t, store.Reserve(logger, noop, "claim-2", claimCPUs, false))
+	require.Error(t, store.Reserve(logger, noop, ClaimIdent{UID: "claim-2"}, claimCPUs, false))
 
 	updatedClaims, err := store.Bind(logger, noop, "pod", "app", map[types.UID]cpuset.CPUSet{claimUID: claimCPUs})
 	require.NoError(t, err)
@@ -338,8 +338,8 @@ func TestAllocationStateReserveRepeatedCalls(t *testing.T) {
 			store := newTestAllocationState(logger, allCPUs, cpuset.New())
 			claimUID := types.UID("claim-uid-1")
 
-			require.NoError(t, store.Reserve(logger, noop, claimUID, tc.firstCPUs, false))
-			err := store.Reserve(logger, noop, claimUID, tc.secondCPUs, false)
+			require.NoError(t, store.Reserve(logger, noop, ClaimIdent{UID: claimUID}, tc.firstCPUs, false))
+			err := store.Reserve(logger, noop, ClaimIdent{UID: claimUID}, tc.secondCPUs, false)
 			if tc.expectError {
 				require.Error(t, err)
 			} else {
@@ -385,7 +385,7 @@ func TestAllocationStateReserveSharedPoolGuard(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			store := newTestAllocationState(logger, allCPUs, cpuset.New())
-			err := store.Reserve(logger, noop, "claim", test.cpus, test.hasSharedContainers)
+			err := store.Reserve(logger, noop, ClaimIdent{UID: "claim"}, test.cpus, test.hasSharedContainers)
 			if test.wantErr {
 				require.ErrorContains(t, err, "would exhaust the shared CPU pool")
 				_, ok := store.GetResourceClaimAllocation("claim")
@@ -431,7 +431,7 @@ func TestAllocationStateMutationsFailClosedWhenCheckpointWriteFails(t *testing.T
 
 	t.Run("reserve", func(t *testing.T) {
 		before := store.Clone()
-		err := store.Reserve(logger, manager, "claim", cpuset.New(0), false)
+		err := store.Reserve(logger, manager, ClaimIdent{UID: "claim"}, cpuset.New(0), false)
 		require.ErrorContains(t, err, "checkpoint write failed")
 		require.Equal(t, before.Snapshot(), store.Snapshot())
 		_, ok := store.GetResourceClaimAllocation("claim")
@@ -439,7 +439,7 @@ func TestAllocationStateMutationsFailClosedWhenCheckpointWriteFails(t *testing.T
 	})
 
 	t.Run("bind", func(t *testing.T) {
-		require.NoError(t, store.Reserve(logger, noop, "claim", cpuset.New(0), false))
+		require.NoError(t, store.Reserve(logger, noop, ClaimIdent{UID: "claim"}, cpuset.New(0), false))
 		before := store.Clone()
 		_, err := store.Bind(logger, manager, "pod", "container", map[types.UID]cpuset.CPUSet{"claim": cpuset.New(0)})
 		require.ErrorContains(t, err, "checkpoint write failed")
@@ -583,7 +583,7 @@ func BenchmarkGetSharedCPUs(b *testing.B) {
 		})
 
 		b.Run(tc.name+"/optimized", func(b *testing.B) {
-			store := NewAllocationState(topo, cpuset.New())
+			store := NewAllocationState("node", topo, cpuset.New())
 			for claimUID, cpus := range allocations {
 				requirePreparedAllocation(b, logr.Discard(), store, claimUID, cpus)
 			}
