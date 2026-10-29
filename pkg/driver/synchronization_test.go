@@ -134,7 +134,7 @@ func TestWarmSynchronizeRejectsConflictingClaims(t *testing.T) {
 			cdi := newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
 			d.cdiMgr = cdi
 			logger := testr.New(t)
-			require.NoError(t, d.allocationState.Reserve(logger, noop, "a", cpuset.New(0), false))
+			require.NoError(t, d.allocationState.Reserve(logger, noop, store.ClaimIdent{UID: "a"}, cpuset.New(0), false))
 			_, err = d.allocationState.Bind(logger, noop, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
 			require.NoError(t, err)
 			pod := &api.PodSandbox{Id: "sandbox", Uid: "pod"}
@@ -162,7 +162,7 @@ func TestWarmSynchronizeSkipsUnknownAuthenticatedClaim(t *testing.T) {
 	cdi.devices[getCDIDeviceName("b")] = "DRA_CPUSET_b=1"
 	d.cdiMgr = cdi
 	logger := testr.New(t)
-	require.NoError(t, d.allocationState.Reserve(logger, noop, "a", cpuset.New(0), false))
+	require.NoError(t, d.allocationState.Reserve(logger, noop, store.ClaimIdent{UID: "a"}, cpuset.New(0), false))
 	_, err = d.allocationState.Bind(logger, noop, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
 	require.NoError(t, err)
 	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod"}

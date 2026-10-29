@@ -128,7 +128,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				}
 				// Synchronize restores an allocation that already exists in the runtime;
 				// the shared-pool guard applies only to new reservations.
-				if err := allocationState.Reserve(caLogger, cp.checkpointMgr, uid, cpus, false); err != nil {
+				if err := allocationState.Reserve(caLogger, cp.checkpointMgr, store.ClaimIdent{UID: uid}, cpus, false); err != nil {
 					return nil, err
 				}
 

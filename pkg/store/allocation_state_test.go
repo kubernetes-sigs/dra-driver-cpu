@@ -39,12 +39,12 @@ func newTestAllocationState(t *testing.T, logger logr.Logger, allCPUs, reserved 
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
 	topo, err := mockProvider.GetCPUTopology(logger)
 	require.NoError(t, err) // if fail there's a so severe bug that we should be loud
-	return NewAllocationState(topo, reserved)
+	return NewAllocationState("testNode", topo, reserved)
 }
 
 func requirePreparedAllocation(t testing.TB, logger logr.Logger, store *AllocationState, claimUID types.UID, cpus cpuset.CPUSet) {
 	t.Helper()
-	require.NoError(t, store.Reserve(logger, noop, claimUID, cpus, false))
+	require.NoError(t, store.Reserve(logger, noop, ClaimIdent{UID: claimUID}, cpus, false))
 }
 
 func TestAllocationStatePreparedLifecycle(t *testing.T) {
@@ -54,9 +54,9 @@ func TestAllocationStatePreparedLifecycle(t *testing.T) {
 	claimCPUs := cpuset.New(0, 1)
 	store := newTestAllocationState(t, logger, allCPUs, cpuset.New())
 
-	require.NoError(t, store.Reserve(logger, noop, claimUID, claimCPUs, false))
+	require.NoError(t, store.Reserve(logger, noop, ClaimIdent{UID: claimUID}, claimCPUs, false))
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
-	require.Error(t, store.Reserve(logger, noop, "claim-2", claimCPUs, false))
+	require.Error(t, store.Reserve(logger, noop, ClaimIdent{UID: "claim-2"}, claimCPUs, false))
 
 	updatedClaims, err := store.Bind(logger, noop, "pod", "app", map[types.UID]cpuset.CPUSet{claimUID: claimCPUs})
 	require.NoError(t, err)
@@ -144,12 +144,12 @@ func TestAllocationStateBind(t *testing.T) {
 				PodUID:        "other-pod",
 				ContainerName: "other-app",
 			}
-			require.NoError(t, store.Reserve(logger, manager, "sentinel", cpuset.New(2), false))
+			require.NoError(t, store.Reserve(logger, manager, ClaimIdent{UID: "sentinel"}, cpuset.New(2), false))
 			_, err := store.Bind(logger, manager, sentinelOwner.PodUID, sentinelOwner.ContainerName, map[types.UID]cpuset.CPUSet{"sentinel": cpuset.New(2)})
 			require.NoError(t, err)
 
 			for uid, cpus := range allocations {
-				require.NoError(t, store.Reserve(logger, manager, uid, cpus, false))
+				require.NoError(t, store.Reserve(logger, manager, ClaimIdent{UID: uid}, cpus, false))
 			}
 			if tc.initial != nil {
 				_, err := store.Bind(logger, manager, tc.initial.PodUID, tc.initial.ContainerName, map[types.UID]cpuset.CPUSet{"b": cpuset.New(1)})
@@ -357,12 +357,12 @@ func TestAllocationStateReserveRepeatedCalls(t *testing.T) {
 			claimUID := types.UID("claim-uid-1")
 			manager := newRecordingCheckpointManager(t)
 
-			require.NoError(t, store.Reserve(logger, manager, claimUID, tc.firstCPUs, false))
+			require.NoError(t, store.Reserve(logger, manager, ClaimIdent{UID: claimUID}, tc.firstCPUs, false))
 
 			// overloading the test to check the write invariant
 			before := readAllocationCheckpoint(t, manager)
 			writes := manager.createAttempts
-			err := store.Reserve(logger, manager, claimUID, tc.secondCPUs, false)
+			err := store.Reserve(logger, manager, ClaimIdent{UID: claimUID}, tc.secondCPUs, false)
 			if tc.expectError {
 				require.Error(t, err)
 			} else {
@@ -413,12 +413,12 @@ func TestAllocationStateReserveSharedPoolGuard(t *testing.T) {
 			store := newTestAllocationState(t, logger, allCPUs, cpuset.New())
 			manager := newRecordingCheckpointManager(t)
 			// add a sentinel which pre-exists and is not mutated by the reserve under tests, so we check no unrelated overwrites
-			require.NoError(t, store.Reserve(logger, manager, "sentinel", allCPUs.Difference(claimedCPUs), false))
+			require.NoError(t, store.Reserve(logger, manager, ClaimIdent{UID: "sentinel"}, allCPUs.Difference(claimedCPUs), false))
 			before := readAllocationCheckpoint(t, manager)
 			writes := manager.createAttempts
 
 			// the real reserve under test
-			err := store.Reserve(logger, manager, "claim", test.cpus, test.hasSharedContainers)
+			err := store.Reserve(logger, manager, ClaimIdent{UID: "claim"}, test.cpus, test.hasSharedContainers)
 			if test.wantErr {
 				require.ErrorContains(t, err, "would exhaust the shared CPU pool")
 				require.Equal(t, writes, manager.createAttempts)

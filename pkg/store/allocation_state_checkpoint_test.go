@@ -88,7 +88,7 @@ func TestAllocationStateReserveKeepsStateWhenCheckpointWriteFails(t *testing.T) 
 	store := newTestAllocationState(t, logger, allCPUs, cpuset.New())
 
 	// add a sentinel which pre-exists and is not mutated by the binding under tests, so we check no unrelated overwrites
-	require.NoError(t, store.Reserve(logger, storage, "sentinel", cpuset.New(3), false))
+	require.NoError(t, store.Reserve(logger, storage, ClaimIdent{UID: "sentinel"}, cpuset.New(3), false))
 	checkpointBefore := readAllocationCheckpoint(t, storage)
 	createAttemptsBefore := storage.createAttempts
 	allocStateBefore := store.Clone()
@@ -98,7 +98,7 @@ func TestAllocationStateReserveKeepsStateWhenCheckpointWriteFails(t *testing.T) 
 	}
 
 	storage.failingMgr = manager
-	err := store.Reserve(logger, storage, "claim", cpuset.New(0), false)
+	err := store.Reserve(logger, storage, ClaimIdent{UID: "claim"}, cpuset.New(0), false)
 	require.ErrorContains(t, err, "checkpoint write failed")
 	require.ErrorIs(t, err, manager.err)
 
@@ -115,11 +115,11 @@ func TestAllocationStateBindKeepsStateWhenCheckpointWriteFails(t *testing.T) {
 	allCPUs := cpuset.New(0, 1, 2, 3)
 	store := newTestAllocationState(t, logger, allCPUs, cpuset.New())
 
-	require.NoError(t, store.Reserve(logger, storage, "claim", cpuset.New(0), false))
-	require.NoError(t, store.Reserve(logger, storage, "second", cpuset.New(1), false))
+	require.NoError(t, store.Reserve(logger, storage, ClaimIdent{UID: "claim"}, cpuset.New(0), false))
+	require.NoError(t, store.Reserve(logger, storage, ClaimIdent{UID: "second"}, cpuset.New(1), false))
 
 	// add a sentinel which pre-exists and is not mutated by the binding under tests, so we check no unrelated overwrites
-	require.NoError(t, store.Reserve(logger, storage, "sentinel", cpuset.New(3), false))
+	require.NoError(t, store.Reserve(logger, storage, ClaimIdent{UID: "sentinel"}, cpuset.New(3), false))
 	_, err := store.Bind(logger, storage, "other-pod", "other-app", map[types.UID]cpuset.CPUSet{"sentinel": cpuset.New(3)})
 	require.NoError(t, err)
 	checkpointBefore := readAllocationCheckpoint(t, storage)
@@ -155,7 +155,7 @@ func TestAllocationStateUnbindKeepsStateWhenCheckpointWriteFails(t *testing.T) {
 	allCPUs := cpuset.New(0, 1, 2, 3)
 	store := newTestAllocationState(t, logger, allCPUs, cpuset.New())
 
-	require.NoError(t, store.Reserve(logger, storage, "claim", cpuset.New(0), false))
+	require.NoError(t, store.Reserve(logger, storage, ClaimIdent{UID: "claim"}, cpuset.New(0), false))
 	_, err := store.Bind(logger, storage, "pod", "container", map[types.UID]cpuset.CPUSet{"claim": cpuset.New(0)})
 	require.NoError(t, err)
 	checkpointBefore := readAllocationCheckpoint(t, storage)
@@ -188,7 +188,7 @@ func TestAllocationStateUnbindBatch(t *testing.T) {
 		"sentinel": cpuset.New(3),
 	}
 	for uid, cpus := range allocations {
-		require.NoError(t, state.Reserve(logger, storage, uid, cpus, false))
+		require.NoError(t, state.Reserve(logger, storage, ClaimIdent{UID: uid}, cpus, false))
 	}
 	_, err := state.Bind(logger, storage, "pod", "container", map[types.UID]cpuset.CPUSet{
 		"claim":    cpuset.New(0),
@@ -225,7 +225,7 @@ func TestAllocationStateReleaseKeepsStateWhenCheckpointWriteFails(t *testing.T) 
 	allCPUs := cpuset.New(0, 1, 2, 3)
 	store := newTestAllocationState(t, logger, allCPUs, cpuset.New())
 
-	require.NoError(t, store.Reserve(logger, storage, "claim", cpuset.New(0), false))
+	require.NoError(t, store.Reserve(logger, storage, ClaimIdent{UID: "claim"}, cpuset.New(0), false))
 	checkpointBefore := readAllocationCheckpoint(t, storage)
 	createAttemptsBefore := storage.createAttempts
 	allocStateBefore := store.Clone()
@@ -251,7 +251,7 @@ func TestAllocationStateReleaseKeepsStateWhenCheckpointWriteFailsAfterBindUnbind
 	allCPUs := cpuset.New(0, 1, 2, 3)
 	store := newTestAllocationState(t, logger, allCPUs, cpuset.New())
 
-	require.NoError(t, store.Reserve(logger, storage, "claim", cpuset.New(0), false))
+	require.NoError(t, store.Reserve(logger, storage, ClaimIdent{UID: "claim"}, cpuset.New(0), false))
 	updatedClaims, err := store.Bind(logger, storage, "pod", "container", map[types.UID]cpuset.CPUSet{"claim": cpuset.New(0)})
 	require.NoError(t, err)
 	require.Equal(t, []types.UID{"claim"}, updatedClaims)
@@ -298,7 +298,7 @@ func TestAllocationStateRepeatedMutationsAreNoOpaAndDoNotWriteCheckpoint(t *test
 		{
 			name: "reserve existing",
 			mutate: func(l logr.Logger, s *AllocationState, m checkpoint.Manager) error {
-				return s.Reserve(l, m, "vacant", cpuset.New(0), false)
+				return s.Reserve(l, m, ClaimIdent{UID: "vacant"}, cpuset.New(0), false)
 			},
 		},
 		{
@@ -340,8 +340,8 @@ func TestAllocationStateRepeatedMutationsAreNoOpaAndDoNotWriteCheckpoint(t *test
 			logger := testr.New(t)
 			manager := newRecordingCheckpointManager(t)
 			state := newTestAllocationState(t, logger, cpuset.New(0, 1, 2, 3), cpuset.New())
-			require.NoError(t, state.Reserve(logger, manager, "vacant", cpuset.New(0), false))
-			require.NoError(t, state.Reserve(logger, manager, "owned", cpuset.New(1), false))
+			require.NoError(t, state.Reserve(logger, manager, ClaimIdent{UID: "vacant"}, cpuset.New(0), false))
+			require.NoError(t, state.Reserve(logger, manager, ClaimIdent{UID: "owned"}, cpuset.New(1), false))
 			_, err := state.Bind(logger, manager, "pod", "app", map[types.UID]cpuset.CPUSet{"owned": cpuset.New(1)})
 			require.NoError(t, err)
 
@@ -373,9 +373,15 @@ func TestAllocationStateDetectsAndFailsWithNilManager(t *testing.T) {
 		mutate func(logr.Logger, *AllocationState) error
 	}{
 		{
+			name: "load",
+			mutate: func(l logr.Logger, s *AllocationState) error {
+				return s.LoadState(l, nil)
+			},
+		},
+		{
 			name: "reserve",
 			mutate: func(l logr.Logger, s *AllocationState) error {
-				return s.Reserve(l, nil, "new", cpuset.New(2), false)
+				return s.Reserve(l, nil, ClaimIdent{UID: "new"}, cpuset.New(2), false)
 			},
 		},
 		{
@@ -402,8 +408,8 @@ func TestAllocationStateDetectsAndFailsWithNilManager(t *testing.T) {
 			logger := testr.New(t)
 			manager := newRecordingCheckpointManager(t)
 			state := newTestAllocationState(t, logger, cpuset.New(0, 1, 2, 3), cpuset.New())
-			require.NoError(t, state.Reserve(logger, manager, "vacant", cpuset.New(0), false))
-			require.NoError(t, state.Reserve(logger, manager, "owned", cpuset.New(1), false))
+			require.NoError(t, state.Reserve(logger, manager, ClaimIdent{UID: "vacant"}, cpuset.New(0), false))
+			require.NoError(t, state.Reserve(logger, manager, ClaimIdent{UID: "owned"}, cpuset.New(1), false))
 			_, err := state.Bind(logger, manager, "pod", "app", map[types.UID]cpuset.CPUSet{"owned": cpuset.New(1)})
 			require.NoError(t, err)
 			checkpointBefore := readAllocationCheckpoint(t, manager)
@@ -434,7 +440,7 @@ func TestAllocationStatePersistsReserveAndRelease(t *testing.T) {
 	storage := newRecordingCheckpointManager(t)
 	state := newTestAllocationState(t, logger, cpuset.New(0, 1, 2, 3), cpuset.New())
 	// add a sentinel with an owner unrelated to the exercised and which is preserved until the final release empties the checkpoint
-	require.NoError(t, state.Reserve(logger, storage, "sentinel", cpuset.New(3), false))
+	require.NoError(t, state.Reserve(logger, storage, ClaimIdent{UID: "sentinel"}, cpuset.New(3), false))
 	_, err := state.Bind(logger, storage, "other-pod", "other-app", map[types.UID]cpuset.CPUSet{"sentinel": cpuset.New(3)})
 	require.NoError(t, err)
 
@@ -483,7 +489,7 @@ func TestAllocationStatePersistsReserveAndRelease(t *testing.T) {
 			}
 			writes := storage.createAttempts
 			if tc.reserve {
-				require.NoError(t, state.Reserve(logger, storage, tc.uid, cpuset.New(0, 1), false))
+				require.NoError(t, state.Reserve(logger, storage, ClaimIdent{UID: tc.uid}, cpuset.New(0, 1), false))
 			} else {
 				require.NoError(t, state.Release(logger, storage, tc.uid))
 				_, ok := state.GetResourceClaimAllocation(tc.uid)
@@ -508,24 +514,40 @@ func TestAllocationStatePersistsReserveAndRelease(t *testing.T) {
 
 func TestAllocationStateRejectedReserveDoesNotWriteCheckpoint(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		cpus    cpuset.CPUSet
-		wantErr string
+		name      string
+		claim     ClaimIdent
+		cpus      cpuset.CPUSet
+		wantError string
 	}{
 		{
-			name:    "overlaps another claim",
-			cpus:    cpuset.New(0, 1),
-			wantErr: "has overlapping CPU",
+			name:      "overlaps another claim",
+			claim:     ClaimIdent{UID: "claim"},
+			wantError: "overlapping CPU assignment",
+			cpus:      cpuset.New(0, 1),
 		},
 		{
-			name:    "overlaps reserved CPU",
-			cpus:    cpuset.New(3),
-			wantErr: "has overlapping CPU",
+			name:      "overlaps reserved CPU",
+			claim:     ClaimIdent{UID: "claim"},
+			wantError: "overlapping CPU assignment",
+			cpus:      cpuset.New(3),
 		},
 		{
-			name:    "CPU outside topology",
-			cpus:    cpuset.New(4),
-			wantErr: "has overlapping CPU",
+			name:      "CPU outside topology",
+			claim:     ClaimIdent{UID: "claim"},
+			wantError: "overlapping CPU assignment",
+			cpus:      cpuset.New(4),
+		},
+		{
+			name:      "empty claim UID",
+			claim:     ClaimIdent{},
+			cpus:      cpuset.New(1, 2),
+			wantError: "invalid claim identifier",
+		},
+		{
+			name:      "empty cpuset",
+			claim:     ClaimIdent{UID: "claim"},
+			cpus:      cpuset.New(),
+			wantError: "has no CPUs",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -533,14 +555,14 @@ func TestAllocationStateRejectedReserveDoesNotWriteCheckpoint(t *testing.T) {
 			storage := newRecordingCheckpointManager(t)
 			state := newTestAllocationState(t, logger, cpuset.New(0, 1, 2, 3), cpuset.New(3))
 			// add a sentinel which pre-exists and is not mutated by the binding under tests, so we check no unrelated overwrites
-			require.NoError(t, state.Reserve(logger, storage, "sentinel", cpuset.New(0), false))
+			require.NoError(t, state.Reserve(logger, storage, ClaimIdent{UID: "sentinel"}, cpuset.New(0), false))
 			_, err := state.Bind(logger, storage, "pod", "app", map[types.UID]cpuset.CPUSet{"sentinel": cpuset.New(0)})
 			require.NoError(t, err)
 
 			before := readAllocationCheckpoint(t, storage)
 			writes := storage.createAttempts
 
-			require.ErrorContains(t, state.Reserve(logger, storage, "claim", tc.cpus, false), tc.wantErr)
+			require.ErrorContains(t, state.Reserve(logger, storage, tc.claim, tc.cpus, false), tc.wantError)
 			require.Equal(t, writes, storage.createAttempts)
 			require.Equal(t, before, readAllocationCheckpoint(t, storage))
 
@@ -554,6 +576,216 @@ func TestAllocationStateRejectedReserveDoesNotWriteCheckpoint(t *testing.T) {
 			require.Equal(t, "0", state.GetPreparedCPUs().String())
 			require.Equal(t, "1-2", state.GetSharedCPUs().String())
 			require.Equal(t, AllocationSnapshot{AllocatedCPUs: 1, AvailableCPUs: 2, ReservedCPUs: 1, ActiveResourceClaims: 1}, state.Snapshot())
+		})
+	}
+}
+
+func TestAllocationStateLoadStateDoesNotPartiallyApply(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		sentinel         *claimAllocationCheckpoint
+		injectedClaimUID string
+		injectedCPUs     string
+		wantError        string
+	}{
+		{
+			name:             "empty state, malformed record",
+			injectedClaimUID: "claim-b",
+			injectedCPUs:     "invalid", // will cause parsing error
+			wantError:        "restoring claim \"claim-b\"",
+		},
+		{
+			name: "populated state, malformed record",
+			sentinel: &claimAllocationCheckpoint{
+				Claim: NamespacedName{
+					Namespace: "original-ns",
+					Name:      "sentinel",
+				},
+				CPUs: "3",
+				Owner: OwnerIdent{
+					PodUID:        "original-pod",
+					ContainerName: "original-app",
+				},
+			},
+			injectedClaimUID: "claim-b",
+			injectedCPUs:     "invalid", // will cause parsing error
+			wantError:        "restoring claim \"claim-b\"",
+		},
+		{
+			name:             "empty state, overlapping records",
+			injectedClaimUID: "claim-b",
+			injectedCPUs:     "1-2", // cpu 1 overlaps
+			wantError:        "overlap with already prepared CPUs",
+		},
+		{
+			name: "populated state, overlapping records",
+			sentinel: &claimAllocationCheckpoint{
+				Claim: NamespacedName{
+					Namespace: "original-ns",
+					Name:      "sentinel",
+				},
+				CPUs: "3",
+				Owner: OwnerIdent{
+					PodUID:        "original-pod",
+					ContainerName: "original-app",
+				},
+			},
+			injectedClaimUID: "claim-b",
+			injectedCPUs:     "1-2", // cpu 1 overlaps
+			wantError:        "overlap with already prepared CPUs",
+		},
+		{
+			name: "populated state, attempted replace of existing claim",
+			sentinel: &claimAllocationCheckpoint{
+				Claim: NamespacedName{
+					Namespace: "original-ns",
+					Name:      "sentinel",
+				},
+				CPUs: "3",
+				Owner: OwnerIdent{
+					PodUID:        "original-pod",
+					ContainerName: "original-app",
+				},
+			},
+			injectedClaimUID: "sentinel", // attempted replace
+			injectedCPUs:     "3",        // overlaps the target's existing sentinel allocation
+			wantError:        "overlap with already prepared CPUs",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logger := testr.New(t)
+			storage := newRecordingCheckpointManager(t)
+			allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
+			reservedCPUs := cpuset.New(4)
+			source := newTestAllocationState(t, logger, allCPUs, reservedCPUs)
+			claim := ClaimIdent{
+				UID: "claim-a",
+				Claim: NamespacedName{
+					Namespace: "ns",
+					Name:      "claim-a",
+				},
+			}
+			require.NoError(t, source.Reserve(logger, storage, claim, cpuset.New(0, 1), false))
+			_, err := source.Bind(logger, storage, "pod-a", "app", map[types.UID]cpuset.CPUSet{"claim-a": cpuset.New(0, 1)})
+			require.NoError(t, err)
+
+			data := readAllocationCheckpoint(t, storage)
+			data.Payload.ClaimInfo[tc.injectedClaimUID] = claimAllocationCheckpoint{
+				Claim: NamespacedName{
+					Namespace: "injected-ns",
+					Name:      tc.injectedClaimUID,
+				},
+				CPUs: tc.injectedCPUs,
+				Owner: OwnerIdent{
+					PodUID:        "other-pod",
+					ContainerName: "other-app",
+				},
+			}
+			require.NoError(t, storage.CreateCheckpoint(allocationCheckpointName, &AllocationStateCheckpoint{checkpointData: data}))
+			checkpointBefore := readAllocationCheckpoint(t, storage)
+			createAttemptsBefore := storage.createAttempts
+
+			target := newTestAllocationState(t, logger, allCPUs, reservedCPUs)
+			wantSnapshot := AllocationSnapshot{
+				AvailableCPUs: 7,
+				ReservedCPUs:  1,
+			}
+			wantPrepared := ""
+			wantShared := "0-3,5-7"
+			if tc.sentinel != nil {
+				cpus, err := cpuset.Parse(tc.sentinel.CPUs)
+				require.NoError(t, err)
+				sentinel := ClaimIdent{
+					UID:   "sentinel",
+					Claim: tc.sentinel.Claim,
+				}
+				require.NoError(t, target.Reserve(logger, noop, sentinel, cpus, false))
+				_, err = target.Bind(logger, noop, tc.sentinel.Owner.PodUID, tc.sentinel.Owner.ContainerName, map[types.UID]cpuset.CPUSet{sentinel.UID: cpus})
+				require.NoError(t, err)
+				wantSnapshot = AllocationSnapshot{
+					AllocatedCPUs:        1,
+					AvailableCPUs:        6,
+					ReservedCPUs:         1,
+					ActiveResourceClaims: 1,
+				}
+				wantPrepared = "3"
+				wantShared = "0-2,5-7"
+			}
+
+			err = target.LoadState(logger, storage)
+			require.ErrorContains(t, err, tc.wantError)
+			require.Equal(t, wantSnapshot, target.Snapshot())
+			require.Equal(t, wantPrepared, target.GetPreparedCPUs().String())
+			require.Equal(t, wantShared, target.GetSharedCPUs().String())
+			require.Equal(t, "4", target.GetReservedCPUs().String())
+			_, found := target.GetResourceClaimAllocation("claim-a")
+			require.False(t, found)
+			_, found = target.GetResourceClaimAllocation("claim-b")
+			require.False(t, found)
+			cpus, found := target.GetResourceClaimAllocation("sentinel")
+			require.Equal(t, tc.sentinel != nil, found)
+			if tc.sentinel != nil {
+				require.Equal(t, "3", cpus.String())
+				require.True(t, target.IsOwner("sentinel", "original-pod", "original-app"))
+				require.False(t, target.IsOwner("sentinel", "other-pod", "other-app"))
+			}
+			require.Equal(t, createAttemptsBefore, storage.createAttempts)
+			require.Equal(t, checkpointBefore, readAllocationCheckpoint(t, storage))
+		})
+	}
+}
+
+func TestAllocationStateBindRejectsInvalidOwner(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		podUID        types.UID
+		containerName string
+	}{
+		{
+			name: "vacant owner",
+		},
+		{
+			name:          "empty pod UID",
+			containerName: "app",
+		},
+		{
+			name:   "empty container name",
+			podUID: "pod",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logger := testr.New(t)
+			manager := newRecordingCheckpointManager(t)
+			state := newTestAllocationState(t, logger, cpuset.New(0, 1, 2, 3), cpuset.New())
+			require.NoError(t, state.Reserve(logger, manager, ClaimIdent{UID: "vacant"}, cpuset.New(0, 1), false))
+
+			// unrelated reserved and bound claim which must not be altered by the test
+			require.NoError(t, state.Reserve(logger, manager, ClaimIdent{UID: "owned"}, cpuset.New(2, 3), false))
+			_, err := state.Bind(logger, manager, "other-pod", "other-app", map[types.UID]cpuset.CPUSet{"owned": cpuset.New(2, 3)})
+			require.NoError(t, err)
+			before := readAllocationCheckpoint(t, manager)
+			writes := manager.createAttempts
+
+			updated, err := state.Bind(logger, manager, tc.podUID, tc.containerName, map[types.UID]cpuset.CPUSet{"vacant": cpuset.New(0, 1)})
+
+			require.ErrorContains(t, err, "provide both a pod UID and container name")
+			require.Empty(t, updated)
+			require.Equal(t, writes, manager.createAttempts)
+			require.Equal(t, before, readAllocationCheckpoint(t, manager))
+			require.False(t, state.IsOwner("vacant", tc.podUID, tc.containerName))
+			require.True(t, state.IsOwner("owned", "other-pod", "other-app"))
+
+			cpus, ok := state.GetResourceClaimAllocation("vacant")
+			require.True(t, ok)
+			require.Equal(t, "0-1", cpus.String())
+
+			cpus, ok = state.GetResourceClaimAllocation("owned")
+			require.True(t, ok)
+			require.Equal(t, "2-3", cpus.String())
+
+			require.Equal(t, "0-3", state.GetPreparedCPUs().String())
+			require.Empty(t, state.GetSharedCPUs().String())
+			require.Equal(t, 2, state.Snapshot().ActiveResourceClaims)
 		})
 	}
 }
