@@ -217,7 +217,6 @@ func NewAllocationState(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CP
 // containers are present, the reservation must leave at least one CPU in the
 // shared pool because NRI cannot represent an empty CPUSet.
 func (s *AllocationState) Reserve(logger logr.Logger, claimUID types.UID, requests map[string]cpuset.CPUSet, hasSharedContainers bool) error {
-	logger = logger.WithValues("claimUID", claimUID)
 	newAllocation, err := newClaimAllocation(claimUID, requests)
 	if err != nil {
 		return err
@@ -246,7 +245,6 @@ func (s *AllocationState) Reserve(logger logr.Logger, claimUID types.UID, reques
 
 // Release removes a prepared claim, releasing its CPUs and ownership.
 func (s *AllocationState) Release(logger logr.Logger, claimUID types.UID) {
-	logger = logger.WithValues("claimUID", claimUID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if allocInfo, ok := s.resourceClaimAllocations[claimUID]; ok {
