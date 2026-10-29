@@ -424,9 +424,9 @@ spec:
 `grouped` mode uses, enabled by default from Kubernetes 1.36.
 
 Similarly, for equal-sized slices you can use a single request with `count` > 1.
-This repeats the same per-result capacity request multiple times. By itself,
-`count` does not guarantee spreading, but combined with `distinctAttribute` it
-can force the scheduler to place those results on different devices:
+This selects distinct devices and applies the capacity request to each device.
+The `distinctAttribute` constraint additionally requires different NUMA node
+attribute values:
 
 ```yaml
 apiVersion: resource.k8s.io/v1
@@ -452,9 +452,9 @@ For a longer discussion of the trade-offs of using `count` +
 `distinctAttribute` for NUMA spreading, see
 [Feature Support](feature-support.md#distributing-cpus-across-numa-nodes).
 
-**NOTE**: An important point to stress is the role of the `distinctAttribute` constraint.
-In grouped mode, all the exposed devices support multiple allocations. Therefore,
-without the constraint, the scheduler can pick the same device multiple times
-to fulfil the allocation request, if that device has enough remaining capacity.
-In turn, the driver supports this request shape and will honor the request,
-because it is valid and legal.
+In grouped mode, all exposed devices support multiple allocations. Separate
+requests can consume capacity from the same device when it has enough remaining
+capacity. A single request with `count: 2` still needs two distinct devices, even
+without a `distinctAttribute` constraint. To allocate two CPUs from one grouped
+device, request `count: 1` with `dra.cpu/cpu: "2"`, or use two separate requests
+with `count: 1` and `dra.cpu/cpu: "1"`.

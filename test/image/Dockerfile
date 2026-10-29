@@ -24,13 +24,11 @@ RUN go mod download
 
 # build
 COPY . .
-RUN go build -o /go/bin/dracpuinfo ./test/image/dracpuinfo
 RUN go build -o /go/bin/dracputester ./test/image/dracputester
 RUN go build -o /go/bin/dracpumetadata ./test/image/dracpumetadata
 
 # copy binaries onto base image
 FROM gcr.io/distroless/base-debian12
-COPY --from=builder --chown=root:root /go/bin/dracpuinfo /dracpuinfo
 COPY --from=builder --chown=root:root /go/bin/dracputester /dracputester
 COPY --from=builder --chown=root:root /go/bin/dracpumetadata /dracpumetadata
 CMD ["/dracputester"]

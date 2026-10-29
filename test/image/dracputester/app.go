@@ -47,7 +47,11 @@ func cpuSetPath() string {
 }
 
 func cpuSet(sfs fs.FS) (cpuset.CPUSet, error) {
-	data, err := fs.ReadFile(sfs, cpuSetPath())
+	return readCPUSet(sfs, cpuSetPath())
+}
+
+func readCPUSet(sfs fs.FS, name string) (cpuset.CPUSet, error) {
+	data, err := fs.ReadFile(sfs, name)
 	if err != nil {
 		return cpuset.New(), err
 	}
@@ -101,14 +105,23 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error determining CPU affinity: %v\n", err)
 			os.Exit(2)
 		}
+		// The driver's --sysfs-overlay changes only the topology reported by the driver; it
+		// does not change the kernel's /sys/devices/system/cpu/online file. Report that file
+		// separately so tests can compare process affinity with the real kernel CPU set.
+		kernelOnline, err := readCPUSet(containerSysfs, "devices/system/cpu/online")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error determining online CPUs: %v\n", err)
+			os.Exit(2)
+		}
 		info := discovery.DRACPUTester{
 			Buildinfo: discovery.NewBuildinfo(),
 			Allocation: discovery.DRACPUAllocation{
 				CPUs: cpus.String(),
 			},
 			Runtimeinfo: discovery.DRACPURuntimeinfo{
-				CPUAffinity: cpuAff.String(),
-				Environ:     discovery.FromEnviron(),
+				CPUAffinity:      cpuAff.String(),
+				Environ:          discovery.FromEnviron(),
+				KernelOnlineCPUs: kernelOnline.String(),
 			},
 		}
 		err = json.NewEncoder(os.Stdout).Encode(info)
