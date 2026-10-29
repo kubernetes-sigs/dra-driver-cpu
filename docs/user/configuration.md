@@ -263,7 +263,10 @@ unset) emits no flag at all — neither needs this.
 
 A single release's DaemonSet lands on every node it selects, so those nodes must agree on
 the kubelet root. A cluster whose nodes disagree can run one release per node class: give
-each release its own `nodeSelector` and keep the cluster-scoped `dra.cpu` `DeviceClass`,
-whose name is fixed, in exactly one of them by setting `deviceClass.create=false` in the
-others. Installing a second release with the DeviceClass still enabled fails with
-`invalid ownership metadata`.
+each release its own `nodeSelector` and never the same `fullnameOverride` (it replaces the
+release name in the ClusterRole and ClusterRoleBinding names), and keep the cluster-scoped
+`dra.cpu` `DeviceClass`, whose name is fixed, in exactly one of them by setting
+`deviceClass.create=false` in the others. Installing a second release with the DeviceClass
+still enabled fails with `invalid ownership metadata`. Uninstall the release that owns the
+DeviceClass last, since removing it deletes the DeviceClass that the other releases' claims
+reference.
