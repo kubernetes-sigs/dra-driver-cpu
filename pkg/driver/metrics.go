@@ -35,10 +35,10 @@ type Recorder interface {
 
 // refreshAllocationMetrics requires stateMu once the driver is serving callbacks.
 func (cp *CPUDriver) refreshAllocationMetrics() {
-	if cp.cpuAllocationStore == nil {
+	if cp.allocationState == nil {
 		return
 	}
-	snapshot := cp.cpuAllocationStore.Snapshot()
+	snapshot := cp.allocationState.Snapshot()
 	cp.metrics.SetAllocationState(cpumetrics.AllocationState{
 		AllocatedCPUs:        snapshot.AllocatedCPUs,
 		AvailableCPUs:        snapshot.AvailableCPUs,
