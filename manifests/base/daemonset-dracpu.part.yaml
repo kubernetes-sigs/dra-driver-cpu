@@ -62,9 +62,11 @@ spec:
       - name: device-plugin
         hostPath:
           path: /var/lib/kubelet/plugins
+          type: Directory
       - name: plugin-registry
         hostPath:
           path: /var/lib/kubelet/plugins_registry
+          type: Directory
       - name: nri-plugin
         hostPath:
           path: /var/run/nri
