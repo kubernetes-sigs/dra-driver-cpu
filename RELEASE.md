@@ -17,14 +17,19 @@ Instead of manually creating branches and tags, the release is triggered by a pu
 - In this PR:
   - Update the `VERSION` file at the repository root to the new semantic version (e.g., `v0.2.0`).
   - Update any documentation (like `docs/book/src/releases.md`), examples, or manifests as needed for the release.
+  - Run `make check-version-refs`, or review the non-blocking `Check Version Refs` PR check, and update every stale version reference or add a justified exemption.
 - Ensure all tests are passing.
+- The `Check Version Refs` PR check runs automatically when the PR changes `VERSION`; it is informational and does not block merging.
 - Once the PR is merged, the Release Automation GitHub Action will trigger.
 
 The automation will:
 
 1. Validate the semantic version format.
+1. Verify the documentation names the release in `VERSION` and no older release.
 1. Create and push a git tag `vX.Y.Z` at the merged commit.
 1. If it is a minor or major release (e.g. `v0.2.0`), it will automatically branch off `release-vX.Y` and push it to the repository.
+
+If the version-reference check reports stale references after the release PR is merged, the warning is recorded and the tag is still created. Fix the documentation in a follow-up PR so the published release and the repository documentation stay aligned.
 
 ## 3. Promote the Images
 
