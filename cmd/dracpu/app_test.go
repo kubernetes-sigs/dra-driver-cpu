@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"net"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,5 +37,25 @@ func TestRunUsesConfigSysFSOverlay(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "read sysfs overlay") {
 		t.Fatalf("run() error = %v, want sysfs overlay read error (cfg.SysFSOverlay was ignored)", err)
+	}
+}
+
+// TestRunFailsOnHTTPBindError: run() must report a bind failure before driver setup.
+func TestRunFailsOnHTTPBindError(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	cfg := driverconfig.Default()
+	cfg.BindAddress = listener.Addr().String()
+
+	err = run(testr.New(t), cfg)
+	if err == nil {
+		t.Fatal("run() succeeded, want HTTP bind error")
+	}
+	if want := "failed to bind HTTP server to " + cfg.BindAddress; !strings.Contains(err.Error(), want) {
+		t.Fatalf("run() error = %v, want error containing %q", err, want)
 	}
 }

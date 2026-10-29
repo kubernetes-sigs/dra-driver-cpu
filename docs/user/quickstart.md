@@ -20,7 +20,7 @@ make kind-cluster
 ## Install the driver
 
 ```bash
-helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu --version 0.2.0 -n kube-system
+helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driver-cpu --version 0.3.0 -n kube-system
 ```
 
 ## Verify the driver is up
@@ -143,8 +143,8 @@ that pool automatically as claims come and go.
 ## Next steps
 
 - More runnable manifests:
-  [grouped mode](https://raw.githubusercontent.com/kubernetes-sigs/dra-driver-cpu/v0.2.0/hack/examples/pod_with_resource_claim_grouped_mode.yaml) (default),
-  [pod-level resources](https://raw.githubusercontent.com/kubernetes-sigs/dra-driver-cpu/v0.2.0/hack/examples/pod_with_pod_level_resources.yaml).
+  [grouped mode](https://raw.githubusercontent.com/kubernetes-sigs/dra-driver-cpu/v0.3.0/hack/examples/pod_with_resource_claim_grouped_mode.yaml) (default),
+  [pod-level resources](https://raw.githubusercontent.com/kubernetes-sigs/dra-driver-cpu/v0.3.0/hack/examples/pod_with_pod_level_resources.yaml).
 - Steer placement with CEL selectors over topology attributes — examples in
   [Device Attributes and Selectors](device-attributes.md).
 - Coming from the kubelet CPUManager static policy? See the

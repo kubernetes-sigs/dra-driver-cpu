@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/containerd/nri/pkg/stub"
@@ -55,6 +56,10 @@ const (
 	// acknowledge the plugin at startup
 	registrationPollInterval = 1 * time.Second
 	registrationTimeout      = 30 * time.Second
+	// initialSyncWait bounds how long Prepare waits for the first Synchronize
+	// after a restart. It covers the NRI connection plus the 2s NRI request
+	// timeout, and stays well under kubelet's 45s DRA call timeout.
+	initialSyncWait = 5 * time.Second
 )
 
 const opIDLen = 8
@@ -112,6 +117,14 @@ type CPUAllocator interface {
 
 // CPUDriver is the structure that holds all the driver runtime information.
 type CPUDriver struct {
+	// stateMu protects the store pointers and complete DRA/NRI state operations.
+	// Acquire it before store locks; never call into the runtime while holding it.
+	stateMu         sync.Mutex
+	hasSynchronized bool
+	// initialSync is closed when hasSynchronized first becomes true.
+	initialSync     chan struct{}
+	initialSyncWait time.Duration
+
 	driverName              string
 	nodeName                string
 	kubeClient              kubernetes.Interface
@@ -206,9 +219,11 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		metricsRecorder = cpumetrics.Noop()
 	}
 	plugin := &CPUDriver{
-		driverName: config.DriverName,
-		nodeName:   config.NodeName,
-		kubeClient: providers.K8SClient,
+		initialSync:     make(chan struct{}),
+		initialSyncWait: initialSyncWait,
+		driverName:      config.DriverName,
+		nodeName:        config.NodeName,
+		kubeClient:      providers.K8SClient,
 		topology: deviceTopology{
 			Inventory: device.Inventory{
 				ReservedCPUs: config.ReservedCPUs,

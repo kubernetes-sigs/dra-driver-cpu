@@ -30,7 +30,7 @@ driverConfig:
   reservedCPUs: "0-1"
 # Other tuning knobs of Helm chart
 image:
-  tag: v0.2.0
+  tag: v0.3.0
 resources:
   requests:
     cpu: "200m"
