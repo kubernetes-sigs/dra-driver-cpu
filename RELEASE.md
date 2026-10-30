@@ -15,16 +15,20 @@ Instead of manually creating branches and tags, the release is triggered by a pu
 
 - The Release Shepherd creates a new PR targeting the `main` branch (for minor/major releases) or a `release-*` branch (for patch releases).
 - In this PR:
-  - Update the `VERSION` file at the repository root to the new semantic version (e.g., `v0.2.0`).
-  - Update any documentation (like `docs/book/src/releases.md`), examples, or manifests as needed for the release.
+  - Update the `VERSION` file at the repository root to the release semantic version (e.g., `v0.4.0-dev` → `v0.4.0` on `main`, or `v0.3.0` → `v0.3.1` on `release-v0.3`).
+  - Update any documentation, examples, or manifests as needed for the release.
 - Ensure all tests are passing.
 - Once the PR is merged, the Release Automation GitHub Action will trigger.
 
+Between releases, `VERSION` on `main` holds the next minor or major development marker (e.g., `v0.4.0-dev`).
+
 The automation will:
 
-1. Validate the semantic version format.
-1. Create and push a git tag `vX.Y.Z` at the merged commit.
-1. If it is a minor or major release (e.g. `v0.2.0`), it will automatically branch off `release-vX.Y` and push it to the repository.
+- Validate the version format (`vX.Y.Z` for releases, or `vX.Y.Z-dev` for development markers; other pre-release or build tags are rejected).
+- When `VERSION` is a full release version (`vX.Y.Z`), create and push a git tag `vX.Y.Z` at the merged commit.
+- If it is a minor or major release (e.g. `v0.4.0`), automatically branch off `release-vX.Y` and push it to the repository.
+
+After a minor or major release branches `release-vX.Y`, open a follow-up PR against `main` to bump `VERSION` to the next development marker (e.g., `v0.5.0-dev`). The workflow validates `-dev` versions and skips tag and branch creation.
 
 ## 3. Promote the Images
 
