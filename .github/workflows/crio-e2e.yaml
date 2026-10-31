@@ -1,0 +1,49 @@
+name: CRI-O E2E
+on:
+  pull_request:
+    branches: [main]
+    # Skip docs-only changes; anything that can change runtime integration runs.
+    paths:
+      - '.github/workflows/crio-e2e.yaml'
+      - 'Makefile'
+      - 'Dockerfile'
+      - 'go.mod'
+      - 'go.sum'
+      - 'api/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'deployment/**'
+      - 'hack/ci/**'
+      - 'hack/examples/sysfs-overlay/**'
+      - 'test/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  crio-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      # Same Helm major/minor as the Makefile's install-helm pin (HELM_VERSION_SHA),
+      # as a prebuilt binary instead of compiling it on every run.
+      - uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
+        with:
+          version: v3.20.1
+      # kind is pinned by the Makefile and installed by run.sh, the same
+      # entrypoint Prow uses.
+      - name: Run CRI-O suite
+        env:
+          ARTIFACTS: ${{ runner.temp }}/crio-artifacts
+          TAG: crio-${{ github.sha }}
+        run: hack/ci/crio/run.sh
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: crio-e2e
+          path: ${{ runner.temp }}/crio-artifacts
