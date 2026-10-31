@@ -114,7 +114,7 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 func TestCreateContainer(t *testing.T) {
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	pod := &api.PodSandbox{Id: "pod-id-1", Name: "my-pod", Namespace: "my-ns", Uid: "pod-uid-1"}
-	claimUID := "claim-uid-1"
+	claimUID := types.UID("claim-uid-1")
 
 	var infos []cpuinfo.CPUInfo
 	for _, cpuID := range allCPUs.UnsortedList() {
@@ -125,7 +125,7 @@ func TestCreateContainer(t *testing.T) {
 	topo, _ := mockProvider.GetCPUTopology(logger)
 
 	// newTestContainer is a local helper to simplify test case definitions.
-	newTestContainer := func(claimUID, cpus string) *api.Container {
+	newTestContainer := func(claimUID types.UID, cpus string) *api.Container {
 		var envs []string
 		if cpus != "" {
 			envs = append(envs, fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, cpus))
@@ -151,9 +151,9 @@ func TestCreateContainer(t *testing.T) {
 			name:     "guaranteed container triggers container adjustment with cpus in resource claim",
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
-				store := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(0, 1, 2, 3), false))
-				return store
+				allocationState := store.NewAllocationState(testNodeName, topo, cpuset.New())
+				require.NoError(t, allocationState.Reserve(logger, noop, store.ClaimIdent{UID: claimUID}, cpuset.New(0, 1, 2, 3), false))
+				return allocationState
 			}(),
 			container: newTestContainer(claimUID, "0-3"),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
@@ -165,7 +165,7 @@ func TestCreateContainer(t *testing.T) {
 		{
 			name:            "shared container triggers container adjustment with all cpus",
 			podState:        store.NewPodState(),
-			allocationState: store.NewAllocationState(topo, cpuset.New()),
+			allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
 			container:       newTestContainer("", ""),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
 				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
@@ -176,9 +176,9 @@ func TestCreateContainer(t *testing.T) {
 			name:     "shared container created after guaranteed allocation uses shared pool",
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
-				store := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(0, 1, 2, 3), false))
-				return store
+				allocationState := store.NewAllocationState(testNodeName, topo, cpuset.New())
+				require.NoError(t, allocationState.Reserve(logger, noop, store.ClaimIdent{UID: claimUID}, cpuset.New(0, 1, 2, 3), false))
+				return allocationState
 			}(),
 			container: newTestContainer("", ""),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
@@ -190,8 +190,8 @@ func TestCreateContainer(t *testing.T) {
 			name:     "shared container is rejected when shared pool is empty",
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
-				allocation := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), allCPUs, false))
+				allocation := store.NewAllocationState(testNodeName, topo, cpuset.New())
+				require.NoError(t, allocation.Reserve(logger, noop, store.ClaimIdent{UID: claimUID}, allCPUs, false))
 				return allocation
 			}(),
 			container:             newTestContainer("", ""),
@@ -206,9 +206,9 @@ func TestCreateContainer(t *testing.T) {
 				return conf
 			}(),
 			allocationState: func() *store.AllocationState {
-				store := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(2, 3), false))
-				return store
+				allocationState := store.NewAllocationState(testNodeName, topo, cpuset.New())
+				require.NoError(t, allocationState.Reserve(logger, noop, store.ClaimIdent{UID: claimUID}, cpuset.New(2, 3), false))
+				return allocationState
 			}(),
 			container: newTestContainer(claimUID, "2-3"),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
@@ -234,8 +234,8 @@ func TestCreateContainer(t *testing.T) {
 				return conf
 			}(),
 			allocationState: func() *store.AllocationState {
-				allocation := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), allCPUs, false))
+				allocation := store.NewAllocationState(testNodeName, topo, cpuset.New())
+				require.NoError(t, allocation.Reserve(logger, noop, store.ClaimIdent{UID: claimUID}, allCPUs, false))
 				return allocation
 			}(),
 			container:             newTestContainer(claimUID, "0-7"),
@@ -245,8 +245,8 @@ func TestCreateContainer(t *testing.T) {
 			name:     "guaranteed container may consume the full pool when no shared containers exist",
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
-				allocation := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), allCPUs, false))
+				allocation := store.NewAllocationState(testNodeName, topo, cpuset.New())
+				require.NoError(t, allocation.Reserve(logger, noop, store.ClaimIdent{UID: claimUID}, allCPUs, false))
 				return allocation
 			}(),
 			container: newTestContainer(claimUID, "0-7"),
@@ -259,7 +259,7 @@ func TestCreateContainer(t *testing.T) {
 		{
 			name:            "guaranteed container with malformed env fails closed",
 			podState:        store.NewPodState(),
-			allocationState: store.NewAllocationState(topo, cpuset.New()),
+			allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
 			container: &api.Container{
 				Id:           "ctr-id-1",
 				PodSandboxId: pod.Id,
@@ -271,7 +271,7 @@ func TestCreateContainer(t *testing.T) {
 		{
 			name:            "container with DRA env for unprepared claim fails closed",
 			podState:        store.NewPodState(),
-			allocationState: store.NewAllocationState(topo, cpuset.New()),
+			allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
 			container:       newTestContainer(claimUID, "0-3"),
 			expectedErrorContains: fmt.Sprintf(
 				"claim %q is not prepared by this driver",
@@ -282,9 +282,9 @@ func TestCreateContainer(t *testing.T) {
 			name:     "container with DRA env that differs from prepared allocation fails closed",
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
-				store := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(0, 1), false))
-				return store
+				allocationState := store.NewAllocationState(testNodeName, topo, cpuset.New())
+				require.NoError(t, allocationState.Reserve(logger, noop, store.ClaimIdent{UID: claimUID}, cpuset.New(0, 1), false))
+				return allocationState
 			}(),
 			container: newTestContainer(claimUID, "0-3"),
 			expectedErrorContains: fmt.Sprintf(
@@ -301,6 +301,7 @@ func TestCreateContainer(t *testing.T) {
 			driver := &CPUDriver{
 				podState:        tc.podState,
 				allocationState: tc.allocationState,
+				checkpointMgr:   noop,
 				metrics:         cpumetrics.Noop(),
 			}
 			before := tc.allocationState.Snapshot()
@@ -347,12 +348,13 @@ func TestStopContainer(t *testing.T) {
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{
 					podState:        store.NewPodState(),
-					allocationState: store.NewAllocationState(topo, cpuset.New()),
+					allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+					checkpointMgr:   noop,
 					topology:        deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
 					metrics:         cpumetrics.Noop(),
 				}
 				claimUID := types.UID("claim-uid-1")
-				require.NoError(t, driver.allocationState.Reserve(logger, claimUID, cpuset.New(0, 1), false))
+				require.NoError(t, driver.allocationState.Reserve(logger, noop, store.ClaimIdent{UID: claimUID}, cpuset.New(0, 1), false))
 				driver.podState.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id), claimUID))
 				driver.podState.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
 				return driver
@@ -363,7 +365,8 @@ func TestStopContainer(t *testing.T) {
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{
 					podState:        store.NewPodState(),
-					allocationState: store.NewAllocationState(topo, cpuset.New()),
+					allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+					checkpointMgr:   noop,
 					topology:        deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
 					metrics:         cpumetrics.Noop(),
 				}
@@ -395,11 +398,12 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 
 	claimUID := types.UID("claim-restart")
 	claimCPUs := cpuset.New(0, 1)
-	allocState := store.NewAllocationState(topo, cpuset.New())
-	require.NoError(t, allocState.Reserve(logger, claimUID, claimCPUs, false))
+	allocState := store.NewAllocationState(testNodeName, topo, cpuset.New())
+	require.NoError(t, allocState.Reserve(logger, noop, store.ClaimIdent{UID: claimUID}, claimCPUs, false))
 	driver := &CPUDriver{
 		podState:        store.NewPodState(),
 		allocationState: allocState,
+		checkpointMgr:   noop,
 		topology:        deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
 		metrics:         cpumetrics.Noop(),
 	}
@@ -468,15 +472,16 @@ func TestGuaranteedContainerRestartNotBlockedByEmptySharedPool(t *testing.T) {
 	require.NoError(t, err)
 
 	claimUID := types.UID("claim-full")
-	allocState := store.NewAllocationState(topo, cpuset.New())
-	require.NoError(t, allocState.Reserve(logger, claimUID, allCPUs, false))
+	allocState := store.NewAllocationState(testNodeName, topo, cpuset.New())
+	require.NoError(t, allocState.Reserve(logger, noop, store.ClaimIdent{UID: claimUID}, allCPUs, false))
 	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod", Name: "pod", Namespace: "ns"}
-	_, err = allocState.Bind(logger, types.UID(pod.Uid), "app", map[types.UID]cpuset.CPUSet{claimUID: allCPUs})
+	_, err = allocState.Bind(logger, noop, types.UID(pod.Uid), "app", map[types.UID]cpuset.CPUSet{claimUID: allCPUs})
 	require.NoError(t, err)
 
 	driver := &CPUDriver{
 		podState:        store.NewPodState(),
 		allocationState: allocState,
+		checkpointMgr:   noop,
 		topology:        deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
 		metrics:         cpumetrics.Noop(),
 	}
@@ -525,7 +530,8 @@ func TestNRISynchronize(t *testing.T) {
 			driver: func() *CPUDriver {
 				driver := &CPUDriver{
 					podState:        store.NewPodState(),
-					allocationState: store.NewAllocationState(topo, cpuset.New()),
+					allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+					checkpointMgr:   noop,
 					cdiMgr:          newMockCdiMgr(),
 					topology:        deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
 					metrics:         cpumetrics.Noop(),
@@ -541,7 +547,8 @@ func TestNRISynchronize(t *testing.T) {
 			name: "mixed containers across multiple pods",
 			driver: &CPUDriver{
 				podState:        store.NewPodState(),
-				allocationState: store.NewAllocationState(topo, cpuset.New()),
+				allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+				checkpointMgr:   noop,
 				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
 					"claim-A": cpuset.New(0, 1),
 				}),
@@ -574,7 +581,8 @@ func TestNRISynchronize(t *testing.T) {
 			name: "only shared containers",
 			driver: &CPUDriver{
 				podState:        store.NewPodState(),
-				allocationState: store.NewAllocationState(topo, cpuset.New()),
+				allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+				checkpointMgr:   noop,
 				cdiMgr:          newMockCdiMgr(),
 				topology:        deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
 				metrics:         cpumetrics.Noop(),
@@ -599,7 +607,8 @@ func TestNRISynchronize(t *testing.T) {
 			name: "synchronize rejects an empty shared pool with existing shared containers",
 			driver: &CPUDriver{
 				podState:        store.NewPodState(),
-				allocationState: store.NewAllocationState(topo, cpuset.New()),
+				allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+				checkpointMgr:   noop,
 				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
 					"claim-full": allCPUs,
 				}),
@@ -618,7 +627,8 @@ func TestNRISynchronize(t *testing.T) {
 			name: "only guaranteed containers",
 			driver: &CPUDriver{
 				podState:        store.NewPodState(),
-				allocationState: store.NewAllocationState(topo, cpuset.New()),
+				allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+				checkpointMgr:   noop,
 				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
 					"claim-A": cpuset.New(0, 1),
 					"claim-B": cpuset.New(2, 3),
@@ -647,7 +657,8 @@ func TestNRISynchronize(t *testing.T) {
 			name: "container with multiple claims",
 			driver: &CPUDriver{
 				podState:        store.NewPodState(),
-				allocationState: store.NewAllocationState(topo, cpuset.New()),
+				allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+				checkpointMgr:   noop,
 				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
 					"claim-A": cpuset.New(0, 1),
 					"claim-B": cpuset.New(2, 3),
@@ -671,7 +682,8 @@ func TestNRISynchronize(t *testing.T) {
 			name: "malformed DRA env does not prevent other containers from synchronizing",
 			driver: &CPUDriver{
 				podState:        store.NewPodState(),
-				allocationState: store.NewAllocationState(topo, cpuset.New()),
+				allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+				checkpointMgr:   noop,
 				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
 					"claim-A": cpuset.New(0, 1),
 				}),
@@ -701,7 +713,8 @@ func TestNRISynchronize(t *testing.T) {
 				cdiMgr.refreshError = fmt.Errorf("unrelated invalid CDI spec")
 				return &CPUDriver{
 					podState:        store.NewPodState(),
-					allocationState: store.NewAllocationState(topo, cpuset.New()),
+					allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+					checkpointMgr:   noop,
 					cdiMgr:          cdiMgr,
 					topology:        deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
 					metrics:         cpumetrics.Noop(),
@@ -723,7 +736,8 @@ func TestNRISynchronize(t *testing.T) {
 			name: "invalid claim does not prevent other containers from synchronizing",
 			driver: &CPUDriver{
 				podState:        store.NewPodState(),
-				allocationState: store.NewAllocationState(topo, cpuset.New()),
+				allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+				checkpointMgr:   noop,
 				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
 					"claim-B": cpuset.New(2, 3),
 				}),
@@ -751,7 +765,8 @@ func TestNRISynchronize(t *testing.T) {
 			name: "runtime DRA env that mismatches driver-owned CDI spec is ignored",
 			driver: &CPUDriver{
 				podState:        store.NewPodState(),
-				allocationState: store.NewAllocationState(topo, cpuset.New()),
+				allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+				checkpointMgr:   noop,
 				cdiMgr: newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{
 					"claim-A": cpuset.New(2, 3),
 				}),
@@ -806,18 +821,19 @@ func TestStopContainerKeepsClaimOutOfSharedPoolUntilUnprepare(t *testing.T) {
 	claimUID := types.UID("claim-uid-1")
 	claimedCPUs := cpuset.New(0, 1)
 
-	allocationState := store.NewAllocationState(topo, cpuset.New())
-	require.NoError(t, allocationState.Reserve(logger, claimUID, claimedCPUs, false))
+	allocationState := store.NewAllocationState(testNodeName, topo, cpuset.New())
+	require.NoError(t, allocationState.Reserve(logger, noop, store.ClaimIdent{UID: claimUID}, claimedCPUs, false))
 
 	driver := &CPUDriver{
 		cdiMgr:          newMockCdiMgr(),
 		podState:        store.NewPodState(),
 		allocationState: allocationState,
+		checkpointMgr:   noop,
 		topology:        deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
 		metrics:         cpumetrics.Noop(),
 	}
 	driver.cdiMgr.(*mockCdiMgr).devices[getCDIDeviceName(claimUID)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, claimedCPUs.String())
-	_, err := driver.allocationState.Bind(logger, types.UID(guaranteedPod.Uid), guaranteedCtr.Name, map[types.UID]cpuset.CPUSet{claimUID: claimedCPUs})
+	_, err := driver.allocationState.Bind(logger, noop, types.UID(guaranteedPod.Uid), guaranteedCtr.Name, map[types.UID]cpuset.CPUSet{claimUID: claimedCPUs})
 	require.NoError(t, err)
 	driver.podState.SetContainerState(types.UID(guaranteedPod.Uid),
 		store.NewContainerState(guaranteedCtr.Name, types.UID(guaranteedCtr.Id), claimUID))

@@ -252,6 +252,9 @@
             "v1alpha1"
           ]
         },
+        "checkpointDir": {
+          "type": "string"
+        },
         "cpuDeviceMode": {
           "type": "string",
           "enum": [

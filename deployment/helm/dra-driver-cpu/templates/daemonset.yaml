@@ -13,6 +13,7 @@
 # limitations under the License.
 {{- $effectiveDriverConfig := include "dra-driver-cpu.effectiveDriverConfig" . | fromYaml }}
 {{- $kubeletRoot := include "dra-driver-cpu.kubeletRootDir" . }}
+{{- $checkpointDir := include "dra-driver-cpu.checkpointDir" $effectiveDriverConfig }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -115,6 +116,8 @@ spec:
           mountPath: /var/run/nri
         - name: cdi-dir
           mountPath: /var/run/cdi
+        - name: checkpoint-dir
+          mountPath: {{ $checkpointDir | quote }}
         {{- with .Values.extraVolumeMounts }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -136,6 +139,10 @@ spec:
       - name: cdi-dir
         hostPath:
           path: /var/run/cdi
+          type: DirectoryOrCreate
+      - name: checkpoint-dir
+        hostPath:
+          path: {{ $checkpointDir | quote }}
           type: DirectoryOrCreate
       {{- with .Values.extraVolumes }}
       {{- toYaml . | nindent 6 }}

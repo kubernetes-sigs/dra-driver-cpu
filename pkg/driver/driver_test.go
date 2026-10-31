@@ -25,9 +25,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"github.com/stretchr/testify/require"
 	registerapi "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
 )
+
+var noop = checkpoint.NewNOOPManager()
 
 type mockNRIRunner struct {
 	runFunc func(ctx context.Context) error

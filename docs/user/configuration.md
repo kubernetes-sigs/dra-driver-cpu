@@ -119,6 +119,15 @@ on - is configured through other Helm values, not through this file.
 - Requires the `DRANodeAllocatableResources` feature gate (alpha, 1.37+). See
   [Workload Configuration Requirements](workload-requirements.md).
 
+`checkpointDir` (string, default: `/run/dra-driver-cpu`)
+
+- Directory used to store driver checkpoint state.
+- Must be an absolute path, must be writable.
+- It is recommended to set to a use a host volume for persistence across
+  driver restarts.
+- Persistence across node restarts is not guaranteed, so it is recommended
+  to use a tmpfs volume.
+
 #### Example
 
 ```yaml
