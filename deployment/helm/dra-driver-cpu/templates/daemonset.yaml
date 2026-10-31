@@ -91,12 +91,12 @@ spec:
             containerPort: {{ .Values.healthzPort }}
         livenessProbe:
           httpGet:
-            path: {{ .Values.healthzPath }}
+            path: /healthz
             port: healthz
           initialDelaySeconds: 10
         readinessProbe:
           httpGet:
-            path: {{ .Values.healthzPath }}
+            path: /healthz
             port: healthz
           initialDelaySeconds: 5
         resources:
