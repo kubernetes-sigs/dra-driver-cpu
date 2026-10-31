@@ -19,6 +19,7 @@ package e2e_local
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -46,3 +47,17 @@ var _ = ginkgo.BeforeSuite(func() {
 	gomega.Expect(err).ToNot(gomega.HaveOccurred(),
 		"binary not found at %q; run 'make build-dracpu' first", binPath)
 })
+
+func runCommand(args ...string) []byte {
+	ginkgo.GinkgoHelper()
+	fmt.Fprintf(ginkgo.GinkgoWriter, "running: %v\n", args)
+
+	// #nosec G204 -- the command and arguments are fixed from test code.
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stderr = ginkgo.GinkgoWriter
+
+	out, err := cmd.Output()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	fmt.Fprintf(ginkgo.GinkgoWriter, "output:\n%s\n", string(out))
+	return out
+}
