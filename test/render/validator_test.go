@@ -228,7 +228,20 @@ func checkBinding(ds *appsv1.DaemonSet, c *corev1.Container, name, want string) 
 	if host.Path != want {
 		errs = append(errs, fmt.Errorf("volume %q points at %q, want %q", name, host.Path, want))
 	}
+	// The kubelet creates both directories under its root at startup, so a
+	// missing one means the root is wrong. Directory refuses to start the pod
+	// there, where an unset type would mount an empty directory instead.
+	if host.Type == nil || *host.Type != corev1.HostPathDirectory {
+		errs = append(errs, fmt.Errorf("volume %q has hostPath type %s, want %q", name, typeOf(host), corev1.HostPathDirectory))
+	}
 	return errors.Join(errs...)
+}
+
+func typeOf(host *corev1.HostPathVolumeSource) string {
+	if host.Type == nil {
+		return "unset"
+	}
+	return fmt.Sprintf("%q", *host.Type)
 }
 
 // checkFlag looks for the argument the chart manages. At the default the chart
