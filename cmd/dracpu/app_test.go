@@ -18,6 +18,7 @@ package main
 
 import (
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -57,5 +58,31 @@ func TestRunFailsOnHTTPBindError(t *testing.T) {
 	}
 	if want := "failed to bind HTTP server to " + cfg.BindAddress; !strings.Contains(err.Error(), want) {
 		t.Fatalf("run() error = %v, want error containing %q", err, want)
+	}
+}
+
+func TestResolveNodeName(t *testing.T) {
+	host, _ := os.Hostname()
+	tests := []struct {
+		name     string
+		override string
+		env      string
+		want     string
+	}{
+		{name: "override wins over env", override: "Override-Node", env: "env-node", want: "override-node"},
+		{name: "env used when override empty", env: "Env-Node", want: "env-node"},
+		{name: "falls back to os hostname", want: strings.ToLower(strings.TrimSpace(host))},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("NODE_NAME", tc.env)
+			got, err := resolveNodeName(tc.override)
+			if err != nil {
+				t.Fatalf("resolveNodeName() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("resolveNodeName() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

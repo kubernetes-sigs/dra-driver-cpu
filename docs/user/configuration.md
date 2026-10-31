@@ -172,18 +172,19 @@ never chart values, so they are rejected rather than ignored.
 **NOTE:** Command-line flags are kept mainly for backward compatibility. Prefer the
 [configuration file](#configuration-file) above for new deployments.
 
-`--cpu-device-mode`, `--group-by`, `--reserved-cpus`, `--hostname-override`, `--sysfs-overlay`
-are deprecated in favour of their config file equivalents and will be removed in a future
-release ([issue #245](https://github.com/kubernetes-sigs/dra-driver-cpu/issues/245)). Each is
-marked as deprecated in `--help`, and passing one explicitly logs a startup warning.
+`--cpu-device-mode`, `--group-by`, `--reserved-cpus`, `--hostname-override` and
+`--sysfs-overlay` were removed in v0.4.0
+([issue #281](https://github.com/kubernetes-sigs/dra-driver-cpu/issues/281)); the driver
+now rejects them as unknown flags. Set the config file equivalents instead:
 
 - `--cpu-device-mode` → `cpuDeviceMode`
 - `--group-by` → `groupBy`
 - `--reserved-cpus` → `reservedCPUs`
-- `--hostname-override` → `hostnameOverride`
+- `--hostname-override` → `hostnameOverride` (when unset, the driver uses the `NODE_NAME`
+  environment variable, which the Helm chart sets from the downward API)
 - `--sysfs-overlay` → `sysfsOverlay`
 
-The remaining flags aren't part of that deprecation:
+The remaining flags are still supported:
 
 - `--config`: path to the config file described above.
 - `--kubeconfig`: path to a kubeconfig file, for out-of-cluster use. Also settable via the `kubeconfig` config field.

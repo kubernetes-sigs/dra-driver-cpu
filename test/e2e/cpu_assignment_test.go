@@ -107,9 +107,9 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		}
 		cpuDeviceMode = cfgValues.CPUDeviceMode
 		groupBy = cfgValues.GroupBy
-		rootFxt.Log.Info("daemonset --reserved-cpus configuration", "cpus", dsReservedCPUs.String())
+		rootFxt.Log.Info("daemonset reservedCPUs configuration", "cpus", dsReservedCPUs.String())
 		gomega.Expect(dsReservedCPUs).To(cpusetmatchers.Equal(reservedCPUs), "daemonset reserved cpus do not match test reserved cpus")
-		rootFxt.Log.Info("daemonset --cpu-device-mode configuration", "mode", cpuDeviceMode, "groupBy", groupBy)
+		rootFxt.Log.Info("daemonset cpuDeviceMode configuration", "mode", cpuDeviceMode, "groupBy", groupBy)
 		driverConfig := getDriverConfig(ctx, rootFxt.K8SClientset)
 		publishNodeAllocatableMapping = driverConfig.PublishNodeAllocatableResourceMapping
 		rootFxt.Log.Info("driver node allocatable mapping", "enabled", publishNodeAllocatableMapping)
