@@ -27,11 +27,18 @@ jobs:
           VERSION=$(cat VERSION | tr -d '[:space:]')
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
-          # Basic semver validation (e.g. v1.2.3)
-          if ! [[ "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
-            echo "Error: Invalid semver format in VERSION file: $VERSION"
+          # Only full release versions (vX.Y.Z) or development markers (vX.Y.Z-dev) are supported.
+          if ! [[ "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-dev)?$ ]]; then
+            echo "Error: Invalid version format in VERSION file: $VERSION (expected vX.Y.Z or vX.Y.Z-dev)"
             exit 1
           fi
+
+          if [[ "$VERSION" == *-dev ]]; then
+            echo "is_dev=true" >> $GITHUB_OUTPUT
+            echo "Development version $VERSION detected. Skipping tag and branch creation."
+            exit 0
+          fi
+          echo "is_dev=false" >> $GITHUB_OUTPUT
 
           # Extract patch number to determine if we need to cut a new release branch
           PATCH_NUM=$(echo "$VERSION" | sed -n 's/^v[0-9]*\.[0-9]*\.\([0-9]*\).*/\1/p')
@@ -44,11 +51,13 @@ jobs:
           echo "Cutting release for version: $VERSION (Branch: $VERSION_XY Patch: $PATCH_NUM)"
 
       - name: Configure Git
+        if: steps.version.outputs.is_dev != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Create and Push Tag
+        if: steps.version.outputs.is_dev != 'true'
         run: |
           VERSION=${{ steps.version.outputs.version }}
           echo "tagging: ${VERSION}"
@@ -61,7 +70,7 @@ jobs:
           fi
 
       - name: Create and Push Release Branch
-        if: steps.version.outputs.patch_num == '0'
+        if: steps.version.outputs.is_dev != 'true' && steps.version.outputs.patch_num == '0'
         run: |
           BRANCH_NAME="release-${VERSION_XY}"
           echo "branching: ${BRANCH_NAME}"
