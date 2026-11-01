@@ -127,9 +127,11 @@ spec:
       - name: device-plugin
         hostPath:
           path: {{ include "dra-driver-cpu.pluginsDir" $kubeletRoot | quote }}
+          type: Directory
       - name: plugin-registry
         hostPath:
           path: {{ include "dra-driver-cpu.pluginRegistryDir" $kubeletRoot | quote }}
+          type: Directory
       - name: nri-plugin
         hostPath:
           path: /var/run/nri

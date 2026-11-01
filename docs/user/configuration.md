@@ -225,6 +225,8 @@ kubeletRootDir: /mnt/data/kubelet
 ```
 
 That one value becomes the driver's `--kubelet-root-dir` and both hostPath mounts.
+Both mounts use hostPath type `Directory`, so if `<root>/plugins` or `<root>/plugins_registry`
+doesn't exist, the pod fails to start instead of registering where the kubelet doesn't look.
 
 After path cleaning, the value may not contain `$(` or `$$`. The kubelet can
 reinterpret those in a container's argument, rewriting `$$` to a single `$` and
