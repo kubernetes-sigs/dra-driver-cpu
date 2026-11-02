@@ -26,10 +26,12 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+var ErrMissingKubeconfig = errors.New("missing environment variable KUBECONFIG")
+
 func NewK8SConfig() (*rest.Config, error) {
 	kubeconfig, ok := os.LookupEnv("KUBECONFIG")
-	if !ok {
-		return nil, errors.New("missing environment variable KUBECONFIG")
+	if !ok || kubeconfig == "" {
+		return nil, ErrMissingKubeconfig
 	}
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {

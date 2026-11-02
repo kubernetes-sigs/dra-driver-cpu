@@ -42,6 +42,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/cpuset"
 )
@@ -364,6 +365,26 @@ func getDriverRawMetrics(ctx context.Context, fxt *fixture.Fixture, nodeName str
 
 func metricsURL(podIP string) string {
 	return fmt.Sprintf("http://%s:%d%s", podIP, driverHTTPPort, metricsPath)
+}
+
+func waitForPodIP(ctx context.Context, client kubernetes.Interface, podName string) (string, error) {
+	var podIP string
+	err := wait.PollUntilContextTimeout(ctx, driverPodPollInterval, driverPodPollTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			pod, err := client.CoreV1().Pods(daemonSetNamespace).Get(ctx, podName, metav1.GetOptions{})
+			if err != nil {
+				return false, err
+			}
+			if pod.Status.PodIP == "" {
+				return false, nil
+			}
+			podIP = pod.Status.PodIP
+			return true, nil
+		})
+	if err != nil {
+		return "", fmt.Errorf("waiting for PodIP on %q: %w", podName, err)
+	}
+	return podIP, nil
 }
 
 func getMetricsFromPodIP(podIP string) (string, error) {
