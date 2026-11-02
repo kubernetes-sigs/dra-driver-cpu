@@ -77,6 +77,10 @@ honor these settings, where applicable.
   before to run any actual test. Useful for troubleshooting and test fixing/tuning.
   NOTE: setting this value will make the test output significantly larger.
 
+- `DRACPU_E2E_EXPECTED_NUM_CPUS` and `DRACPU_E2E_EXPECTED_NUMA_NODES`: (optional):
+  expected topology values when testing a driver configured with a sysfs overlay. Set both
+  variables to enable the overlay-specific assertion. If neither is set, that assertion skips.
+
 - `DRACPU_E2E_DAEMONSET_NAMESPACE`: (optional, default `kube-system`): the namespace where the
   dra-driver-cpu DaemonSet and its pods are deployed. Override this when the driver is installed
   in a namespace other than `kube-system`.
@@ -101,6 +105,18 @@ To run all specs except those labeled `negative` against an existing configured 
 ```bash
 DRACPU_E2E_LABEL_FILTER='!negative' make test-e2e
 ```
+
+To run the same suite with the bundled `hack/examples/sysfs-overlay` topology:
+
+```bash
+make test-e2e-kind-overlay
+```
+
+This target sets the expected CPU and NUMA-node counts for the bundled example. In
+addition to activating the overlay-specific assertion, it makes the normal
+allocation and ResourceSlice tests exercise the driver with overlay-backed topology
+data. CPUs 0-3 must be online and available to each Kind node: the overlay changes
+the driver's topology view, while allocations still use real kernel CPUs.
 
 To run against an existing cluster with the driver already deployed:
 

@@ -18,18 +18,15 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"iter"
 	"math"
-	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	e2enode "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/node"
 	e2epod "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/pod"
@@ -119,8 +116,7 @@ var _ = ginkgo.When("checking metrics", ginkgo.Serial, ginkgo.Label("metrics"), 
 				reservedCPUs, err = cpuset.Parse(cfgValues.ReservedCPUs)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			}
-			availableCPUs, err := discoverAvailableCPUs(ctx, metricsFxt, targetNode.Name, dracpuTesterImage, reservedCPUs)
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			availableCPUs := discoverDriverCPUs(ctx, metricsFxt.K8SClientset, targetNode.Name).Difference(reservedCPUs)
 			if availableCPUs.Size() == 0 {
 				ginkgo.Skip(fmt.Sprintf("no allocatable CPUs left on node %q", targetNode.Name))
 			}
@@ -322,66 +318,21 @@ var _ = ginkgo.When("checking metrics", ginkgo.Serial, ginkgo.Label("metrics"), 
 	})
 })
 
-func discoverAvailableCPUs(ctx context.Context, fxt *fixture.Fixture, nodeName, image string, reservedCPUs cpuset.CPUSet) (cpuset.CPUSet, error) {
-	infoPod := discovery.MakePod(fxt.Namespace.Name, image)
-	infoPod = e2epod.PinToNode(infoPod, nodeName)
-	infoPod, err := e2epod.RunToCompletion(ctx, fxt.K8SClientset, infoPod)
-	if err != nil {
-		return cpuset.CPUSet{}, err
-	}
-
-	data, err := e2epod.GetLogs(ctx, fxt.K8SClientset, infoPod)
-	if err != nil {
-		return cpuset.CPUSet{}, err
-	}
-
-	var targetNodeCPUInfo discovery.DRACPUInfo
-	if err := json.Unmarshal([]byte(data), &targetNodeCPUInfo); err != nil {
-		return cpuset.CPUSet{}, err
-	}
-
-	allocatableCPUs := makeCPUSetFromDiscoveredCPUInfo(targetNodeCPUInfo)
-	return allocatableCPUs.Difference(reservedCPUs), nil
-}
-
 func getDriverRawMetrics(ctx context.Context, fxt *fixture.Fixture, nodeName string) (string, error) {
-	dracpuPod, err := e2epod.GetDRACPUPod(ctx, fxt.K8SClientset, nodeName)
+	dracpuPod, err := getDriverPod(ctx, fxt.K8SClientset, nodeName)
 	if err != nil {
 		return "", err
 	}
 
-	podIP, err := waitForPodIP(ctx, fxt.K8SClientset, dracpuPod.Name)
+	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	body, err := fxt.K8SClientset.CoreV1().Pods(dracpuPod.Namespace).
+		ProxyGet("http", dracpuPod.Name, strconv.Itoa(driverHTTPPort), metricsPath, nil).
+		DoRaw(requestCtx)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot get metrics from driver pod %q: %w; response body: %q", dracpuPod.Name, err, body)
 	}
-
-	rawMetrics, err := getMetricsFromPodIP(podIP)
-	if err != nil {
-		return "", fmt.Errorf("cannot get metrics from the dracpu pod: %w", err)
-	}
-	return rawMetrics, nil
-}
-
-func metricsURL(podIP string) string {
-	return fmt.Sprintf("http://%s:%d%s", podIP, driverHTTPPort, metricsPath)
-}
-
-func getMetricsFromPodIP(podIP string) (string, error) {
-	httpClient := &http.Client{Timeout: 10 * time.Second}
-	resp, err := httpClient.Get(metricsURL(podIP)) //nolint:noctx // httpClient.Timeout covers this
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GET %s returned %d: %s", metricsURL(podIP), resp.StatusCode, string(bodyBytes))
-	}
-	return string(bodyBytes), nil
+	return string(body), nil
 }
 
 func parseAllocationMetricSnapshot(rawMetrics string) (allocationMetricSnapshot, error) {

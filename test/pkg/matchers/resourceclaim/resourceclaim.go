@@ -25,19 +25,11 @@ import (
 	resourcev1 "k8s.io/api/resource/v1"
 )
 
-type requestResultsExpectation struct {
-	RequestName     string
-	ExpectedResults int
-}
-
-// ReuseSameDeviceForRequest succeeds if the ResourceClaim has a non-nil
-// allocation with exactly the expected number of results for the given request,
-// and all those results point at the same allocated device.
-func ReuseSameDeviceForRequest(requestName string, expectedResults int) types.GomegaMatcher {
-	expectation := requestResultsExpectation{
-		RequestName:     requestName,
-		ExpectedResults: expectedResults,
-	}
+// ReuseSameDeviceForRequests succeeds if the ResourceClaim has exactly one
+// allocation result per named request, all pointing at the same device.
+func ReuseSameDeviceForRequests(requestNames ...string) types.GomegaMatcher {
+	expectedNames := slices.Clone(requestNames)
+	slices.Sort(expectedNames)
 	return gcustom.MakeMatcher(func(actual *resourcev1.ResourceClaim) (bool, error) {
 		if actual == nil {
 			return false, fmt.Errorf("nil ResourceClaim")
@@ -46,20 +38,20 @@ func ReuseSameDeviceForRequest(requestName string, expectedResults int) types.Go
 			return false, nil
 		}
 		results := actual.Status.Allocation.Devices.Results // shortcut
-		if len(results) != expectedResults {
+		if len(results) == 0 || len(results) != len(expectedNames) {
 			return false, nil
 		}
-		if len(results) == 0 {
-			return false, nil
-		}
-		firstDevice := results[0].Device
+		first := results[0]
+		actualNames := make([]string, 0, len(results))
 		for _, result := range results {
-			if result.Request != requestName || result.Device != firstDevice {
+			if result.Driver != first.Driver || result.Pool != first.Pool || result.Device != first.Device {
 				return false, nil
 			}
+			actualNames = append(actualNames, result.Request)
 		}
-		return true, nil
-	}).WithTemplate("Expected ResourceClaim {{.Actual.Namespace}}/{{.Actual.Name}} to reuse the same device across {{.Data.ExpectedResults}} allocation results for request {{.Data.RequestName}}", expectation)
+		slices.Sort(actualNames)
+		return slices.Equal(actualNames, expectedNames), nil
+	}).WithTemplate("Expected ResourceClaim {{.Actual.Namespace}}/{{.Actual.Name}} to reuse the same device across requests {{.Data}}", expectedNames)
 }
 
 type requestResultsConsumption struct {
