@@ -18,6 +18,7 @@ package cpuinfo
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -253,6 +254,16 @@ func (s *SystemCPUInfo) GetCPUInfos(logger logr.Logger) ([]CPUInfo, error) {
 		}
 	}
 
+	// A kernel built without CONFIG_NUMA has no NUMA topology to respect, so each socket is taken as one NUMA node.
+	noNUMA := false
+	if _, err := fs.Stat(s.sysfs, path.Join("devices", "system", "node")); err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			return []CPUInfo{}, fmt.Errorf("could not check for NUMA nodes in sysfs: %w", err)
+		}
+		logger.V(2).Info("kernel exposes no NUMA topology, treating each socket as a NUMA node", "err", err)
+		noNUMA = true
+	}
+
 	cpuInfos := make([]CPUInfo, 0, onlineCPUs.Size())
 	for _, cpuID := range onlineCPUs.List() {
 		cpuInfo := CPUInfo{
@@ -277,12 +288,22 @@ func (s *SystemCPUInfo) GetCPUInfos(logger logr.Logger) ([]CPUInfo, error) {
 			cpuInfo.CoreType = CoreTypeStandard
 		}
 
-		if err := populateTopologyInfo(s.sysfs, &cpuInfo, logger); err != nil {
+		if err := populateTopologyInfo(s.sysfs, &cpuInfo, noNUMA, logger); err != nil {
 			logger.Info("skipping CPU due to incomplete topology", "cpuID", cpuID, "err", err)
 			continue
 		}
 
 		cpuInfos = append(cpuInfos, cpuInfo)
+	}
+
+	if noNUMA {
+		socketCPUs := make(map[int]cpuset.CPUSet)
+		for _, cpuInfo := range cpuInfos {
+			socketCPUs[cpuInfo.SocketID] = socketCPUs[cpuInfo.SocketID].Union(cpuset.New(cpuInfo.CpuID))
+		}
+		for i := range cpuInfos {
+			cpuInfos[i].NumaNodeCPUSet = socketCPUs[cpuInfos[i].SocketID]
+		}
 	}
 
 	if err := populateCpuSiblings(cpuInfos); err != nil {
@@ -292,7 +313,9 @@ func (s *SystemCPUInfo) GetCPUInfos(logger logr.Logger) ([]CPUInfo, error) {
 	return cpuInfos, nil
 }
 
-func populateTopologyInfo(sfs sysfs.FS, cpuInfo *CPUInfo, logger logr.Logger) error {
+// populateTopologyInfo reads the topology of one CPU from sysfs. On a kernel without NUMA support (noNUMA), the
+// socket is the NUMA node and the caller fills in the node's CPU set.
+func populateTopologyInfo(sfs sysfs.FS, cpuInfo *CPUInfo, noNUMA bool, logger logr.Logger) error {
 	cpuID := cpuInfo.CpuID
 
 	// Get Socket ID from sysfs
@@ -374,6 +397,10 @@ func populateTopologyInfo(sfs sysfs.FS, cpuInfo *CPUInfo, logger logr.Logger) er
 			}
 			break
 		}
+	}
+	if !foundNode && noNUMA {
+		cpuInfo.NUMANodeID = cpuInfo.SocketID
+		foundNode = true
 	}
 	if !foundNode {
 		return fmt.Errorf("could not determine NUMA node for CPU %d", cpuID)

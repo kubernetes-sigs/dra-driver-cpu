@@ -17,7 +17,9 @@ limitations under the License.
 package cpuinfo
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -396,11 +398,32 @@ func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
 			name: "missing cpulist",
 			setup: func(sfs fstest.MapFS) {
 				delete(sfs, "devices/system/node/node0/cpulist")
+				// Keep the node directory, as on a kernel with NUMA support.
+				sfs["devices/system/node/online"] = &fstest.MapFile{Data: []byte("0\n")}
 			},
 			expectedErrorSubstring: "", // Should warn and continue
 			expectedInfos: []CPUInfo{
 				{CpuID: 0, CoreID: 0, SocketID: 0, ClusterID: -1, NUMANodeID: 0, NumaNodeCPUSet: cpuset.New(), SiblingCPUID: -1, CoreType: CoreTypeStandard, UncoreCacheID: 0},
 			},
+		},
+		{
+			name: "kernel without NUMA support",
+			setup: func(sfs fstest.MapFS) {
+				delete(sfs, "devices/system/cpu/cpu0/node0")
+				delete(sfs, "devices/system/node/node0/cpulist")
+			},
+			expectedErrorSubstring: "", // Should treat the CPU as part of NUMA node 0
+			expectedInfos: []CPUInfo{
+				{CpuID: 0, CoreID: 0, SocketID: 0, ClusterID: -1, NUMANodeID: 0, NumaNodeCPUSet: cpuset.New(0), SiblingCPUID: -1, CoreType: CoreTypeStandard, UncoreCacheID: 0},
+			},
+		},
+		{
+			name: "NUMA node entry missing on a kernel with NUMA support",
+			setup: func(sfs fstest.MapFS) {
+				delete(sfs, "devices/system/cpu/cpu0/node0")
+			},
+			expectedErrorSubstring: "",          // Should warn and skip CPU
+			expectedInfos:          []CPUInfo{}, // CPU gets skipped
 		},
 		{
 			name: "negative core_id",
@@ -674,4 +697,65 @@ func TestGetCPUTopologyRejectsUnsupportedSMT(t *testing.T) {
 			}
 		})
 	}
+}
+
+// statErrorFS fails to stat the NUMA node directory with an error other than "does not exist".
+type statErrorFS struct {
+	fstest.MapFS
+}
+
+func (f statErrorFS) Stat(name string) (fs.FileInfo, error) {
+	if name == "devices/system/node" {
+		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrPermission}
+	}
+	return f.MapFS.Stat(name)
+}
+
+func TestGetCPUInfos_NoNUMA(t *testing.T) {
+	logger := testr.New(t)
+
+	cpu := func(id, socket int) map[string]*fstest.MapFile {
+		prefix := fmt.Sprintf("devices/system/cpu/cpu%d/", id)
+		return map[string]*fstest.MapFile{
+			prefix + "topology/physical_package_id": {Data: []byte(fmt.Sprintf("%d\n", socket))},
+			prefix + "topology/core_id":             {Data: []byte(fmt.Sprintf("%d\n", id))},
+			prefix + "cache/index3/level":           {Data: []byte("3\n")},
+			prefix + "cache/index3/shared_cpu_list": {Data: []byte(fmt.Sprintf("%d\n", id))},
+			prefix + "cache/index3/id":              {Data: []byte(fmt.Sprintf("%d\n", socket))},
+		}
+	}
+	sfs := fstest.MapFS{"devices/system/cpu/online": {Data: []byte("0-3\n")}}
+	for id, socket := range []int{0, 0, 1, 1} {
+		for name, file := range cpu(id, socket) {
+			sfs[name] = file
+		}
+	}
+
+	t.Run("each socket is a NUMA node", func(t *testing.T) {
+		cpuInfos, err := NewSystemCPUInfo(sfs).GetCPUInfos(logger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(cpuInfos) != 4 {
+			t.Fatalf("expected 4 CPUs, got %d", len(cpuInfos))
+		}
+		for _, info := range cpuInfos {
+			wantNode := info.SocketID
+			wantCPUs := cpuset.New(0, 1)
+			if info.SocketID == 1 {
+				wantCPUs = cpuset.New(2, 3)
+			}
+			if info.NUMANodeID != wantNode || !info.NumaNodeCPUSet.Equals(wantCPUs) {
+				t.Errorf("cpu %d: got NUMA node %d with CPUs %s, want node %d with CPUs %s",
+					info.CpuID, info.NUMANodeID, info.NumaNodeCPUSet, wantNode, wantCPUs)
+			}
+		}
+	})
+
+	t.Run("an unexpected error is returned", func(t *testing.T) {
+		_, err := NewSystemCPUInfo(statErrorFS{sfs}).GetCPUInfos(logger)
+		if err == nil || !errors.Is(err, fs.ErrPermission) {
+			t.Fatalf("expected a permission error, got: %v", err)
+		}
+	})
 }
