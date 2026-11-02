@@ -415,7 +415,7 @@ func TestGetCPUInfos_ErrorScenarios(t *testing.T) {
 			},
 			expectedErrorSubstring: "", // Should treat the CPU as part of NUMA node 0
 			expectedInfos: []CPUInfo{
-				{CpuID: 0, CoreID: 0, SocketID: 0, ClusterID: -1, NUMANodeID: 0, NumaNodeCPUSet: cpuset.New(0), SiblingCPUID: -1, CoreType: CoreTypeStandard, UncoreCacheID: 0},
+				{CpuID: 0, CoreID: 0, SocketID: 0, ClusterID: -1, NUMANodeID: 0, SyntheticNUMANode: true, NumaNodeCPUSet: cpuset.New(0), SiblingCPUID: -1, CoreType: CoreTypeStandard, UncoreCacheID: 0},
 			},
 		},
 		{
@@ -739,15 +739,24 @@ func TestGetCPUInfos_NoNUMA(t *testing.T) {
 			t.Fatalf("expected 4 CPUs, got %d", len(cpuInfos))
 		}
 		for _, info := range cpuInfos {
-			wantNode := info.SocketID
-			wantCPUs := cpuset.New(0, 1)
-			if info.SocketID == 1 {
-				wantCPUs = cpuset.New(2, 3)
+			// CPUs 0 and 1 are in socket 0, CPUs 2 and 3 in socket 1, and each socket is a NUMA node.
+			wantSocket := info.CpuID / 2
+			wantCPUs := cpuset.New(wantSocket*2, wantSocket*2+1)
+			if info.SocketID != wantSocket || info.NUMANodeID != wantSocket || !info.NumaNodeCPUSet.Equals(wantCPUs) ||
+				!info.SyntheticNUMANode {
+				t.Errorf("cpu %d: got socket %d, NUMA node %d with CPUs %s (synthetic: %v), want socket and node %d with CPUs %s (synthetic: true)",
+					info.CpuID, info.SocketID, info.NUMANodeID, info.NumaNodeCPUSet, info.SyntheticNUMANode, wantSocket, wantCPUs)
 			}
-			if info.NUMANodeID != wantNode || !info.NumaNodeCPUSet.Equals(wantCPUs) {
-				t.Errorf("cpu %d: got NUMA node %d with CPUs %s, want node %d with CPUs %s",
-					info.CpuID, info.NUMANodeID, info.NumaNodeCPUSet, wantNode, wantCPUs)
-			}
+		}
+	})
+
+	t.Run("the topology has no NUMA", func(t *testing.T) {
+		topo, err := NewSystemCPUInfo(sfs).GetCPUTopology(logger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !topo.NoNUMA || topo.NumNUMANodes != 2 {
+			t.Errorf("got NoNUMA %v and %d NUMA nodes, want true and 2", topo.NoNUMA, topo.NumNUMANodes)
 		}
 	})
 

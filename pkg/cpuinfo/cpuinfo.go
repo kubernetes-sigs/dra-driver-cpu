@@ -127,6 +127,9 @@ type CPUInfo struct {
 
 	// NUMANodeID is the NUMA node ID, unique within each SocketID
 	NUMANodeID int `json:"numaNodeID"`
+	// SyntheticNUMANode is true when the kernel has no NUMA support and the socket is used as the NUMA node, so
+	// NUMANodeID does not describe a NUMA node of the machine.
+	SyntheticNUMANode bool `json:"syntheticNUMANode,omitempty"`
 
 	// NUMANodeCPUSet represents the set of CPUs that are in the same NUMA node.
 	NumaNodeCPUSet cpuset.CPUSet `json:"numaNodeCPUSet"`
@@ -153,8 +156,10 @@ type CPUTopology struct {
 	NumUncoreCache int
 	NumSockets     int
 	NumNUMANodes   int
-	SMTEnabled     bool
-	CPUDetails     CPUDetails
+	// NoNUMA is true when the kernel has no NUMA support, see CPUInfo.SyntheticNUMANode.
+	NoNUMA     bool
+	SMTEnabled bool
+	CPUDetails CPUDetails
 }
 
 // SystemCPUInfo provides information about the CPUs on the system.
@@ -184,10 +189,12 @@ func (s *SystemCPUInfo) GetCPUTopology(logger logr.Logger) (*CPUTopology, error)
 	}
 	cores := sets.New[coreIdent]()
 	uncoreCaches := sets.NewInt()
+	noNUMA := false
 
 	for i := range cpuInfos {
 		info := cpuInfos[i]
 		cpuDetails[info.CpuID] = info
+		noNUMA = noNUMA || info.SyntheticNUMANode
 		sockets.Insert(info.SocketID)
 		numaNodes.Insert(info.NUMANodeID)
 		// A core is unique by socket, cluster, and core id
@@ -209,6 +216,7 @@ func (s *SystemCPUInfo) GetCPUTopology(logger logr.Logger) (*CPUTopology, error)
 		NumCores:       cores.Len(),
 		NumSockets:     sockets.Len(),
 		NumNUMANodes:   numaNodes.Len(),
+		NoNUMA:         noNUMA,
 		NumUncoreCache: uncoreCaches.Len(),
 		SMTEnabled:     smtEnabled,
 		CPUDetails:     cpuDetails,
@@ -401,6 +409,7 @@ func populateTopologyInfo(sfs sysfs.FS, cpuInfo *CPUInfo, noNUMA bool, logger lo
 	if !foundNode && noNUMA {
 		cpuInfo.NUMANodeID = cpuInfo.SocketID
 		foundNode = true
+		cpuInfo.SyntheticNUMANode = true
 	}
 	if !foundNode {
 		return fmt.Errorf("could not determine NUMA node for CPU %d", cpuID)

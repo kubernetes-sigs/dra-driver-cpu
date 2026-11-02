@@ -230,6 +230,37 @@ func TestBuildPublishesScalarNUMANodeAttribute(t *testing.T) {
 	}
 }
 
+// Without NUMA support the node ID of a CPU is its socket ID, which is not a NUMA node of the machine, so the
+// standard numaNode attribute must not be published for it.
+func TestBuildOmitsNUMANodeAttributeWithoutNUMASupport(t *testing.T) {
+	topo := fakeTopology()
+	topo.NoNUMA = true
+	for cpu, info := range topo.CPUDetails {
+		info.SyntheticNUMANode = true
+		topo.CPUDetails[cpu] = info
+	}
+
+	for name, layout := range map[string]device.Layout{
+		"individual":          device.LayoutIndividual,
+		"grouped by numanode": device.LayoutNUMANode,
+	} {
+		t.Run(name, func(t *testing.T) {
+			res, err := device.Build(device.BuildInput{
+				Inventory:      device.Inventory{CPUTopology: topo, ReservedCPUs: cpuset.New()},
+				Layout:         layout,
+				PCIeRootMapper: store.NewPCIeRootMapper(),
+			})
+			require.NoError(t, err)
+			require.NotEmpty(t, res.Devices)
+			for _, dev := range res.Devices {
+				require.NotContainsf(t, dev.Attributes, deviceattribute.StandardDeviceAttributeNUMANode,
+					"device %q must not publish the standard numaNode attribute", dev.Name)
+				require.Containsf(t, dev.Attributes, device.AttributeSocketID, "device %q keeps the socket ID", dev.Name)
+			}
+		})
+	}
+}
+
 func TestBuildValidatesDeviceAttributeValueCount(t *testing.T) {
 	topo := &cpuinfo.CPUTopology{
 		NumCPUs: 1,

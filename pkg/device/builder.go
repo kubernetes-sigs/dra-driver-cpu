@@ -367,8 +367,11 @@ func createGroupedCPUDeviceSlices(layout Layout, deviceInfos []groupedCPUDeviceI
 				AttributeNumCPUs:    {IntValue: new(availableCPUs)},
 			}
 			addCompatibilityAttributes(deviceAttrs, int64(deviceInfo.numaNodeID))
-			if err := addNUMANodeAttribute(deviceAttrs, deviceInfo.numaNodeID); err != nil {
-				return nil, err
+			// Without NUMA support the node ID is the socket ID, which is not a NUMA node of the machine.
+			if !topo.NoNUMA {
+				if err := addNUMANodeAttribute(deviceAttrs, deviceInfo.numaNodeID); err != nil {
+					return nil, err
+				}
 			}
 			if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, deviceInfo.cpus.UnsortedList()...); err != nil {
 				return nil, err
@@ -437,8 +440,11 @@ func createCPUDeviceSlices(deviceInfos []cpuDeviceInfo, pcieRootMapper *store.PC
 		}
 
 		addCompatibilityAttributes(deviceAttrs, int64(cpu.NUMANodeID))
-		if err := addNUMANodeAttribute(deviceAttrs, cpu.NUMANodeID); err != nil {
-			return nil, err
+		// Without NUMA support the node ID is the socket ID, which is not a NUMA node of the machine.
+		if !cpu.SyntheticNUMANode {
+			if err := addNUMANodeAttribute(deviceAttrs, cpu.NUMANodeID); err != nil {
+				return nil, err
+			}
 		}
 		if err := addPCIeRootsAttribute(pcieRootMapper, deviceAttrs, cpu.CpuID); err != nil {
 			return nil, err
