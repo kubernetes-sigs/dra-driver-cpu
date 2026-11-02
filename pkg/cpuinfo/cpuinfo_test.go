@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -726,9 +727,7 @@ func TestGetCPUInfos_NoNUMA(t *testing.T) {
 	}
 	sfs := fstest.MapFS{"devices/system/cpu/online": {Data: []byte("0-3\n")}}
 	for id, socket := range []int{0, 0, 1, 1} {
-		for name, file := range cpu(id, socket) {
-			sfs[name] = file
-		}
+		maps.Copy(sfs, cpu(id, socket))
 	}
 
 	t.Run("each socket is a NUMA node", func(t *testing.T) {
