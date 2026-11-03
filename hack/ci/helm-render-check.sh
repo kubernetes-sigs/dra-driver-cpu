@@ -49,32 +49,22 @@ accepts() {
 		-expect-root-flag="${want_flag}"
 }
 
-# checkHostnameOverride <name> <want_config> [helm args...]; runs one node
-# name override case. With nothing configured the kernel hostname may differ
-# from the Node object name (e.g. it is an IP address), which breaks
-# ResourceSlice publishing, so the chart must pass the flag expanded from the
-# downward API. A non-empty <want_config> is an explicit override: it reaches
-# the driver through the config file, so the flag must stay absent (a flag
-# would shadow the config file) and the value must fold into the rendered
-# config.yaml. This intentionally duplicates and then changes the existing
-# accepts to keep the new checks fully isolated.
-checkHostnameOverride() {
+# checkNodeName <name> <want_config> [helm args...]; the chart must supply the Node name
+# through the NODE_NAME downward API env var and must not pass the removed
+# --hostname-override flag. An explicit hostnameOverride reaches the driver
+# through the config file and must fold into the rendered config.yaml.
+checkNodeName() {
 	local name=$1 want_config=$2
 	shift 2
 
-	echo "hostname override render check: ${name}"
+	echo "node name render check: ${name}"
 	"${helm}" "${template_args[@]}" "$@" \
 		>"${tmp}/${name}-daemonset.yaml"
-	local test_args=(
-		-manifest "${tmp}/${name}-daemonset.yaml"
-		-expected-root "${default_root}"
-		-expect-root-flag=false
+	go test -count=1 ./test/render/ -args \
+		-manifest "${tmp}/${name}-daemonset.yaml" \
+		-expected-root "${default_root}" \
+		-expect-root-flag=false \
 		-check-hostname-override
-	)
-	if [[ -n ${want_config} ]]; then
-		test_args+=(-expected-override='')
-	fi
-	go test -count=1 ./test/render/ -args "${test_args[@]}"
 
 	if [[ -n ${want_config} ]]; then
 		"${helm}" template test "${chart}" --kube-version "${kube_version}" \
@@ -123,11 +113,11 @@ accepts single-dollar '/var/lib/$kubelet' '/var/lib/$kubelet' true
 # 73 bytes, the most the root can spend and still leave the socket at 107.
 accepts socket-budget "/$(printf 'x%.0s' {1..72})" "/$(printf 'x%.0s' {1..72})" true
 
-# The node name override cases, judged by their own dedicated checks.
-checkHostnameOverride fallback ''
-checkHostnameOverride args-override mynode \
+# The node name cases, judged by their own dedicated checks.
+checkNodeName fallback ''
+checkNodeName args-override mynode \
 	--set-string 'args.hostnameOverride=mynode'
-checkHostnameOverride config-override mynode \
+checkNodeName config-override mynode \
 	--set-string 'driverConfig.hostnameOverride=mynode'
 
 # The guard this change adds.

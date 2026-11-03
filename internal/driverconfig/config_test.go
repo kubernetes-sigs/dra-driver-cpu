@@ -21,6 +21,7 @@ package driverconfig_test
 import (
 	"errors"
 	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +33,6 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // newFlagSet creates a FlagSet with cfg registered and args parsed.
@@ -90,13 +90,12 @@ func TestResolve_CLIFlagWinsOverFile(t *testing.T) {
 	cfgFile := writeFile(t, dir, "config.yaml", `
 apiVersion: v1alpha1
 reservedCPUs: "0-3"
-cpuDeviceMode: individual
+kubeconfig: /from/file
 `)
 
 	var cfg driverconfig.Config
 	fs := newFlagSet(t, &cfg, []string{
-		"--reserved-cpus=4-7",
-		"--cpu-device-mode=grouped",
+		"--kubeconfig=/from/flag",
 	})
 
 	result, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
@@ -105,8 +104,8 @@ cpuDeviceMode: individual
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "4-7", result.ReservedCPUs)
-	assert.Equal(t, device.CPU_DEVICE_MODE_GROUPED, result.CPUDeviceMode)
+	assert.Equal(t, "/from/flag", result.Kubeconfig)
+	assert.Equal(t, "0-3", result.ReservedCPUs)
 }
 
 // TestResolve_RejectsAmbiguousKeys covers the ways a config file can reach a field
@@ -142,9 +141,9 @@ func TestResolve_RejectsAmbiguousKeys(t *testing.T) {
 		// Without this the file reached the precedence pass, where the delete is
 		// by exact name, and overwrote the flag.
 		name:         "folded spelling against an explicit flag",
-		file:         "apiVersion: v1alpha1\nreservedcpus: \"2-3\"\n",
-		flags:        []string{"--reserved-cpus=0-1"},
-		wantContains: []string{"reservedcpus", "reservedCPUs"},
+		file:         "apiVersion: v1alpha1\nKubeConfig: /from/file\n",
+		flags:        []string{"--kubeconfig=/from/flag"},
+		wantContains: []string{"KubeConfig", "kubeconfig"},
 	}, {
 		name:         "the same key twice",
 		file:         "apiVersion: v1alpha1\nreservedCPUs: \"0-1\"\nreservedCPUs: \"2-3\"\n",
@@ -309,6 +308,7 @@ func TestResolve_IgnoresUnrelatedFlags(t *testing.T) {
 apiVersion: v1alpha1
 reservedCPUs: "0-3"
 hostnameOverride: from-file
+kubeconfig: /from/file
 `)
 
 	cfg := driverconfig.Default()
@@ -321,7 +321,7 @@ hostnameOverride: from-file
 	require.NoError(t, fs.Parse([]string{
 		"--config=" + cfgFile,
 		"--v=4",
-		"--reserved-cpus=1-2",
+		"--kubeconfig=/from/flag",
 	}))
 
 	var logs strings.Builder
@@ -338,83 +338,31 @@ hostnameOverride: from-file
 	assert.NotContains(t, logs.String(), "flag not found",
 		"unrelated flags must not produce an error log")
 	// The mapped flag set on the command line still wins over the file value.
-	assert.Equal(t, "1-2", got.ReservedCPUs)
+	assert.Equal(t, "/from/flag", got.Kubeconfig)
 	// A file-only field is still applied, so the assertions above cannot pass
 	// without the file actually being read.
 	assert.Equal(t, "from-file", got.HostnameOverride)
 }
 
-// TestWarnDeprecatedFlags_LogsWarning: a deprecated flag logs a warning naming its driverConfig replacement.
-func TestWarnDeprecatedFlags_LogsWarning(t *testing.T) {
-	for _, tc := range []struct {
-		flag              string
-		driverConfigField string
-	}{
-		{flag: "cpu-device-mode=individual", driverConfigField: "cpuDeviceMode"},
-		{flag: "group-by=socket", driverConfigField: "groupBy"},
-		{flag: "reserved-cpus=0-1", driverConfigField: "reservedCPUs"},
-		{flag: "hostname-override=node1", driverConfigField: "hostnameOverride"},
-		{flag: "sysfs-overlay=/tmp/overlay.yaml", driverConfigField: "sysfsOverlay"},
+// TestRemovedFlags_AreRejected: the flags removed in v0.4.0 are no longer registered.
+func TestRemovedFlags_AreRejected(t *testing.T) {
+	for _, name := range []string{
+		"cpu-device-mode",
+		"group-by",
+		"reserved-cpus",
+		"hostname-override",
+		"sysfs-overlay",
 	} {
-		t.Run(tc.flag, func(t *testing.T) {
-			cfg := driverconfig.Default()
-			fs := newFlagSet(t, &cfg, []string{"--" + tc.flag})
+		t.Run(name, func(t *testing.T) {
+			var cfg driverconfig.Config
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			cfg.AddFlags(fs)
 
-			var logs strings.Builder
-			logger := funcr.New(func(prefix, args string) {
-				logs.WriteString(prefix + " " + args + "\n")
-			}, funcr.Options{})
-
-			driverconfig.WarnDeprecatedFlags(fs, logger)
-
-			assert.Contains(t, logs.String(), "deprecated")
-			assert.Contains(t, logs.String(), tc.driverConfigField)
+			assert.Nil(t, fs.Lookup(name))
+			assert.Error(t, fs.Parse([]string{"--" + name + "=x"}))
 		})
 	}
-}
-
-// TestWarnDeprecatedFlags_NonDeprecatedFlagNoWarning: non-deprecated flags don't trigger the deprecation warning.
-func TestWarnDeprecatedFlags_NonDeprecatedFlagNoWarning(t *testing.T) {
-	cfg := driverconfig.Default()
-	fs := newFlagSet(t, &cfg, []string{"--bind-address=:9090"})
-
-	var logs strings.Builder
-	logger := funcr.New(func(prefix, args string) {
-		logs.WriteString(prefix + " " + args + "\n")
-	}, funcr.Options{})
-
-	driverconfig.WarnDeprecatedFlags(fs, logger)
-
-	assert.NotContains(t, logs.String(), "deprecated")
-}
-
-// deprecatedFlagNames is the hardcoded set of flags expected to be marked
-// as deprecated in --help. Update it whenever a flag's deprecation status changes.
-var deprecatedFlagNames = sets.New(
-	"cpu-device-mode",
-	"group-by",
-	"reserved-cpus",
-	"hostname-override",
-	"sysfs-overlay",
-)
-
-// TestDeprecatedFlags_HelpTextSuffix: exactly the flags in deprecatedFlagNames
-// carry a "(DEPRECATED: ...)" suffix in --help - none missing, none extra.
-func TestDeprecatedFlags_HelpTextSuffix(t *testing.T) {
-	cfg := driverconfig.Config{}
-	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	cfg.AddFlags(fs)
-
-	fs.VisitAll(func(f *flag.Flag) {
-		wantDeprecated := deprecatedFlagNames.Has(f.Name)
-		isMarkedDeprecated := strings.Contains(f.Usage, "(DEPRECATED:")
-		switch {
-		case wantDeprecated && !isMarkedDeprecated:
-			t.Errorf("flag %q is expected to be deprecated but its --help text has no DEPRECATED suffix: %q", f.Name, f.Usage)
-		case !wantDeprecated && isMarkedDeprecated:
-			t.Errorf("flag %q has a DEPRECATED --help suffix but isn't expected to be deprecated: %q", f.Name, f.Usage)
-		}
-	})
 }
 
 // TestResolve_EmptyFilePath: an empty file path is a no-op.
@@ -586,22 +534,19 @@ func TestFromFlags_BoolAndStringValues(t *testing.T) {
 		name           string
 		args           []string
 		wantPCIeRoots  bool
-		wantReserved   string
-		wantDeviceMode string
+		wantKubeconfig string
 	}{
 		{
 			name:           "bool flag set to true",
-			args:           []string{"--expose-pcie-roots=true", "--reserved-cpus=0-3", "--cpu-device-mode=individual"},
+			args:           []string{"--expose-pcie-roots=true", "--kubeconfig=/a"},
 			wantPCIeRoots:  true,
-			wantReserved:   "0-3",
-			wantDeviceMode: device.CPU_DEVICE_MODE_INDIVIDUAL,
+			wantKubeconfig: "/a",
 		},
 		{
 			name:           "bool flag set to false",
-			args:           []string{"--expose-pcie-roots=false", "--reserved-cpus=4-7"},
+			args:           []string{"--expose-pcie-roots=false", "--kubeconfig=/b"},
 			wantPCIeRoots:  false,
-			wantReserved:   "4-7",
-			wantDeviceMode: device.CPU_DEVICE_MODE_GROUPED,
+			wantKubeconfig: "/b",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -613,8 +558,7 @@ func TestFromFlags_BoolAndStringValues(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantPCIeRoots, result.ExposePCIeRoots)
-			assert.Equal(t, tc.wantReserved, result.ReservedCPUs)
-			assert.Equal(t, tc.wantDeviceMode, result.CPUDeviceMode)
+			assert.Equal(t, tc.wantKubeconfig, result.Kubeconfig)
 		})
 	}
 }

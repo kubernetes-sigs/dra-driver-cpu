@@ -9,7 +9,28 @@ invariant](how-it-works.md#how-it-works).
 An upgrade may temporarily leave a node without an active driver, but it must
 not create overlapping active owners.
 
-## Upgrade from 0.3.0 to 0.4.0 (EARLY WARNING)
+## Upgrade from 0.3.0 to 0.4.0
+
+### Action required
+
+#### Removed command-line flags
+
+`--cpu-device-mode`, `--group-by`, `--reserved-cpus`, `--hostname-override` and
+`--sysfs-overlay` were removed. The driver now exits on startup when any of them is passed,
+so manifests that set them directly will crashloop after the image upgrade.
+Helm users are not affected as long as the chart and the image are upgraded together.
+
+Move the values to the configuration file before upgrading:
+
+- `--cpu-device-mode` → `cpuDeviceMode`
+- `--group-by` → `groupBy`
+- `--reserved-cpus` → `reservedCPUs`
+- `--hostname-override` → `hostnameOverride`
+- `--sysfs-overlay` → `sysfsOverlay`
+
+See [configuration](configuration.md#command-line-flags) for details.
+
+### Early warning
 
 Before the driver enters beta stage, a batch of **breaking** changes are planned.
 The idea is to coalesce together all the known backward incompatible changes in release 0.4.0.

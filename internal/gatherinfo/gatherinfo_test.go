@@ -31,7 +31,7 @@ import (
 )
 
 func TestRunWritesReportFile(t *testing.T) {
-	setupFakeHost(t, []byte("/dracpu\x00--reserved-cpus=4-7\x00--cpu-device-mode\x00individual\x00--group-by=socket\x00--hostname-override=node-a\x00--v=4\x00--logging-format=json\x00"))
+	setupFakeHostWithConfig(t, "reservedCPUs: \"4-7\"\ncpuDeviceMode: individual\ngroupBy: socket\nhostnameOverride: node-a\n", "--v=4", "--logging-format=json")
 
 	outputDir := filepath.Join(t.TempDir(), "reports")
 	err := gatherinfo.Run([]string{"--output-dir=" + outputDir}, gatherinfo.Options{}, logr.Discard())
@@ -73,7 +73,7 @@ func TestRunWritesReportFile(t *testing.T) {
 }
 
 func TestRunWritesReportToStdout(t *testing.T) {
-	setupFakeHost(t, []byte("/dracpu\x00--group-by=socket\x00"))
+	setupFakeHostWithConfig(t, "groupBy: socket\n")
 
 	stdout, err := captureStdout(t, func() error {
 		return gatherinfo.Run([]string{"--stdout"}, gatherinfo.Options{}, logr.Discard())
@@ -96,7 +96,9 @@ func TestRunAppliesDriverSysFSOverlay(t *testing.T) {
 /sys/devices/system/cpu/smt/control: "on\n"
 /sys/devices/system/cpu/cpu0/topology/physical_package_id: "7\n"
 `))
-	hostRoot := setupFakeHost(t, []byte("/dracpu\x00--sysfs-overlay="+overlayPath+"\x00"))
+	configPath := "/etc/dra-driver-cpu/driver-config.yaml"
+	writeTestFile(t, filepath.Join(driverRoot, strings.TrimPrefix(configPath, "/")), []byte("sysfsOverlay: "+overlayPath+"\n"))
+	hostRoot := setupFakeHost(t, []byte("/dracpu\x00--config="+configPath+"\x00"))
 	if err := os.Symlink(driverRoot, filepath.Join(hostRoot, "proc", "42", "root")); err != nil {
 		t.Fatalf("create driver root link: %v", err)
 	}
@@ -131,7 +133,8 @@ func TestRunAppliesDriverSysFSOverlayFromParentRelativePath(t *testing.T) {
 	writeTestFile(t, filepath.Join(driverRoot, "config", "sysfs-overlay.yaml"), []byte(`
 /sys/devices/system/cpu/cpu0/topology/physical_package_id: "7\n"
 `))
-	hostRoot := setupFakeHost(t, []byte("/dracpu\x00--sysfs-overlay="+overlayPath+"\x00"))
+	writeTestFile(t, filepath.Join(driverCWD, "driver-config.yaml"), []byte("sysfsOverlay: "+overlayPath+"\n"))
+	hostRoot := setupFakeHost(t, []byte("/dracpu\x00--config=driver-config.yaml\x00"))
 	if err := os.Symlink(driverCWD, filepath.Join(hostRoot, "proc", "42", "cwd")); err != nil {
 		t.Fatalf("create driver cwd link: %v", err)
 	}
@@ -149,6 +152,25 @@ func TestRunAppliesDriverSysFSOverlayFromParentRelativePath(t *testing.T) {
 	}
 	if got := report.CPUDetails.CPUs[0].SocketID; got != 7 {
 		t.Errorf("socketID = %d, want 7 from overlay", got)
+	}
+}
+
+// setupFakeHostWithConfig fakes a driver whose config file holds config and
+// whose command line carries extraArgs.
+func setupFakeHostWithConfig(t *testing.T, config string, extraArgs ...string) {
+	t.Helper()
+
+	driverRoot := t.TempDir()
+	configPath := "/etc/dracpu/config.yaml"
+	writeTestFile(t, filepath.Join(driverRoot, strings.TrimPrefix(configPath, "/")), []byte(config))
+
+	cmdline := "/dracpu\x00--config=" + configPath + "\x00"
+	for _, arg := range extraArgs {
+		cmdline += arg + "\x00"
+	}
+	hostRoot := setupFakeHost(t, []byte(cmdline))
+	if err := os.Symlink(driverRoot, filepath.Join(hostRoot, "proc", "42", "root")); err != nil {
+		t.Fatalf("create driver root link: %v", err)
 	}
 }
 
