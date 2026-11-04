@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 )
 
@@ -38,12 +39,12 @@ func (c Config) Validate() error {
 				c.GroupBy, device.GROUP_BY_SOCKET, device.GROUP_BY_NUMA_NODE, device.GROUP_BY_MACHINE)
 		}
 	}
-	if c.Allocator != AllocatorExternal && c.Allocator != AllocatorCPUManager {
+	if c.Allocator != cpuallocator.ModeExternal && c.Allocator != cpuallocator.ModeCPUManager {
 		return fmt.Errorf("invalid allocator %q: must be %q or %q",
-			c.Allocator, AllocatorExternal, AllocatorCPUManager)
+			c.Allocator, cpuallocator.ModeExternal, cpuallocator.ModeCPUManager)
 	}
-	if c.CPUDeviceMode == device.CPU_DEVICE_MODE_GROUPED && c.GroupBy == device.GROUP_BY_MACHINE && c.Allocator != AllocatorExternal {
-		return fmt.Errorf("invalid allocator %q with groupBy %q: must be %q", c.Allocator, device.GROUP_BY_MACHINE, AllocatorExternal)
+	if c.CPUDeviceMode == device.CPU_DEVICE_MODE_GROUPED && c.GroupBy == device.GROUP_BY_MACHINE && c.Allocator != cpuallocator.ModeExternal {
+		return fmt.Errorf("invalid allocator %q with groupBy %q: must be %q", c.Allocator, device.GROUP_BY_MACHINE, cpuallocator.ModeExternal)
 	}
 	// The kubelet root becomes socket and mount locations, so a relative path
 	// would resolve against the working directory and silently break

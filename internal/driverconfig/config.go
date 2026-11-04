@@ -25,11 +25,6 @@ import (
 // ConfigAPIVersion is the version validated in config files.
 const ConfigAPIVersion = "v1alpha1"
 
-const (
-	AllocatorExternal   = "external"
-	AllocatorCPUManager = "cpumanager"
-)
-
 // Config holds the driver runtime configuration.
 type Config struct {
 	Kubeconfig       string `json:"kubeconfig,omitempty"`

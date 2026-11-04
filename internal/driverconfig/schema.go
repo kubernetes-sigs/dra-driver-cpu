@@ -22,6 +22,7 @@ import (
 	"slices"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 )
 
@@ -39,7 +40,7 @@ var schemaExcludedFields = map[string]string{
 var schemaEnums = map[string][]any{
 	"cpuDeviceMode": {device.CPU_DEVICE_MODE_GROUPED, device.CPU_DEVICE_MODE_INDIVIDUAL},
 	"groupBy":       {device.GROUP_BY_NUMA_NODE, device.GROUP_BY_SOCKET, device.GROUP_BY_MACHINE},
-	"allocator":     {AllocatorCPUManager, AllocatorExternal},
+	"allocator":     {cpuallocator.ModeCPUManager, cpuallocator.ModeExternal},
 }
 
 // driverConfigSchemaComment is the generated schema's top-level "$comment".
