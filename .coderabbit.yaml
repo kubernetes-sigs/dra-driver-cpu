@@ -1,0 +1,93 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# First-pass AI review for dra-driver-cpu. Repository rules live in AGENTS.md
+# and docs/, which CodeRabbit loads via knowledge_base.code_guidelines.
+language: en-US
+
+tone_instructions: >-
+  Direct and brief. No praise or emoji. Name the concrete failure each finding
+  prevents and cite the AGENTS.md or docs/ rule behind it. Without diff
+  evidence, ask instead of asserting. Prefix optional points with "nit:".
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+      - "docs/**/*.md"
+  learnings:
+    scope: auto
+
+reviews:
+  profile: chill
+  # Prow's lgtm and approve labels gate merges.
+  request_changes_workflow: false
+  collapse_walkthrough: true
+  poem: false
+  enable_prompt_for_ai_agents: false
+  # Prow and OWNERS own status checks, reviewers, and labels.
+  review_progress: false
+  commit_status: false
+  suggested_reviewers: false
+  suggested_labels: false
+
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+
+  # Every finishing touch commits or opens PRs as @coderabbitai, which fails
+  # the CNCF CLA check.
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+
+  # Disabled where GitHub Actions or pre-commit already run with repo configs,
+  # or where generic rules misfire on Helm templates and docs.
+  tools:
+    golangci-lint:
+      enabled: false
+    shellcheck:
+      enabled: false
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false
+    yamllint:
+      enabled: false
+    checkmake:
+      enabled: false
+
+  path_filters:
+    - "!**/vendor/**"
+    - "!bin/**"
+    - "!dist/**"
+    - "!coverage.out"
+    - "!go.sum"
+    - "!site/node_modules/**"
+    - "!site/public/**"
+    - "!deployment/helm/*/README.md"
+    - "!deployment/helm/*/values.schema.json"
+    - "!pkg/pcie/testdata_*.go"
+
+  auto_review:
+    auto_incremental_review: false
+    drafts: false
+    # Case-insensitive. A title-only edit does not trigger a review; comment
+    # "@coderabbitai review" after removing these keywords.
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT MERGE"
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "k8s-infra-cherrypick-robot"
+
+chat:
+  auto_reply: false

@@ -8,8 +8,12 @@ This file gives rules to AI coding agents and AI review tools. The details are i
 
 - Refer [README.md](README.md) for the project overview, architecture, and documentation index.
 - For the design, read [docs/user/how-it-works.md](docs/user/how-it-works.md).
-- For the requirements, read [docs/user/installation.md](docs/user/installation.md).
+- For installation and quickstart steps, read [docs/user/installation.md](docs/user/installation.md) and [docs/user/quickstart.md](docs/user/quickstart.md).
 - For the supported features, read [docs/user/feature-support.md](docs/user/feature-support.md).
+- For workload configuration and cgroup behavior, read [docs/user/workload-requirements.md](docs/user/workload-requirements.md) and [docs/dev/kubelet-cgroups-and-qos.md](docs/dev/kubelet-cgroups-and-qos.md).
+- For device attributes and external cpuset overrides, read [docs/user/device-attributes.md](docs/user/device-attributes.md) and [docs/user/opaque-cpuset-overrides.md](docs/user/opaque-cpuset-overrides.md).
+- For Linux topology, SMT, and PCIe discovery, read [docs/dev/topology-linux-sysfs.md](docs/dev/topology-linux-sysfs.md), [docs/dev/smt-layout.md](docs/dev/smt-layout.md), and [docs/dev/pci-bus-linux-sysfs.md](docs/dev/pci-bus-linux-sysfs.md).
+- For diagnostics and `dracpu gatherinfo`, read [docs/user/troubleshooting.md](docs/user/troubleshooting.md).
 
 ## Communication Preferences
 
@@ -69,7 +73,6 @@ For more information, read [docs/dev/testing.md](docs/dev/testing.md), [docs/dev
 
 - **Packages:** use one lowercase word that matches the directory.
 - **Terms:** write "cpuset", not "mask". Write "exclusive CPUs", not "guaranteed". Write "SMT", not "hyperthreading". Write "individual mode", not "ungrouped".
-- **Locking:** a function with the `Locked` suffix expects that the caller holds `CPUDriver.stateMu`. This function must not take the lock. A function that takes the lock starts with `Lock(); defer Unlock()`, and then checks `ctx.Err()`.
 - **Errors:** wrap each error with context, and put the cause last: `fmt.Errorf("parse %q: %w", v, err)`. Use sentinel errors and `errors.Is`. Do not discard errors.
 - **Incorrect input:** if the configuration is incorrect or the data is not reliable, stop with an error. Do not guess.
 - **Validation:** validate input at the boundary: allocation results, opaque configuration, and configuration files. Do not validate the same data again between internal functions.
