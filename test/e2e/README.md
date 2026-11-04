@@ -96,6 +96,20 @@ To run only specs labeled `metrics`, use:
 DRACPU_E2E_LABEL_FILTER=metrics make test-e2e-kind
 ```
 
+To run the isolated workload-container restart spec:
+
+```bash
+DRACPU_E2E_LABEL_FILTER=restart make test-e2e-kind
+```
+
+This spec adds an ephemeral container using
+`registry.k8s.io/e2e-test-images/busybox:1.36.1-1`. The image must be pullable
+(or preloaded into the nodes). The test needs permission to update
+`pods/ephemeralcontainers` and uses a shared process namespace and `CAP_KILL`
+to terminate only the workload process. Metrics are read through the apiserver
+pod proxy, which also requires permission to get `pods/proxy`. The spec checks
+that the driver does not restart and its prepare counters remain unchanged.
+
 To run all specs except those labeled `negative` against an existing configured cluster:
 
 ```bash
