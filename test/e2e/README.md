@@ -81,6 +81,17 @@ honor these settings, where applicable.
   dra-driver-cpu DaemonSet and its pods are deployed. Override this when the driver is installed
   in a namespace other than `kube-system`.
 
+- `DRACPU_E2E_FIXTURE_NAMESPACE`: (optional): if set, the test fixtures use this value as the
+  namespace name instead of generating random names. If the namespace already exists it is
+  reused and teardown will not delete the namespace itself, but will still clean up all
+  resources inside it (pods, resource claims, resource claim templates) so that specs do
+  not pollute each other; if it does not exist, the fixture creates it and teardown deletes
+  it normally. This is useful in more complex CI systems where the test namespace must be
+  known in advance or created externally before the tests run.
+  Suite-created pods, resource claims, and resource claim templates are labeled
+  `app.kubernetes.io/managed-by=dra-driver-cpu-e2e` so they can be identified as resources
+  created during the test.
+
 ## how to run
 
 The simplest way is from your terminal:

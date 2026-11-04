@@ -121,6 +121,9 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: fxt.Namespace.Name,
 					Name:      "claim-cpu-1",
+					Labels: map[string]string{
+						fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+					},
 				},
 				Spec: makeResourceClaimSpec(1, cpuDeviceMode == "grouped"),
 			}
@@ -142,6 +145,9 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace:    fxt.Namespace.Name,
 					GenerateName: "pod-with-cpu-claim-",
+					Labels: map[string]string{
+						fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+					},
 				},
 				Spec: v1.PodSpec{
 					RestartPolicy: v1.RestartPolicyNever,
@@ -204,6 +210,9 @@ var _ = ginkgo.Describe("Claim sharing", ginkgo.Serial, ginkgo.Ordered, ginkgo.C
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: fxt.Namespace.Name,
 					Name:      "pod-with-cpu-claim-multicnt",
+					Labels: map[string]string{
+						fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+					},
 				},
 				Spec: v1.PodSpec{
 					RestartPolicy: v1.RestartPolicyNever,

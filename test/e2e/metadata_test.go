@@ -129,6 +129,9 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: fxt.Namespace.Name,
 					Name:      claimName,
+					Labels: map[string]string{
+						fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+					},
 				},
 				Spec: makeResourceClaimSpec(numCPUs, isConsumable),
 			}

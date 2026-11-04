@@ -147,8 +147,16 @@ var _ = ginkgo.When("checking metrics", ginkgo.Serial, ginkgo.Label("metrics"), 
 			claimTemplate := resourcev1.ResourceClaimTemplate{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "cpu-claim-metrics",
+					Labels: map[string]string{
+						fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+					},
 				},
 				Spec: resourcev1.ResourceClaimTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{
+							fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+						},
+					},
 					Spec: claimSpec,
 				},
 			}
@@ -223,8 +231,16 @@ var _ = ginkgo.When("checking metrics", ginkgo.Serial, ginkgo.Label("metrics"), 
 			claimTemplate := resourcev1.ResourceClaimTemplate{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "cpu-claim-metrics",
+					Labels: map[string]string{
+						fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+					},
 				},
 				Spec: resourcev1.ResourceClaimTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{
+							fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+						},
+					},
 					Spec: claimSpec,
 				},
 			}
@@ -345,7 +361,7 @@ func discoverAvailableCPUs(ctx context.Context, fxt *fixture.Fixture, nodeName, 
 }
 
 func getDriverRawMetrics(ctx context.Context, fxt *fixture.Fixture, nodeName string) (string, error) {
-	dracpuPod, err := e2epod.GetDRACPUPod(ctx, fxt.K8SClientset, nodeName)
+	dracpuPod, err := e2epod.GetDRACPUPod(ctx, fxt.K8SClientset, nodeName, daemonSetNamespace)
 	if err != nil {
 		return "", err
 	}
