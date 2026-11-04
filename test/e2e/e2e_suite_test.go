@@ -270,6 +270,9 @@ func makeTesterPodWithExclusiveCPUClaimResources(ns, image, cpuClaimTemplateName
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "tester-pod-excl-cpu-claim-",
 			Namespace:    ns,
+			Labels: map[string]string{
+				fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+			},
 		},
 		Spec: v1.PodSpec{
 			Containers: []v1.Container{
@@ -305,6 +308,9 @@ func makeTesterPodBestEffort(ns, image string) *v1.Pod {
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "tester-pod-be-",
 			Namespace:    ns,
+			Labels: map[string]string{
+				fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+			},
 		},
 		Spec: v1.PodSpec{
 			Containers: []v1.Container{
@@ -388,6 +394,9 @@ func makeTesterPodWithNamedClaim(ns, image, nodeName string, nodeAllocatableMapp
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "tester-pod-named-claim-",
 			Namespace:    ns,
+			Labels: map[string]string{
+				fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+			},
 		},
 		Spec: v1.PodSpec{
 			Containers: []v1.Container{

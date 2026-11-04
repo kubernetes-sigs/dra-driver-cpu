@@ -35,6 +35,20 @@ func By(format string, args ...any) {
 	ginkgo.By(fmt.Sprintf(format, args...))
 }
 
+// Test resource ownership label. Suite-created pods, ResourceClaims, and
+// ResourceClaimTemplates carry this label so they can be identified as
+// resources created during the test (and later cleaned up selectively when
+// reusing an externally provided namespace).
+const (
+	TestResourceLabelKey   = "app.kubernetes.io/managed-by"
+	TestResourceLabelValue = "dra-driver-cpu-e2e"
+)
+
+// TestResourceSelector returns the label selector matching suite-created test resources.
+func TestResourceSelector() string {
+	return TestResourceLabelKey + "=" + TestResourceLabelValue
+}
+
 type Fixture struct {
 	Prefix       string
 	K8SClientset kubernetes.Interface

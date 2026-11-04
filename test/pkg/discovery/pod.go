@@ -17,6 +17,7 @@ limitations under the License.
 package discovery
 
 import (
+	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -26,6 +27,9 @@ func MakePod(ns, image string) *v1.Pod {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "discovery-pod",
 			Namespace: ns,
+			Labels: map[string]string{
+				fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+			},
 		},
 		Spec: v1.PodSpec{
 			Containers: []v1.Container{

@@ -111,8 +111,16 @@ var _ = ginkgo.Describe("NRI Reconciliation on Restart", ginkgo.Serial, ginkgo.O
 		claimTemplate := resourcev1.ResourceClaimTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "cpu-claim-reconcile-exclusive",
+				Labels: map[string]string{
+					fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+				},
 			},
 			Spec: resourcev1.ResourceClaimTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+					},
+				},
 				Spec: makeResourceClaimSpec(2, cpuDeviceMode == "grouped"),
 			},
 		}

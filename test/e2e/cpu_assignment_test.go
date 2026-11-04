@@ -199,8 +199,16 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				claimTemplate := resourcev1.ResourceClaimTemplate{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: fmt.Sprintf("cpu-request-%d-excl", cpusPerClaim),
+						Labels: map[string]string{
+							fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+						},
 					},
 					Spec: resourcev1.ResourceClaimTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+							},
+						},
 						Spec: makeResourceClaimSpec(cpusPerClaim, cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED),
 					},
 				}
@@ -293,8 +301,16 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					claimTemplate := resourcev1.ResourceClaimTemplate{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: fmt.Sprintf("cpu-request-all-excl-%d", i),
+							Labels: map[string]string{
+								fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+							},
 						},
 						Spec: resourcev1.ResourceClaimTemplateSpec{
+							ObjectMeta: metav1.ObjectMeta{
+								Labels: map[string]string{
+									fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+								},
+							},
 							Spec: makeResourceClaimSpec(claimSize, cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED),
 						},
 					}
@@ -362,6 +378,9 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace:    fxt.Namespace.Name,
 						GenerateName: "claim-multi-request-",
+						Labels: map[string]string{
+							fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+						},
 					},
 					Spec: resourcev1.ResourceClaimSpec{
 						Devices: resourcev1.DeviceClaim{
@@ -433,6 +452,9 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 						ObjectMeta: metav1.ObjectMeta{
 							Namespace:    fxt.Namespace.Name,
 							GenerateName: "claim-multi-",
+							Labels: map[string]string{
+								fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+							},
 						},
 						Spec: resourcev1.ResourceClaimSpec{
 							Devices: resourcev1.DeviceClaim{
@@ -507,6 +529,9 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace:    fxt.Namespace.Name,
 						GenerateName: "claim-multicount-request-",
+						Labels: map[string]string{
+							fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+						},
 					},
 					Spec: resourcev1.ResourceClaimSpec{
 						Devices: resourcev1.DeviceClaim{
@@ -575,6 +600,9 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace:    fxt.Namespace.Name,
 						GenerateName: "claim-same-device-multicount-",
+						Labels: map[string]string{
+							fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+						},
 					},
 					Spec: resourcev1.ResourceClaimSpec{
 						Devices: resourcev1.DeviceClaim{
@@ -655,6 +683,9 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace:    fxt.Namespace.Name,
 						GenerateName: "claim-multicount-request-",
+						Labels: map[string]string{
+							fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+						},
 					},
 					Spec: resourcev1.ResourceClaimSpec{
 						Devices: resourcev1.DeviceClaim{
@@ -732,6 +763,9 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 						ObjectMeta: metav1.ObjectMeta{
 							Namespace: fxt.Namespace.Name,
 							Name:      tc.name,
+							Labels: map[string]string{
+								fixture.TestResourceLabelKey: fixture.TestResourceLabelValue,
+							},
 						},
 						Spec: makeResourceClaimSpecWithOpaqueConfig(1, true, tc.cpuset.String()),
 					}
