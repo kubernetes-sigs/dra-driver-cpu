@@ -1,0 +1,12 @@
+# Appended to hack/ci/kind-ci.yaml by `make kind-ci-config KIND_NODE_RUNTIME=crio`.
+# Cluster-wide patches apply to every node, so only the CRI socket differs from
+# the containerd lane.
+kubeadmConfigPatches:
+- |
+  kind: InitConfiguration
+  nodeRegistration:
+    criSocket: unix:///var/run/crio/crio.sock
+- |
+  kind: JoinConfiguration
+  nodeRegistration:
+    criSocket: unix:///var/run/crio/crio.sock

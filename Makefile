@@ -31,6 +31,17 @@ HELM_SCHEMA_VERSION ?= 2.3.1
 # release is published in the official version marker:
 # https://dl.k8s.io/release/stable-1.37.txt
 KIND_K8S_VERSION ?= v1.37.0
+# kind CLI used by the CRI-O lane (make install-kind). Must be able to drive
+# KIND_K8S_VERSION; older kind writes a kubeadm config API that 1.37 rejects.
+KIND_VERSION ?= v0.33.0
+# Container runtime of the CI kind nodes: containerd (default) or crio.
+KIND_NODE_RUNTIME ?= containerd
+# CRI-O node image: the official kind node image, pinned by digest, with CRI-O
+# layered on top by hack/ci/crio/build-node.sh. Bump these three together.
+CRIO_BASE_NODE_IMAGE ?= kindest/node:$(KIND_K8S_VERSION)@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+CRIO_MINOR ?= v1.37
+CRIO_PACKAGE_VERSION ?= 1.37.2-1.1
+CRIO_NODE_IMAGE ?= dra-ci/crio-node:$(KIND_K8S_VERSION)-crio-$(CRIO_PACKAGE_VERSION)
 GOPLS_VERSION ?= v0.22.0
 # paths
 YQ = $(OUT_DIR)/yq
@@ -161,11 +172,52 @@ push-image: ## build and push image directly to registry (supports multi-arch)
 print-kind-k8s-version: ## print the resolved Kubernetes version used for kind clusters
 	@echo $(KIND_K8S_VERSION)
 
+# Per-runtime CI cluster settings. containerd keeps the original behavior;
+# crio reuses the same cluster config with the CRI socket patched in.
+ifeq ($(KIND_NODE_RUNTIME),crio)
+KIND_NODE_IMAGE ?= $(CRIO_NODE_IMAGE)
+KIND_CI_CONFIG ?= $(OUT_DIR)/kind-ci-crio.yaml
+KIND_LOAD_IMAGES = hack/ci/crio/load-images.sh ${CLUSTER_NAME}
+else
+KIND_NODE_IMAGE ?= kindest/node:$(KIND_K8S_VERSION)
+KIND_CI_CONFIG ?= hack/ci/kind-ci.yaml
+KIND_LOAD_IMAGES = kind load docker-image --name ${CLUSTER_NAME}
+endif
+# true: drive the driver with the four-CPU sysfs overlay instead of host topology.
+CI_SYSFS_OVERLAY ?= false
+ifeq ($(CI_SYSFS_OVERLAY),true)
+CI_HELM_OVERLAY_ARGS = -f hack/examples/sysfs-overlay/values.yaml
+endif
+
 # Builds the Kind node image on-the-fly if it is not pre-cached locally.
 ensure-kind-node-image:
-	@if [ -z "$$(docker images -q kindest/node:$(KIND_K8S_VERSION) 2>/dev/null)" ]; then \
-		echo "Building kindest/node:$(KIND_K8S_VERSION) ..."; \
-		kind build node-image --image=kindest/node:$(KIND_K8S_VERSION) $(KIND_K8S_VERSION); \
+ifeq ($(KIND_NODE_RUNTIME),crio)
+	NODE_IMAGE="$(CRIO_BASE_NODE_IMAGE)" CRIO_MINOR="$(CRIO_MINOR)" \
+		CRIO_PACKAGE_VERSION="$(CRIO_PACKAGE_VERSION)" CRIO_NODE_IMAGE="$(KIND_NODE_IMAGE)" \
+		hack/ci/crio/build-node.sh
+else
+	@if [ -z "$$(docker images -q $(KIND_NODE_IMAGE) 2>/dev/null)" ]; then \
+		echo "Building $(KIND_NODE_IMAGE) ..."; \
+		kind build node-image --image=$(KIND_NODE_IMAGE) $(KIND_K8S_VERSION); \
+	fi
+endif
+
+# The CRI-O config is the containerd config plus a cluster-wide CRI socket patch,
+# so feature gates and verbosity cannot drift between the two lanes.
+.PHONY: kind-ci-config
+kind-ci-config: $(OUT_DIR)
+ifeq ($(KIND_NODE_RUNTIME),crio)
+	@if grep -q '^kubeadmConfigPatches:' hack/ci/kind-ci.yaml; then \
+		echo "hack/ci/kind-ci.yaml gained top-level kubeadmConfigPatches; merge hack/ci/crio/kind-patch.yaml into it" >&2; exit 1; \
+	fi
+	cat hack/ci/kind-ci.yaml hack/ci/crio/kind-patch.yaml > $(KIND_CI_CONFIG)
+endif
+
+.PHONY: install-kind
+install-kind: $(OUT_DIR) ## install the pinned kind CLI into bin/
+	@if [ "$$($(OUT_DIR)/kind version 2>/dev/null | awk '{print $$2}')" != "$(KIND_VERSION)" ]; then \
+		echo "Installing kind@$(KIND_VERSION) ..."; \
+		GOBIN=$(OUT_DIR) go install sigs.k8s.io/kind@$(KIND_VERSION); \
 	fi
 
 kind-cluster: ensure-kind-node-image ## create kind cluster
@@ -202,15 +254,18 @@ else
 		> dist/helm-manifest.yaml
 endif
 
-ci-kind-setup: ensure-kind-node-image install-helm build-image build-test-image ## setup a CI cluster from scratch using reserved CPUs
+ci-kind-setup: ensure-kind-node-image kind-ci-config install-helm build-image build-test-image ## setup a CI cluster from scratch using reserved CPUs
 ifneq ($(DRACPU_E2E_VERBOSE),)
-	@echo "creating a kind cluster for mode=$(DRACPU_E2E_CPU_DEVICE_MODE)"
+	@echo "creating a kind cluster for mode=$(DRACPU_E2E_CPU_DEVICE_MODE) runtime=$(KIND_NODE_RUNTIME)"
 endif
-	kind create cluster --name ${CLUSTER_NAME} --image=kindest/node:$(KIND_K8S_VERSION) --config hack/ci/kind-ci.yaml
+	kind create cluster --name ${CLUSTER_NAME} --image=$(KIND_NODE_IMAGE) --config $(KIND_CI_CONFIG)
 	kubectl wait --for=create node/${CLUSTER_NAME}-worker --timeout=120s
 	kubectl label node ${CLUSTER_NAME}-worker node-role.kubernetes.io/worker=''
-	kind load docker-image --name ${CLUSTER_NAME} ${IMAGE_CI} ${IMAGE_TEST}
-	$(HELM) install dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} \
+	$(KIND_LOAD_IMAGES) ${IMAGE_CI} ${IMAGE_TEST}
+ifeq ($(CI_SYSFS_OVERLAY),true)
+	kubectl apply -n kube-system -f hack/examples/sysfs-overlay/configmap.yaml
+endif
+	$(HELM) install dra-driver-cpu ${HELM_CHART} ${HELM_COMMON_ARGS} $(CI_HELM_OVERLAY_ARGS) \
 		--set image.repository=${IMAGE_REPO_CI} \
 		--set image.tag=${TAG} \
 		--set image.pullPolicy=IfNotPresent \
