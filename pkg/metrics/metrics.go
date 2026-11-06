@@ -101,6 +101,7 @@ type Metrics struct {
 	nriCreateContainerDuration *prometheus.HistogramVec
 	nriStopContainerDuration   *prometheus.HistogramVec
 	nriRemoveContainerDuration *prometheus.HistogramVec
+	cpusetPartitions           *prometheus.GaugeVec
 }
 
 type metricKind string
@@ -206,6 +207,12 @@ var (
 		labels:  []string{"result", "cpu_allocation_mode"},
 		buckets: nriBuckets,
 	}
+	cpusetPartitionsSpec = metricSpec{
+		name:   "dra_cpu_cpuset_partitions",
+		kind:   metricGauge,
+		help:   "Number of experimental cpuset partitions of containers with exclusive CPUs, by state.",
+		labels: []string{"state"},
+	}
 )
 
 var metricSpecs = []metricSpec{
@@ -222,6 +229,7 @@ var metricSpecs = []metricSpec{
 	nriCreateContainerDurationSpec,
 	nriStopContainerDurationSpec,
 	nriRemoveContainerDurationSpec,
+	cpusetPartitionsSpec,
 }
 
 // Descriptors returns metadata for custom CPU driver metrics.
@@ -266,6 +274,7 @@ func New(reg prometheus.Registerer) *Metrics {
 		nriCreateContainerDuration: newHistogramVec(nriCreateContainerDurationSpec),
 		nriStopContainerDuration:   newHistogramVec(nriStopContainerDurationSpec),
 		nriRemoveContainerDuration: newHistogramVec(nriRemoveContainerDurationSpec),
+		cpusetPartitions:           newGaugeVec(cpusetPartitionsSpec),
 	}
 
 	reg.MustRegister(
@@ -282,6 +291,7 @@ func New(reg prometheus.Registerer) *Metrics {
 		m.nriCreateContainerDuration,
 		m.nriStopContainerDuration,
 		m.nriRemoveContainerDuration,
+		m.cpusetPartitions,
 	)
 	for _, result := range []Result{ResultSuccess, ResultError, ResultUnknown} {
 		m.prepareClaims.WithLabelValues(result.String())
@@ -295,6 +305,9 @@ func New(reg prometheus.Registerer) *Metrics {
 			m.nriRemoveContainerDuration.WithLabelValues(result.String(), alloc.String())
 		}
 	}
+	for _, state := range partitionStates {
+		m.cpusetPartitions.WithLabelValues(state)
+	}
 	return m
 }
 
@@ -303,6 +316,13 @@ func newGauge(spec metricSpec) prometheus.Gauge {
 		Name: spec.name,
 		Help: spec.help,
 	})
+}
+
+func newGaugeVec(spec metricSpec) *prometheus.GaugeVec {
+	return prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: spec.name,
+		Help: spec.help,
+	}, spec.labels)
 }
 
 func newCounterVec(spec metricSpec) *prometheus.CounterVec {
@@ -372,6 +392,16 @@ func (m *Metrics) RecordNRIRemoveContainer(err error, claimCount int, elapsed ti
 	m.nriRemoveContainerDuration.WithLabelValues(res.String(), alloc.String()).Observe(elapsed.Seconds())
 }
 
+var partitionStates = []string{"valid", "invalid", "releasing"}
+
+// SetCPUSetPartitions records partition counts. They stay zero while
+// partitions are disabled.
+func (m *Metrics) SetCPUSetPartitions(valid, invalid, releasing int) {
+	for i, n := range []int{valid, invalid, releasing} {
+		m.cpusetPartitions.WithLabelValues(partitionStates[i]).Set(float64(n))
+	}
+}
+
 func determineResult(err error) Result {
 	if err != nil {
 		return ResultError
@@ -404,3 +434,4 @@ func (noopRecorder) RecordNRISynchronize(error, time.Duration)          {}
 func (noopRecorder) RecordNRICreateContainer(error, int, time.Duration) {}
 func (noopRecorder) RecordNRIStopContainer(error, int, time.Duration)   {}
 func (noopRecorder) RecordNRIRemoveContainer(error, int, time.Duration) {}
+func (noopRecorder) SetCPUSetPartitions(int, int, int)                  {}

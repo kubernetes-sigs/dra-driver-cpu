@@ -168,6 +168,11 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if cp.partitions != nil {
+		if err := cp.reconcilePartitions(logger, pods, containers, podState, allocationState); err != nil {
+			return nil, err
+		}
+	}
 	cp.podState = podState
 	cp.allocationState = allocationState
 	if !cp.hasSynchronized && cp.initialSync != nil {
@@ -361,6 +366,8 @@ func (cp *CPUDriver) StopContainer(ctx context.Context, pod *api.PodSandbox, ctr
 	defer logger.V(2).Info("end: StopContainer")
 
 	updates := []*api.ContainerUpdate{}
+	cp.releasePartition(logger, ctr)
+
 	claimUIDs, removed := cp.podState.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
 	if !removed {
 		logger.V(2).Info("ignoring stale or unknown StopContainer event")
@@ -385,6 +392,8 @@ func (cp *CPUDriver) RemoveContainer(ctx context.Context, pod *api.PodSandbox, c
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen), "pod", ctxlog.KObj(pod), "podUID", pod.Uid, "container", ctr.Name, "containerID", ctr.Id)
 	logger.V(2).Info("begin: RemoveContainer")
 	defer logger.V(2).Info("end: RemoveContainer")
+
+	cp.releasePartition(logger, ctr)
 
 	claimUIDs, removed := cp.podState.RemoveContainerState(types.UID(pod.GetUid()), ctr.GetName(), types.UID(ctr.GetId()))
 	if !removed {
