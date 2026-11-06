@@ -20,9 +20,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpupartition"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 )
 
@@ -41,6 +43,8 @@ var schemaEnums = map[string][]any{
 	"cpuDeviceMode": {device.CPU_DEVICE_MODE_GROUPED, device.CPU_DEVICE_MODE_INDIVIDUAL},
 	"groupBy":       {device.GROUP_BY_NUMA_NODE, device.GROUP_BY_SOCKET, device.GROUP_BY_MACHINE},
 	"allocator":     {cpuallocator.ModeCPUManager, cpuallocator.ModeExternal},
+	// Dotted keys address nested properties.
+	"experimentalCPUSetPartition.mode": {cpupartition.ModeRoot, cpupartition.ModeIsolated},
 }
 
 // driverConfigSchemaComment is the generated schema's top-level "$comment".
@@ -63,9 +67,11 @@ func GenerateDriverConfigSchema() ([]byte, error) {
 	}
 
 	for jsonKey, enum := range schemaEnums {
-		prop, ok := schema.Properties[jsonKey]
-		if !ok {
-			return nil, fmt.Errorf("schemaEnums has entry %q but Config has no matching field", jsonKey)
+		prop := schema
+		for key := range strings.SplitSeq(jsonKey, ".") {
+			if prop = prop.Properties[key]; prop == nil {
+				return nil, fmt.Errorf("schemaEnums has entry %q but Config has no matching field", jsonKey)
+			}
 		}
 		prop.Enum = enum
 	}
