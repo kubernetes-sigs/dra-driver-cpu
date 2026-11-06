@@ -121,6 +121,22 @@ render and pass it in, instead of re-running validation on every mount/hostPath.
 {{- end }}
 
 {{/*
+The checkpoint directory, cleaned the way the driver resolves its config. The
+default is mounted even when no ConfigMap is rendered, because checkpointing is
+part of the driver's default behavior.
+*/}}
+{{- define "dra-driver-cpu.checkpointDir" -}}
+{{- $dir := "/run/dra-driver-cpu" -}}
+{{- if hasKey . "checkpointDir" -}}
+{{- $dir = .checkpointDir | default $dir -}}
+{{- end -}}
+{{- if not (isAbs $dir) -}}
+{{- fail (printf "driverConfig.checkpointDir must be an absolute path, got %q" $dir) -}}
+{{- end -}}
+{{- clean $dir -}}
+{{- end }}
+
+{{/*
 Effective driverConfig: folds deprecated args.* fields (cpuDeviceMode,
 groupBy, reservedCPUs, hostnameOverride) into driverConfig, args.* wins on
 conflicts.

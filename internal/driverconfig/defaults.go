@@ -16,7 +16,10 @@ limitations under the License.
 
 package driverconfig
 
-import "github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+import (
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+)
 
 // DefaultKubeletRootDir is the standard kubelet root directory, so behaviour is
 // unchanged unless the kubelet --root-dir is relocated.
@@ -29,6 +32,7 @@ func Default() Config {
 		CPUDeviceMode:  device.CPU_DEVICE_MODE_GROUPED,
 		GroupBy:        device.GROUP_BY_NUMA_NODE,
 		KubeletRootDir: DefaultKubeletRootDir,
+		CheckpointDir:  checkpoint.DefaultDirectory,
 		Allocator:      AllocatorCPUManager,
 	}
 }

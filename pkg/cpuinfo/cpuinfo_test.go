@@ -28,6 +28,7 @@ import (
 
 	"github.com/go-logr/logr/testr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
+	"github.com/stretchr/testify/require"
 	"k8s.io/utils/cpuset"
 )
 
@@ -672,6 +673,128 @@ func TestGetCPUTopologyRejectsUnsupportedSMT(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.expectedErrorSubstring) {
 				t.Fatalf("GetCPUTopology() error = %v, want error containing %q", err, tc.expectedErrorSubstring)
 			}
+		})
+	}
+}
+
+func newFingerprintTestTopology() CPUTopology {
+	topology := CPUTopology{
+		NumCPUs:        4,
+		NumCores:       2,
+		NumUncoreCache: 2,
+		NumSockets:     1,
+		NumNUMANodes:   2,
+		SMTEnabled:     true,
+	}
+	topology.CPUDetails = map[int]CPUInfo{
+		0: {CpuID: 0, CoreID: 0, SocketID: 0, ClusterID: 0, NUMANodeID: 0, NumaNodeCPUSet: cpuset.New(0, 1), SiblingCPUID: 1, CoreType: CoreTypePerformance, UncoreCacheID: 0},
+		1: {CpuID: 1, CoreID: 0, SocketID: 0, ClusterID: 0, NUMANodeID: 0, NumaNodeCPUSet: cpuset.New(0, 1), SiblingCPUID: 0, CoreType: CoreTypePerformance, UncoreCacheID: 0},
+		2: {CpuID: 2, CoreID: 1, SocketID: 0, ClusterID: 1, NUMANodeID: 1, NumaNodeCPUSet: cpuset.New(2, 3), SiblingCPUID: 3, CoreType: CoreTypePerformance, UncoreCacheID: 1},
+		3: {CpuID: 3, CoreID: 1, SocketID: 0, ClusterID: 1, NUMANodeID: 1, NumaNodeCPUSet: cpuset.New(2, 3), SiblingCPUID: 2, CoreType: CoreTypePerformance, UncoreCacheID: 1},
+	}
+	return topology
+}
+
+func TestCPUTopologyFingerprintOrderIndependence(t *testing.T) {
+	// regression test. Iterate over "many" identical maps
+	// to get random iterations order, which we don't control,
+	// and check we always get the same fingerprint.
+	// This is meant to be a first line of defense against
+	// order-sensitive fingerprinting, but can't be
+	// an exhaustive test
+	reference := newFingerprintTestTopology().Fingerprint()
+	for range 100 { // 100 is a random "high enough" number
+		require.Equal(t, reference, newFingerprintTestTopology().Fingerprint())
+	}
+}
+
+func TestCPUTopologyFingerprintChangesWhenTopologyChanges(t *testing.T) {
+	baseline := newFingerprintTestTopology().Fingerprint()
+	require.NotEmpty(t, baseline)
+
+	for _, tc := range []struct {
+		name           string
+		mutateCPU      func(*CPUInfo)
+		mutateTopology func(*CPUTopology)
+	}{
+		{
+			name: "CPUDetails key",
+			mutateTopology: func(topology *CPUTopology) {
+				topology.CPUDetails[4] = topology.CPUDetails[0]
+				delete(topology.CPUDetails, 0)
+			},
+		},
+		{
+			name:      "CpuID",
+			mutateCPU: func(info *CPUInfo) { info.CpuID = 4 },
+		},
+		{
+			name:      "CoreID",
+			mutateCPU: func(info *CPUInfo) { info.CoreID = 2 },
+		},
+		{
+			name:      "SocketID",
+			mutateCPU: func(info *CPUInfo) { info.SocketID = 1 },
+		},
+		{
+			name:      "ClusterID",
+			mutateCPU: func(info *CPUInfo) { info.ClusterID = 2 },
+		},
+		{
+			name:      "NUMANodeID",
+			mutateCPU: func(info *CPUInfo) { info.NUMANodeID = 1 },
+		},
+		{
+			name:      "NumaNodeCPUSet",
+			mutateCPU: func(info *CPUInfo) { info.NumaNodeCPUSet = cpuset.New(0, 2) },
+		},
+		{
+			name:      "SiblingCPUID",
+			mutateCPU: func(info *CPUInfo) { info.SiblingCPUID = 2 },
+		},
+		{
+			name:      "CoreType",
+			mutateCPU: func(info *CPUInfo) { info.CoreType = CoreTypeEfficiency },
+		},
+		{
+			name:      "UncoreCacheID",
+			mutateCPU: func(info *CPUInfo) { info.UncoreCacheID = 1 },
+		},
+		{
+			name:           "NumCPUs",
+			mutateTopology: func(topology *CPUTopology) { topology.NumCPUs = 5 },
+		},
+		{
+			name:           "NumCores",
+			mutateTopology: func(topology *CPUTopology) { topology.NumCores = 3 },
+		},
+		{
+			name:           "NumUncoreCache",
+			mutateTopology: func(topology *CPUTopology) { topology.NumUncoreCache = 3 },
+		},
+		{
+			name:           "NumSockets",
+			mutateTopology: func(topology *CPUTopology) { topology.NumSockets = 2 },
+		},
+		{
+			name:           "NumNUMANodes",
+			mutateTopology: func(topology *CPUTopology) { topology.NumNUMANodes = 3 },
+		},
+		{
+			name:           "SMTEnabled",
+			mutateTopology: func(topology *CPUTopology) { topology.SMTEnabled = false },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			topology := newFingerprintTestTopology()
+			if tc.mutateCPU != nil {
+				info := topology.CPUDetails[0]
+				tc.mutateCPU(&info)
+				topology.CPUDetails[0] = info
+			} else {
+				tc.mutateTopology(&topology)
+			}
+			require.NotEqual(t, baseline, topology.Fingerprint())
 		})
 	}
 }

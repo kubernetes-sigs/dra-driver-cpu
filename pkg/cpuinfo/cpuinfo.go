@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/cpuset"
@@ -154,6 +155,10 @@ type CPUTopology struct {
 	NumNUMANodes   int
 	SMTEnabled     bool
 	CPUDetails     CPUDetails
+}
+
+func (ct CPUTopology) Fingerprint() string {
+	return strconv.FormatUint(uint64(checkpoint.NewChecksum(ct)), 10)
 }
 
 // SystemCPUInfo provides information about the CPUs on the system.

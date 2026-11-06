@@ -23,9 +23,8 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 )
 
-// Validate checks that enum fields hold recognised values and that
-// kubeletRootDir is non-empty and absolute. The root is required rather than
-// optional because the hostPath mounts render from the same value.
+// Validate checks that enum fields hold recognised values and that path fields
+// are non-empty and absolute.
 // Config files bypass the flag.Value validators, so Resolve calls this after merging.
 func (c Config) Validate() error {
 	if c.CPUDeviceMode != device.CPU_DEVICE_MODE_GROUPED && c.CPUDeviceMode != device.CPU_DEVICE_MODE_INDIVIDUAL {
@@ -60,6 +59,12 @@ func (c Config) Validate() error {
 	}
 	if !filepath.IsAbs(c.KubeletRootDir) {
 		return fmt.Errorf("invalid kubeletRootDir %q: must be an absolute path", c.KubeletRootDir)
+	}
+	if c.CheckpointDir == "" {
+		return fmt.Errorf("invalid checkpointDir: must not be empty")
+	}
+	if !filepath.IsAbs(c.CheckpointDir) {
+		return fmt.Errorf("invalid checkpointDir %q: must be an absolute path", c.CheckpointDir)
 	}
 	return nil
 }

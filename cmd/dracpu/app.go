@@ -138,6 +138,7 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 	printVersion(logger)
 	logger.Info("configuration successfully loaded", "configuration", cfg.Dump())
 
+	var err error
 	reservedCPUSet, err := cpuset.Parse(cfg.ReservedCPUs)
 	if err != nil {
 		return fmt.Errorf("failed to parse reserved CPUs: %w", err)
@@ -221,6 +222,7 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 		PublishNodeAllocatableResourceMapping: cfg.PublishNodeAllocatableResourceMapping,
 		Metrics:                               cpumetrics.New(prometheus.DefaultRegisterer),
 		KubeletRootDir:                        cfg.KubeletRootDir,
+		CheckpointDir:                         cfg.CheckpointDir,
 		Allocator:                             cfg.Allocator,
 	}
 	driverProviders := driver.Providers{

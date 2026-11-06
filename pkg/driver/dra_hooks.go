@@ -27,6 +27,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
@@ -134,9 +135,9 @@ func (cp *CPUDriver) checkAdminAccess(claim *resourceapi.ResourceClaim) error {
 // the shared-pool guard for currently running shared containers. A shared
 // container from the same pod may not have been created yet when this DRA hook
 // runs, so that case is detected later by the NRI CreateContainer check.
-func (cp *CPUDriver) reserveResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet) error {
+func (cp *CPUDriver) reserveResourceClaimAllocation(logger logr.Logger, claim *resourceapi.ResourceClaim, cpus cpuset.CPUSet) error {
 	hasSharedContainers := len(cp.podState.GetContainersWithSharedCPUs()) > 0
-	return cp.allocationState.Reserve(logger, claimUID, cpus, hasSharedContainers)
+	return cp.allocationState.Reserve(logger, cp.checkpointMgr, store.ClaimIdentFrom(claim), cpus, hasSharedContainers)
 }
 
 func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
@@ -233,12 +234,14 @@ func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim
 	}
 
 	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.
-	if err := cp.reserveResourceClaimAllocation(logger, claim.UID, assignedCPUs); err != nil {
+	if err := cp.reserveResourceClaimAllocation(logger, claim, assignedCPUs); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
 	result := cp.prepareDevices(logger, claim, assignedCPUs)
 	if result.Err != nil {
-		cp.allocationState.Release(logger, claim.UID)
+		if err := cp.allocationState.Release(logger, cp.checkpointMgr, claim.UID); err != nil {
+			result.Err = errors.Join(result.Err, err)
+		}
 		return result
 	}
 	cp.metrics.RecordClaimAllocatedCPUs(assignedCPUs.Size())
@@ -315,12 +318,14 @@ func (cp *CPUDriver) prepareIndividualResourceClaimLocked(logger logr.Logger, cl
 	}
 
 	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.
-	if err := cp.reserveResourceClaimAllocation(logger, claim.UID, claimCPUSet); err != nil {
+	if err := cp.reserveResourceClaimAllocation(logger, claim, claimCPUSet); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
 	result := cp.prepareDevices(logger, claim, claimCPUSet)
 	if result.Err != nil {
-		cp.allocationState.Release(logger, claim.UID)
+		if err := cp.allocationState.Release(logger, cp.checkpointMgr, claim.UID); err != nil {
+			result.Err = errors.Join(result.Err, err)
+		}
 		return result
 	}
 	cp.metrics.RecordClaimAllocatedCPUs(claimCPUSet.Size())
@@ -416,7 +421,9 @@ func (cp *CPUDriver) unprepareResourceClaim(ctx context.Context, logger logr.Log
 	if err := cp.cdiMgr.RemoveDevice(logger, getCDIDeviceName(claim.UID)); err != nil {
 		return err
 	}
-	cp.allocationState.Release(logger, claim.UID)
+	if err := cp.allocationState.Release(logger, cp.checkpointMgr, claim.UID); err != nil {
+		return err
+	}
 	cp.refreshAllocationMetrics()
 	// TODO(#279): Update existing shared containers here once all supported runtimes can
 	// safely process unsolicited NRI UpdateContainers calls. Until then, each container

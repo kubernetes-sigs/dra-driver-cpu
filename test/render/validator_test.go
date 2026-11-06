@@ -19,6 +19,8 @@ limitations under the License.
 // registers where the kubelet is not watching, which is issue #231. The node
 // name the driver registers under has to come from the Node object, not the
 // kernel hostname, or ResourceSlice publishing fails to find the node owner.
+// The checkpoint directory has to reach both the container mount and the
+// hostPath volume, or the durable ledger is recreated with every pod.
 // Rendering and the expected values come from hack/ci/helm-render-check.sh.
 package render
 
@@ -45,6 +47,8 @@ const (
 	driverContainer   = "dracpu"
 	pluginsVolume     = "device-plugin"
 	registryVolume    = "plugin-registry"
+	checkpointVolume  = "checkpoint-dir"
+	defaultCheckpoint = "/run/dra-driver-cpu"
 	rootFlag          = "--kubelet-root-dir"
 	rootFlagShort     = "-kubelet-root-dir"
 	nodeNameEnv       = "NODE_NAME"
@@ -54,10 +58,11 @@ const (
 )
 
 var (
-	manifest      = flag.String("manifest", "", "path to a rendered DaemonSet")
-	expectedRoot  = flag.String("expected-root", "", "the kubelet root the mounts and the flag must derive from")
-	expectFlag    = flag.Bool("expect-root-flag", false, "whether the chart should pass "+rootFlag)
-	checkOverride = flag.Bool("check-hostname-override", false, "whether to judge how the node name reaches the driver")
+	manifest           = flag.String("manifest", "", "path to a rendered DaemonSet")
+	expectedRoot       = flag.String("expected-root", "", "the kubelet root the mounts and the flag must derive from")
+	expectedCheckpoint = flag.String("expected-checkpoint-dir", defaultCheckpoint, "the checkpoint directory the mount and hostPath must use")
+	expectFlag         = flag.Bool("expect-root-flag", false, "whether the chart should pass "+rootFlag)
+	checkOverride      = flag.Bool("check-hostname-override", false, "whether to judge how the node name reaches the driver")
 )
 
 // validated says the checks below ran to the end. `go test -run` exits 0 when
@@ -100,6 +105,9 @@ func TestRenderedDaemonSet(t *testing.T) {
 		if probe.HTTPGet.Path != "/healthz" {
 			t.Fatalf("%s probe path = %q, want /healthz", name, probe.HTTPGet.Path)
 		}
+	}
+	if err := checkCheckpoint(ds, *expectedCheckpoint); err != nil {
+		t.Fatal(err)
 	}
 	if *checkOverride {
 		if err := checkNodeName(ds); err != nil {
@@ -179,11 +187,22 @@ func checkRoot(ds *appsv1.DaemonSet, root string, wantFlag bool) error {
 		return err
 	}
 	errs := []error{
-		checkBinding(ds, c, pluginsVolume, path.Join(root, "plugins")),
-		checkBinding(ds, c, registryVolume, path.Join(root, "plugins_registry")),
+		checkBinding(ds, c, pluginsVolume, path.Join(root, "plugins"), corev1.HostPathDirectory),
+		checkBinding(ds, c, registryVolume, path.Join(root, "plugins_registry"), corev1.HostPathDirectory),
 		checkFlag(c, root, wantFlag),
 	}
 	return errors.Join(errs...)
+}
+
+// checkCheckpoint judges the durable-ledger path as one binding, then pins the
+// hostPath type: the standard directory does not have to exist before the first
+// driver pod starts on a node.
+func checkCheckpoint(ds *appsv1.DaemonSet, want string) error {
+	c, err := driver(ds)
+	if err != nil {
+		return err
+	}
+	return checkBinding(ds, c, checkpointVolume, want, corev1.HostPathDirectoryOrCreate)
 }
 
 func driver(ds *appsv1.DaemonSet) (*corev1.Container, error) {
@@ -201,7 +220,7 @@ func driver(ds *appsv1.DaemonSet) (*corev1.Container, error) {
 
 // checkBinding reads the mount and its volume as one: the driver writes through
 // the mount and the kubelet reads the host path behind it.
-func checkBinding(ds *appsv1.DaemonSet, c *corev1.Container, name, want string) error {
+func checkBinding(ds *appsv1.DaemonSet, c *corev1.Container, name, want string, wantType corev1.HostPathType) error {
 	var mounts []corev1.VolumeMount
 	for _, m := range c.VolumeMounts {
 		if m.Name == name {
@@ -243,9 +262,11 @@ func checkBinding(ds *appsv1.DaemonSet, c *corev1.Container, name, want string) 
 	}
 	// The kubelet creates both directories under its root at startup, so a
 	// missing one means the root is wrong. Directory refuses to start the pod
-	// there, where an unset type would mount an empty directory instead.
-	if host.Type == nil || *host.Type != corev1.HostPathDirectory {
-		errs = append(errs, fmt.Errorf("volume %q has hostPath type %s, want %q", name, typeOf(host), corev1.HostPathDirectory))
+	// there, where an unset type would mount an empty directory instead. The
+	// checkpoint directory, unlike the kubelet directories, is driver-owned
+	// and may need to be created on first use.
+	if host.Type == nil || *host.Type != wantType {
+		errs = append(errs, fmt.Errorf("volume %q has hostPath type %s, want %q", name, typeOf(host), wantType))
 	}
 	return errors.Join(errs...)
 }
