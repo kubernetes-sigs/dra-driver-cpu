@@ -181,14 +181,17 @@ func (pr Providers) EnsureSysFS() sysfs.FS {
 
 // Config is the configuration for the CPUDriver.
 type Config struct {
-	DriverName       string
-	NodeName         string
-	ReservedCPUs     cpuset.CPUSet
-	CPUDeviceMode    string
-	CPUDeviceGroupBy string
-	Allocator        string
-	ExposePCIeRoots  bool
-	Metrics          Recorder
+	DriverName   string
+	NodeName     string
+	ReservedCPUs cpuset.CPUSet
+	// ReservedCPUsPolicy is one of the driverconfig.ReservedCPUsPolicy* values.
+	// Empty means strict.
+	ReservedCPUsPolicy string
+	CPUDeviceMode      string
+	CPUDeviceGroupBy   string
+	Allocator          string
+	ExposePCIeRoots    bool
+	Metrics            Recorder
 	// KubeletRootDir is the kubelet root directory, from which the registrar
 	// and plugin data directories are derived. Required and absolute:
 	// driverconfig.Resolve refuses an empty or relative value, and New takes it as
@@ -253,7 +256,22 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		}
 	}
 
-	plugin.allocationState = store.NewAllocationState(plugin.topology.CPUTopology, config.ReservedCPUs)
+	var allocationOpts []store.Option
+	if config.ReservedCPUsPolicy == driverconfig.ReservedCPUsPolicyShared {
+		// Shared reserved CPUs end up in container cpusets verbatim, so unlike
+		// strict mode they must be online. The kernel online set is the
+		// reference, not the topology-validated set: a CPU with incomplete
+		// topology is still a valid cpuset member.
+		onlineCPUs, err := cpuinfo.ReadOnlineCPUs(providers.EnsureSysFS())
+		if err != nil {
+			return nil, fmt.Errorf("failed to read online CPUs: %w", err)
+		}
+		if !config.ReservedCPUs.IsSubsetOf(onlineCPUs) {
+			return nil, fmt.Errorf("reservedCPUs %q are not all online (online CPUs %q)", config.ReservedCPUs.String(), onlineCPUs.String())
+		}
+		allocationOpts = append(allocationOpts, store.WithSharedReservedCPUs())
+	}
+	plugin.allocationState = store.NewAllocationState(plugin.topology.CPUTopology, config.ReservedCPUs, allocationOpts...)
 	plugin.refreshAllocationMetrics()
 	plugin.podState = store.NewPodState()
 

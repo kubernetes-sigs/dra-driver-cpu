@@ -45,6 +45,17 @@ func (c Config) Validate() error {
 	if c.CPUDeviceMode == device.CPU_DEVICE_MODE_GROUPED && c.GroupBy == device.GROUP_BY_MACHINE && c.Allocator != AllocatorExternal {
 		return fmt.Errorf("invalid allocator %q with groupBy %q: must be %q", c.Allocator, device.GROUP_BY_MACHINE, AllocatorExternal)
 	}
+	if c.ReservedCPUsPolicy != ReservedCPUsPolicyStrict && c.ReservedCPUsPolicy != ReservedCPUsPolicyShared {
+		return fmt.Errorf("invalid reservedCPUsPolicy %q: must be %q or %q",
+			c.ReservedCPUsPolicy, ReservedCPUsPolicyStrict, ReservedCPUsPolicyShared)
+	}
+	// The shared policy only changes behaviour when there are reserved CPUs to
+	// share. Refuse the no-op combination so a user who expects the fallback
+	// finds out at startup rather than when a claim exhausts the pool.
+	if c.ReservedCPUsPolicy == ReservedCPUsPolicyShared && c.ReservedCPUs == "" {
+		return fmt.Errorf("invalid reservedCPUsPolicy %q: requires reservedCPUs; set reservedCPUs or use %q",
+			c.ReservedCPUsPolicy, ReservedCPUsPolicyStrict)
+	}
 	// The kubelet root becomes socket and mount locations, so a relative path
 	// would resolve against the working directory and silently break
 	// registration.

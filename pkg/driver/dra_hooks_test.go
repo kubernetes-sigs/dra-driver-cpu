@@ -370,6 +370,17 @@ func TestPublishResources(t *testing.T) {
 			expectedDevices:            0,
 			expectedDevicesPerNUMANode: map[int]int{},
 		},
+		{
+			// The shared policy changes only the cpuset of shared containers, never what is advertised.
+			name:                       "publish with reserved cpus shared with non-exclusive containers",
+			config:                     Config{ReservedCPUsPolicy: driverconfig.ReservedCPUsPolicyShared},
+			cpuInfos:                   mockCPUInfos_SingleSocket_4CPUS_HT,
+			reservedCPUs:               cpuset.New(0, 1),
+			expectPublish:              true,
+			expectedNumSlices:          1,
+			expectedDevices:            len(mockCPUInfos_SingleSocket_4CPUS_HT) - 2,
+			expectedDevicesPerNUMANode: map[int]int{0: 2},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -383,10 +394,11 @@ func TestPublishResources(t *testing.T) {
 				SysFS: testSysFS(tc.cpuInfos),
 			}
 			conf := Config{
-				DriverName:      testDriverName,
-				NodeName:        testNodeName,
-				ReservedCPUs:    tc.reservedCPUs,
-				ExposePCIeRoots: tc.config.ExposePCIeRoots,
+				DriverName:         testDriverName,
+				NodeName:           testNodeName,
+				ReservedCPUs:       tc.reservedCPUs,
+				ReservedCPUsPolicy: tc.config.ReservedCPUsPolicy,
+				ExposePCIeRoots:    tc.config.ExposePCIeRoots,
 			}
 			cp, err := New(testr.New(t), prov, &conf)
 			if tc.cpuInfoErr != nil {
@@ -909,6 +921,123 @@ func TestPrepareResourceClaimsRejectsExhaustingSharedPool(t *testing.T) {
 			require.True(t, driver.allocationState.GetSharedCPUs().IsEmpty())
 		})
 	}
+}
+
+func TestPrepareResourceClaimsSharedReservedCPUs(t *testing.T) {
+	logger := testr.New(t)
+	reserved := cpuset.New(0)
+	managed := cpuset.New(1, 2, 3)
+
+	newDriver := func(policy string) *CPUDriver {
+		t.Helper()
+		prov := Providers{
+			CPUInfo: &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT},
+			SysFS:   testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
+		}
+		conf := Config{
+			DriverName:         testDriverName,
+			NodeName:           testNodeName,
+			ReservedCPUs:       reserved,
+			ReservedCPUsPolicy: policy,
+			CPUDeviceMode:      devattr.CPU_DEVICE_MODE_GROUPED,
+			CPUDeviceGroupBy:   devattr.GROUP_BY_SOCKET,
+		}
+		driver, err := New(logger, prov, &conf)
+		require.NoError(t, err)
+		driver.cdiMgr = newMockCdiMgr()
+		driver.podState.SetContainerState("shared-pod", store.NewContainerState("shared-ctr", "shared-uid"))
+		driver.hasSynchronized = true
+		return driver
+	}
+	claimForManagedCPUs := testClaim("claim-full", testDriverName, testNodeName, map[string]int64{"cpudevsocket000": int64(managed.Size())})
+
+	t.Run("strict: rejects a claim for every managed CPU while shared containers exist", func(t *testing.T) {
+		driver := newDriver(driverconfig.ReservedCPUsPolicyStrict)
+		prepared, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claimForManagedCPUs})
+		require.NoError(t, err)
+		require.ErrorContains(t, prepared[types.UID("claim-full")].Err, "would exhaust the shared CPU pool")
+		require.True(t, driver.allocationState.GetSharedCPUs().Equals(managed))
+	})
+
+	t.Run("shared: allows a claim for every managed CPU and leaves reserved CPUs to shared containers", func(t *testing.T) {
+		driver := newDriver(driverconfig.ReservedCPUsPolicyShared)
+		prepared, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claimForManagedCPUs})
+		require.NoError(t, err)
+		require.NoError(t, prepared[types.UID("claim-full")].Err)
+		allocated, ok := driver.allocationState.GetResourceClaimAllocation("claim-full")
+		require.True(t, ok)
+		require.True(t, allocated.Equals(managed), "claim must not receive reserved CPUs: got %s", allocated)
+		require.True(t, driver.allocationState.GetSharedCPUs().Equals(reserved), "shared cpus: got %s", driver.allocationState.GetSharedCPUs())
+		require.True(t, driver.allocationState.GetAvailableCPUs().IsEmpty())
+	})
+}
+
+// Machine grouping prepares from the topology minus reservedCPUs rather than
+// from the store, so the shared policy must keep reserved CPUs out of it too.
+func TestPrepareMachineModeSharedReservedCPUs(t *testing.T) {
+	reserved := cpuset.New(0)
+	managed := cpuset.New(1, 2, 3)
+	claimUID := types.UID("claim-full")
+	claimForManagedCPUs := func() *resourceapi.ResourceClaim {
+		return testClaimWithOpaqueConfig(claimUID, testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: int64(managed.Size())}, managed.String())
+	}
+	claimWithReservedCPU := func() *resourceapi.ResourceClaim {
+		return testClaimWithOpaqueConfig(claimUID, testDriverName, testNodeName, map[string]int64{devattr.CPUDeviceMachineGrouped: 2}, "0-1")
+	}
+	prepare := func(t *testing.T, driver *CPUDriver, claim *resourceapi.ResourceClaim) error {
+		t.Helper()
+		driver.podState.SetContainerState("shared-pod", store.NewContainerState("shared-ctr", "shared-uid"))
+		driver.hasSynchronized = true
+		prepared, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
+		require.NoError(t, err)
+		return prepared[claimUID].Err
+	}
+
+	t.Run("strict: rejects a claim for every managed CPU while shared containers exist", func(t *testing.T) {
+		driver := createCPUDriverExternalAllocForTest(t, devattr.GROUP_BY_MACHINE, mockCPUInfos_SingleSocket_4CPUS_HT, nil, reserved, newMockCdiMgr())
+		require.ErrorContains(t, prepare(t, driver, claimForManagedCPUs()), "would exhaust the shared CPU pool")
+	})
+
+	t.Run("shared: allows a claim for every managed CPU and leaves reserved CPUs to shared containers", func(t *testing.T) {
+		driver := createCPUDriverExternalAllocForTest(t, devattr.GROUP_BY_MACHINE, mockCPUInfos_SingleSocket_4CPUS_HT, nil, reserved, newMockCdiMgr(), store.WithSharedReservedCPUs())
+		require.NoError(t, prepare(t, driver, claimForManagedCPUs()))
+		allocated, ok := driver.allocationState.GetResourceClaimAllocation(claimUID)
+		require.True(t, ok)
+		require.True(t, allocated.Equals(managed))
+		require.True(t, driver.allocationState.GetSharedCPUs().Equals(reserved))
+	})
+
+	t.Run("shared: still rejects an opaque cpuset that includes a reserved CPU", func(t *testing.T) {
+		driver := createCPUDriverExternalAllocForTest(t, devattr.GROUP_BY_MACHINE, mockCPUInfos_SingleSocket_4CPUS_HT, nil, reserved, newMockCdiMgr(), store.WithSharedReservedCPUs())
+		require.Error(t, prepare(t, driver, claimWithReservedCPU()))
+		_, ok := driver.allocationState.GetResourceClaimAllocation(claimUID)
+		require.False(t, ok)
+	})
+}
+
+func TestNewRejectsOfflineReservedCPUsWhenShared(t *testing.T) {
+	logger := testr.New(t)
+	prov := Providers{
+		CPUInfo: &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT},
+		SysFS:   testSysFS(mockCPUInfos_SingleSocket_4CPUS_HT),
+	}
+	newConfig := func(policy string) *Config {
+		return &Config{
+			DriverName:         testDriverName,
+			NodeName:           testNodeName,
+			ReservedCPUs:       cpuset.New(0, 9),
+			ReservedCPUsPolicy: policy,
+			CPUDeviceMode:      devattr.CPU_DEVICE_MODE_GROUPED,
+			CPUDeviceGroupBy:   devattr.GROUP_BY_SOCKET,
+		}
+	}
+
+	_, err := New(logger, prov, newConfig(driverconfig.ReservedCPUsPolicyShared))
+	require.ErrorContains(t, err, "not all online")
+
+	// Strict mode never hands reserved CPUs to a container, so it keeps tolerating them.
+	_, err = New(logger, prov, newConfig(driverconfig.ReservedCPUsPolicyStrict))
+	require.NoError(t, err)
 }
 
 func TestPrepareResourceClaimsRejectAdminAccess(t *testing.T) {
@@ -2480,7 +2609,7 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 	}
 }
 
-func createCPUDriverExternalAllocForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet, cdiMgr cdiManager) *CPUDriver {
+func createCPUDriverExternalAllocForTest(t *testing.T, groupBy string, cpuInfos []cpuinfo.CPUInfo, initialAllocations map[types.UID]cpuset.CPUSet, reservedCPUs cpuset.CPUSet, cdiMgr cdiManager, opts ...store.Option) *CPUDriver {
 	t.Helper()
 	logger := testr.New(t)
 	driver := &CPUDriver{}
@@ -2494,7 +2623,7 @@ func createCPUDriverExternalAllocForTest(t *testing.T, groupBy string, cpuInfos 
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: cpuInfos}
 	driver.topology.CPUTopology, _ = mockProvider.GetCPUTopology(logger)
 	driver.topology.ReservedCPUs = reservedCPUs
-	driver.allocationState = store.NewAllocationState(driver.topology.CPUTopology, reservedCPUs)
+	driver.allocationState = store.NewAllocationState(driver.topology.CPUTopology, reservedCPUs, opts...)
 	driver.podState = store.NewPodState()
 	driver.cpuAllocator = cpuallocator.NewExternal(testDriverName, driver.topology.ManagedCPUs(), reservedCPUs)
 	for claimUID, cpus := range initialAllocations {
