@@ -344,7 +344,19 @@ type driverConfigValues struct {
 	GroupBy                               string `json:"groupBy,omitempty"`
 	Allocator                             string `json:"allocator,omitempty"`
 	ReservedCPUs                          string `json:"reservedCPUs,omitempty"`
+	ReservedCPUsPolicy                    string `json:"reservedCPUsPolicy,omitempty"`
 	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping,omitempty"`
+}
+
+// expectedSharedPool returns the cpuset the driver assigns to shared containers
+// once allocated is held by exclusive claims: the driver-managed CPUs left over,
+// plus the reserved CPUs when the driver shares them.
+func expectedSharedPool(shareReservedCPUs bool, reservedCPUs, availableCPUs, allocatedCPUs cpuset.CPUSet) cpuset.CPUSet {
+	shared := availableCPUs.Difference(allocatedCPUs)
+	if shareReservedCPUs {
+		shared = shared.Union(reservedCPUs)
+	}
+	return shared
 }
 
 // getDriverConfigValues reads the ConfigMap if the daemonset uses --config=, else falls back to
