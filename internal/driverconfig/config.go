@@ -30,16 +30,26 @@ const (
 	AllocatorCPUManager = "cpumanager"
 )
 
+const (
+	// ReservedCPUsPolicyStrict keeps reservedCPUs out of every container cpuset.
+	ReservedCPUsPolicyStrict = "strict"
+	// ReservedCPUsPolicyShared adds reservedCPUs to the cpuset of containers
+	// without exclusive CPUs. Exclusive claims never get reserved CPUs.
+	ReservedCPUsPolicyShared = "shared"
+)
+
 // Config holds the driver runtime configuration.
 type Config struct {
 	Kubeconfig       string `json:"kubeconfig,omitempty"`
 	HostnameOverride string `json:"hostnameOverride,omitempty"`
 	BindAddress      string `json:"bindAddress,omitempty"`
 	ReservedCPUs     string `json:"reservedCPUs,omitempty"`
-	CPUDeviceMode    string `json:"cpuDeviceMode,omitempty"`
-	GroupBy          string `json:"groupBy,omitempty"`
-	ExposePCIeRoots  bool   `json:"exposePCIeRoots,omitempty"`
-	SysFSOverlay     string `json:"sysfsOverlay,omitempty"`
+	// ReservedCPUsPolicy is one of the ReservedCPUsPolicy* constants.
+	ReservedCPUsPolicy string `json:"reservedCPUsPolicy,omitempty"`
+	CPUDeviceMode      string `json:"cpuDeviceMode,omitempty"`
+	GroupBy            string `json:"groupBy,omitempty"`
+	ExposePCIeRoots    bool   `json:"exposePCIeRoots,omitempty"`
+	SysFSOverlay       string `json:"sysfsOverlay,omitempty"`
 	// KubeletRootDir is the kubelet root directory. The plugin registration and
 	// plugins directories are derived from it as <root>/plugins_registry and
 	// <root>/plugins. Set it when the kubelet --root-dir is not the default
@@ -60,6 +70,7 @@ func (c Config) LogValues() []any {
 		"cpuDeviceMode", c.CPUDeviceMode,
 		"groupBy", c.GroupBy,
 		"reservedCPUs", c.ReservedCPUs,
+		"reservedCPUsPolicy", c.ReservedCPUsPolicy,
 		"hostnameOverride", c.HostnameOverride,
 		"exposePCIeRoots", c.ExposePCIeRoots,
 		"sysfsOverlay", c.SysFSOverlay,
@@ -76,6 +87,7 @@ type dumpConfig struct {
 	HostnameOverride                      string `json:"hostnameOverride"`
 	BindAddress                           string `json:"bindAddress"`
 	ReservedCPUs                          string `json:"reservedCPUs"`
+	ReservedCPUsPolicy                    string `json:"reservedCPUsPolicy"`
 	CPUDeviceMode                         string `json:"cpuDeviceMode"`
 	GroupBy                               string `json:"groupBy"`
 	ExposePCIeRoots                       bool   `json:"exposePCIeRoots"`

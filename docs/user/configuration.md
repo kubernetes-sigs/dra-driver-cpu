@@ -97,12 +97,34 @@ on - is configured through other Helm values, not through this file.
 `reservedCPUs` (string)
 
 - CPUs excluded from allocation and from the `ResourceSlice`, given as a cpuset, e.g.
-  `"0-1"`. This has the same semantics as the kubelet's `static` CPU Manager policy with
+  `"0-1"`. With the default `reservedCPUsPolicy: strict`, this has the same semantics as
+  the kubelet's `static` CPU Manager policy with
   [`strict-cpu-reservation`](https://kubernetes.io/blog/2024/12/16/cpumanager-strict-cpu-reservation/)
   enabled and [`reservedSystemCPUs`](https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/#explicitly-reserved-cpu-list)
   set. For correct CPU accounting, the number of CPUs reserved here should match the sum
   of the kubelet's `kubeReserved` and `systemReserved` settings, so that the kubelet
   subtracts the right number of CPUs from `Node.Status.Allocatable`.
+
+`reservedCPUsPolicy` (string, default: `strict`)
+
+- `strict`: `reservedCPUs` never appear in any container cpuset. A claim that would take
+  every CPU of the shared pool is rejected while containers without a claim are running,
+  because those containers would have no CPU left.
+- `shared`: `reservedCPUs` are added to the cpuset of every container without an exclusive
+  claim, in addition to the driver-managed CPUs that are not claimed. Exclusive claims
+  still never receive reserved CPUs, and the `ResourceSlice` is unchanged. Use this when
+  claims may take every driver-managed CPU on the node and the remaining containers
+  (DaemonSets, sidecars) must keep running on the reserved CPUs. This mirrors the
+  kubelet's `static` policy without `strict-cpu-reservation`.
+- `shared` requires a non-empty `reservedCPUs`; the driver refuses to start otherwise.
+- Switch back from `shared` to `strict` only while no claim holds every driver-managed CPU.
+  Otherwise the restarted driver finds shared containers with no CPU left for them, its
+  initial synchronization with the runtime fails, and it rejects every claim until those
+  claims are released.
+- The driver does not check `Node.Status.Allocatable` under either policy. With
+  `publishNodeAllocatableResourceMapping: true`, the scheduler counts claimed CPUs against
+  node allocatable `cpu`; without it, size claims so that claimed CPUs plus the requests of
+  the other containers fit the node.
 
 `hostnameOverride` (string)
 
@@ -136,6 +158,7 @@ driverConfig:
   cpuDeviceMode: grouped
   groupBy: numanode
   reservedCPUs: "0-3"
+  reservedCPUsPolicy: strict
 ```
 
 #### Versioning and backward compatibility

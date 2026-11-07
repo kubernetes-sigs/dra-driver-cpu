@@ -28,14 +28,14 @@ import (
 	"k8s.io/utils/cpuset"
 )
 
-func newTestAllocationState(logger logr.Logger, allCPUs, reserved cpuset.CPUSet) *AllocationState {
+func newTestAllocationState(logger logr.Logger, allCPUs, reserved cpuset.CPUSet, opts ...Option) *AllocationState {
 	var infos []cpuinfo.CPUInfo
 	for _, cpuID := range allCPUs.UnsortedList() {
 		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
 	}
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
 	topo, _ := mockProvider.GetCPUTopology(logger)
-	return NewAllocationState(topo, reserved)
+	return NewAllocationState(topo, reserved, opts...)
 }
 
 func requirePreparedAllocation(t testing.TB, logger logr.Logger, store *AllocationState, claimUID types.UID, cpus cpuset.CPUSet) {
@@ -267,8 +267,9 @@ func TestAllocationStateGetSharedCPUs(t *testing.T) {
 	store := newTestAllocationState(logger, allCPUs, reserved)
 	available := allCPUs.Difference(reserved)
 
-	// No allocations
+	// No allocations. Without shared reserved CPUs the shared pool is the available pool.
 	require.True(t, store.GetSharedCPUs().Equals(available))
+	require.True(t, store.GetAvailableCPUs().Equals(available))
 
 	// With allocations
 	claimUID1 := types.UID("claim-uid-1")
@@ -276,12 +277,14 @@ func TestAllocationStateGetSharedCPUs(t *testing.T) {
 	requirePreparedAllocation(t, logger, store, claimUID1, cpus1)
 	expectedShared := available.Difference(cpus1)
 	require.True(t, store.GetSharedCPUs().Equals(expectedShared))
+	require.True(t, store.GetAvailableCPUs().Equals(expectedShared))
 
 	claimUID2 := types.UID("claim-uid-2")
 	cpus2 := cpuset.New(3, 4)
 	requirePreparedAllocation(t, logger, store, claimUID2, cpus2)
 	expectedShared = expectedShared.Difference(cpus2)
 	require.True(t, store.GetSharedCPUs().Equals(expectedShared))
+	require.True(t, store.GetAvailableCPUs().Equals(expectedShared))
 }
 
 func TestAllocationStateReserveRepeatedCalls(t *testing.T) {
@@ -341,12 +344,21 @@ func TestAllocationStateReserveSharedPoolGuard(t *testing.T) {
 		name                string
 		cpus                cpuset.CPUSet
 		hasSharedContainers bool
+		opts                []Option
 		wantErr             bool
 	}{
 		{
 			name:                "rejects exhausting pool with shared containers",
 			cpus:                allCPUs,
 			hasSharedContainers: true,
+			wantErr:             true,
+		},
+		{
+			// Sharing reserved CPUs adds nothing to the pool when none are reserved.
+			name:                "rejects exhausting pool with shared containers and shared reserved CPUs but no reserved CPUs",
+			cpus:                allCPUs,
+			hasSharedContainers: true,
+			opts:                []Option{WithSharedReservedCPUs()},
 			wantErr:             true,
 		},
 		{
@@ -363,7 +375,7 @@ func TestAllocationStateReserveSharedPoolGuard(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := newTestAllocationState(logger, allCPUs, cpuset.New())
+			store := newTestAllocationState(logger, allCPUs, cpuset.New(), test.opts...)
 			err := store.Reserve(logger, "claim", test.cpus, test.hasSharedContainers)
 			if test.wantErr {
 				require.ErrorContains(t, err, "would exhaust the shared CPU pool")
@@ -400,6 +412,39 @@ func TestAllocationStateStoreCacheConsistency(t *testing.T) {
 
 	store.Release(logger, "claim-3")
 	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
+}
+
+func TestAllocationStateSharedReservedCPUs(t *testing.T) {
+	logger := testr.New(t)
+	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
+	reserved := cpuset.New(0, 4)
+	managed := allCPUs.Difference(reserved)
+	store := newTestAllocationState(logger, allCPUs, reserved, WithSharedReservedCPUs())
+
+	// Reserved CPUs are shared but never offered to exclusive claims.
+	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
+	require.True(t, store.GetAvailableCPUs().Equals(managed))
+	require.ErrorContains(t, store.Reserve(logger, "claim-reserved", cpuset.New(0, 1), true), "overlapping CPU assignment")
+
+	// A claim can take every managed CPU while shared containers run because
+	// the reserved CPUs keep the shared pool non-empty.
+	require.NoError(t, store.Reserve(logger, "claim-all", managed, true))
+	require.True(t, store.GetSharedCPUs().Equals(reserved))
+	require.True(t, store.GetAvailableCPUs().IsEmpty())
+	require.Equal(t, AllocationSnapshot{
+		AllocatedCPUs:        managed.Size(),
+		AvailableCPUs:        0,
+		ReservedCPUs:         reserved.Size(),
+		ActiveResourceClaims: 1,
+	}, store.Snapshot())
+
+	clone := store.Clone()
+	require.True(t, clone.GetSharedCPUs().Equals(reserved))
+	require.True(t, clone.GetAvailableCPUs().IsEmpty())
+
+	store.Release(logger, "claim-all")
+	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
+	require.True(t, store.GetAvailableCPUs().Equals(managed))
 }
 
 func TestAllocationStateGetReservedCPUs(t *testing.T) {

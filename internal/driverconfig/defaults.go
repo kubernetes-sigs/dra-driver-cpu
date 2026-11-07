@@ -25,10 +25,11 @@ const DefaultKubeletRootDir = "/var/lib/kubelet"
 // Default returns a Config with built-in default values.
 func Default() Config {
 	return Config{
-		BindAddress:    ":8080",
-		CPUDeviceMode:  device.CPU_DEVICE_MODE_GROUPED,
-		GroupBy:        device.GROUP_BY_NUMA_NODE,
-		KubeletRootDir: DefaultKubeletRootDir,
-		Allocator:      AllocatorCPUManager,
+		BindAddress:        ":8080",
+		CPUDeviceMode:      device.CPU_DEVICE_MODE_GROUPED,
+		GroupBy:            device.GROUP_BY_NUMA_NODE,
+		KubeletRootDir:     DefaultKubeletRootDir,
+		Allocator:          AllocatorCPUManager,
+		ReservedCPUsPolicy: ReservedCPUsPolicyStrict,
 	}
 }

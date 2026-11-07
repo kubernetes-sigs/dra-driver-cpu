@@ -24,6 +24,9 @@ import (
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/go-logr/logr/testr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/stretchr/testify/require"
@@ -61,6 +64,33 @@ func TestSynchronizeFailurePreservesState(t *testing.T) {
 	require.True(t, d.allocationState.GetPreparedCPUs().IsEmpty())
 	require.False(t, d.allocationState.IsOwner("full", types.UID(pod.Uid), "app"))
 	require.False(t, d.hasSynchronized)
+}
+
+// The strict counterpart is TestSynchronizeFailurePreservesState: there the same
+// runtime state fails recovery because the shared pool is empty.
+func TestSynchronizeSharedReservedCPUsRecoversExhaustedPool(t *testing.T) {
+	infos := mockCPUInfos_SingleSocket_4CPUS_HT
+	d, err := New(testr.New(t), Providers{CPUInfo: &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}, SysFS: testSysFS(infos)}, &Config{
+		DriverName: testDriverName, NodeName: testNodeName,
+		ReservedCPUs: cpuset.New(0), ReservedCPUsPolicy: driverconfig.ReservedCPUsPolicyShared,
+		CPUDeviceMode: device.CPU_DEVICE_MODE_GROUPED, CPUDeviceGroupBy: device.GROUP_BY_SOCKET,
+	})
+	require.NoError(t, err)
+	managed := cpuset.New(1, 2, 3)
+	d.cdiMgr = newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{"full": managed})
+	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod"}
+	updates, err := d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{
+		{Id: "exclusive", Name: "app", PodSandboxId: pod.Id, Env: []string{"DRA_CPUSET_full=1-3"}},
+		{Id: "shared", Name: "sidecar", PodSandboxId: pod.Id},
+	})
+	require.NoError(t, err)
+	require.True(t, d.hasSynchronized)
+	require.True(t, d.allocationState.GetSharedCPUs().Equals(cpuset.New(0)))
+	require.True(t, d.allocationState.IsOwner("full", types.UID(pod.Uid), "app"))
+	require.ElementsMatch(t, []*api.ContainerUpdate{
+		{ContainerId: "exclusive", Linux: &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "1-3"}}}},
+		{ContainerId: "shared", Linux: &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0"}}}},
+	}, updates)
 }
 
 func TestSynchronizeRetainsPreparedClaimAndOwner(t *testing.T) {

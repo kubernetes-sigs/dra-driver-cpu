@@ -126,7 +126,20 @@ type AllocationState struct {
 	availableCPUs            cpuset.CPUSet
 	reservedCPUs             cpuset.CPUSet
 	preparedCPUs             cpuset.CPUSet
+	shareReservedCPUs        bool
 	resourceClaimAllocations map[types.UID]claimAllocation
+}
+
+// Option configures an AllocationState at construction time.
+type Option func(*AllocationState)
+
+// WithSharedReservedCPUs makes reserved CPUs part of the shared pool handed to
+// containers without exclusive CPUs. Reserved CPUs stay out of the pool of
+// CPUs that exclusive claims can be prepared on.
+func WithSharedReservedCPUs() Option {
+	return func(s *AllocationState) {
+		s.shareReservedCPUs = true
+	}
 }
 
 // AllocationSnapshot is a point-in-time summary of CPU allocation state.
@@ -138,7 +151,7 @@ type AllocationSnapshot struct {
 }
 
 // NewAllocationState creates a new AllocationState.
-func NewAllocationState(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUSet) *AllocationState {
+func NewAllocationState(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUSet, opts ...Option) *AllocationState {
 	cpuIDs := []int{}
 	for cpuID := range cpuTopology.CPUDetails {
 		cpuIDs = append(cpuIDs, cpuID)
@@ -146,12 +159,16 @@ func NewAllocationState(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CP
 	allCPUsSet := cpuset.New(cpuIDs...)
 	availableCPUs := allCPUsSet.Difference(reservedCPUs)
 
-	return &AllocationState{
+	s := &AllocationState{
 		availableCPUs:            availableCPUs,
 		reservedCPUs:             reservedCPUs,
 		preparedCPUs:             cpuset.New(),
 		resourceClaimAllocations: make(map[types.UID]claimAllocation),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Reserve records a prepared claim. Its CPUs remain unavailable
@@ -168,11 +185,10 @@ func (s *AllocationState) Reserve(logger logr.Logger, claimUID types.UID, cpus c
 		}
 		return fmt.Errorf("claim %q is already prepared with CPUs %q (requested %q)", claimUID, allocation.cpus.String(), cpus.String())
 	}
-	sharedCPUs := s.availableCPUs.Difference(s.preparedCPUs)
-	if !cpus.IsSubsetOf(sharedCPUs) {
+	if !cpus.IsSubsetOf(s.availableLocked()) {
 		return fmt.Errorf("claim %q has overlapping CPU assignment %q", claimUID, cpus.String())
 	}
-	if hasSharedContainers && !cpus.IsEmpty() && sharedCPUs.Difference(cpus).IsEmpty() {
+	if hasSharedContainers && !cpus.IsEmpty() && s.sharedLocked(cpus).IsEmpty() {
 		return fmt.Errorf("claim %q would exhaust the shared CPU pool while shared containers are running", claimUID)
 	}
 	s.resourceClaimAllocations[claimUID] = claimAllocation{
@@ -273,11 +289,33 @@ func (s *AllocationState) IsOwner(claimUID types.UID, podUID types.UID, containe
 	return info.owner.Equal(OwnerIdent{PodUID: podUID, ContainerName: containerName})
 }
 
-// GetSharedCPUs returns CPUs available to shared containers.
+// GetAvailableCPUs returns the driver-managed CPUs that are not prepared for
+// any claim. Exclusive claims can only be prepared on these CPUs.
+func (s *AllocationState) GetAvailableCPUs() cpuset.CPUSet {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.availableLocked()
+}
+
+// GetSharedCPUs returns CPUs available to shared containers. With
+// WithSharedReservedCPUs the reserved CPUs are always part of this set.
 func (s *AllocationState) GetSharedCPUs() cpuset.CPUSet {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.sharedLocked(cpuset.New())
+}
+
+func (s *AllocationState) availableLocked() cpuset.CPUSet {
 	return s.availableCPUs.Difference(s.preparedCPUs)
+}
+
+// sharedLocked returns the shared pool as it would be once exclude is prepared.
+func (s *AllocationState) sharedLocked(exclude cpuset.CPUSet) cpuset.CPUSet {
+	shared := s.availableLocked().Difference(exclude)
+	if s.shareReservedCPUs {
+		shared = shared.Union(s.reservedCPUs)
+	}
+	return shared
 }
 
 // GetResourceClaimAllocation returns the cpuset for a given resource claim.
@@ -308,7 +346,7 @@ func (s *AllocationState) Snapshot() AllocationSnapshot {
 	defer s.mu.RUnlock()
 	return AllocationSnapshot{
 		AllocatedCPUs:        s.preparedCPUs.Size(),
-		AvailableCPUs:        s.availableCPUs.Difference(s.preparedCPUs).Size(),
+		AvailableCPUs:        s.availableLocked().Size(),
 		ReservedCPUs:         s.reservedCPUs.Size(),
 		ActiveResourceClaims: len(s.resourceClaimAllocations),
 	}
@@ -327,6 +365,7 @@ func (s *AllocationState) Clone() *AllocationState {
 		availableCPUs:            s.availableCPUs.Clone(),
 		reservedCPUs:             s.reservedCPUs.Clone(),
 		preparedCPUs:             s.preparedCPUs.Clone(),
+		shareReservedCPUs:        s.shareReservedCPUs,
 		resourceClaimAllocations: allocations,
 	}
 }
