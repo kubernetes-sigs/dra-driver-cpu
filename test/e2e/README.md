@@ -97,6 +97,11 @@ honor these settings, where applicable.
   and/or machine mode testing.
   NOTE: the Makefile defaults to "cpumanager" if not set, because a nonempty value is needed internally.
 
+- `DRACPU_E2E_RESERVED_CPUS_POLICY`: (optional, default `strict`): *the Makefile* `ci-kind-setup`
+  target deploys the driver with `driverConfig.reservedCPUsPolicy` set to this value. The tests
+  read the policy back from the driver configuration, so this variable only affects the deployment.
+  `shared` requires a non-empty `DRACPU_E2E_RESERVED_CPUS`.
+
 - `DRACPU_E2E_NODE_ALLOCATABLE_MAPPING`: (optional, default `false`): when `true`, *the Makefile*
   `ci-kind-setup` target deploys the driver with the
   `driverConfig.publishNodeAllocatableResourceMapping: true` option; any other value
