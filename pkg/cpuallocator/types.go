@@ -20,6 +20,11 @@ import (
 	"errors"
 )
 
+const (
+	ModeExternal   = "external"
+	ModeCPUManager = "cpumanager"
+)
+
 var (
 	ErrUnsupportedPreferredCPUs = errors.New("preferred CPUs not supported")
 )

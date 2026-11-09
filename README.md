@@ -6,6 +6,11 @@ This driver provides an alternative to the [CPUManager](https://kubernetes.io/do
 
 ## Getting Started
 
+The driver supports Kubernetes from 1.34 to 1.37.
+See [Supported Kubernetes versions](docs/user/installation.md#compatibility) for full details.
+If run against an older version, the driver may run but break unexpectedly.
+If run against a newer version, the driver may not be able to support newer Kubernetes features.
+
 The recommended way to install the driver is via the provided Helm chart:
 
 ```bash
@@ -91,13 +96,18 @@ See [How it Works](docs/user/how-it-works.md) for the detailed architecture.
 If you run into problems, run the [`dracpu gatherinfo`](docs/user/troubleshooting.md) diagnostic tool and attach its output
 when filing an issue — it collects the CPU topology and driver configuration needed to diagnose most problems quickly.
 
+## Backward compatibility
+
+The project strives to follow the kubernetes best practices for backward compatibility.
+See our [backward compatibility policy](docs/user/upgrade.md#backward-compatibility-policy) for details.
+
 ## Documentation
 
 ### User Documentation
 
 - [Quickstart](docs/user/quickstart.md) - install, run a pod on exclusive CPUs, and verify each step.
 - [Installation](docs/user/installation.md) - compatibility, runtime setup, security, uninstall, and migration from `install.yaml`.
-- [Upgrade](docs/user/upgrade.md) - release-specific upgrade actions. Read this before upgrading the driver!
+- [Upgrade](docs/user/upgrade.md) - backward compatibility policy and release-specific upgrade actions. Read this before upgrading the driver!
 - [Configuration](docs/user/configuration.md) - the config file schema, command-line flags, and kubelet prerequisites.
 - [How it Works](docs/user/how-it-works.md) - driver architecture, CDI, and NRI integration.
 - [Feature Support](docs/user/feature-support.md) - supported/unsupported features.

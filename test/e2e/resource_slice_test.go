@@ -19,7 +19,7 @@ package e2e
 import (
 	"context"
 
-	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	"github.com/onsi/ginkgo/v2"
@@ -142,7 +142,7 @@ var _ = ginkgo.Describe("Resource Attributes", ginkgo.Ordered, ginkgo.ContinueOn
 	})
 
 	ginkgo.It("should publish SMT layouts only for grouped external allocation", func() {
-		expectSMTLayout := cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED && allocator == driverconfig.AllocatorExternal
+		expectSMTLayout := cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED && allocator == cpuallocator.ModeExternal
 
 		for _, slice := range slices {
 			for _, dev := range slice.Spec.Devices {
