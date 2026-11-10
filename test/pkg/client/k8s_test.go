@@ -32,12 +32,14 @@ func TestCreateInjectsTestResourceLabel(t *testing.T) {
 	const namespace = "test"
 
 	testCases := []struct {
-		name   string
-		create func(context.Context, kubernetes.Interface) (metav1.Object, error)
-		read   func(context.Context, kubernetes.Interface) (metav1.Object, error)
+		name     string
+		resource string
+		create   func(context.Context, kubernetes.Interface) (metav1.Object, error)
+		read     func(context.Context, kubernetes.Interface) (metav1.Object, error)
 	}{
 		{
-			name: "pod",
+			name:     "pod",
+			resource: "pods",
 			create: func(ctx context.Context, cs kubernetes.Interface) (metav1.Object, error) {
 				return cs.CoreV1().Pods(namespace).Create(ctx, &corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{Name: "pod"},
@@ -59,7 +61,8 @@ func TestCreateInjectsTestResourceLabel(t *testing.T) {
 			},
 		},
 		{
-			name: "resource claim",
+			name:     "resource claim",
+			resource: "resourceclaims",
 			create: func(ctx context.Context, cs kubernetes.Interface) (metav1.Object, error) {
 				return cs.ResourceV1().ResourceClaims(namespace).Create(ctx, &resourcev1.ResourceClaim{
 					ObjectMeta: metav1.ObjectMeta{Name: "claim"},
@@ -70,7 +73,8 @@ func TestCreateInjectsTestResourceLabel(t *testing.T) {
 			},
 		},
 		{
-			name: "resource claim template",
+			name:     "resource claim template",
+			resource: "resourceclaimtemplates",
 			create: func(ctx context.Context, cs kubernetes.Interface) (metav1.Object, error) {
 				return cs.ResourceV1().ResourceClaimTemplates(namespace).Create(ctx, &resourcev1.ResourceClaimTemplate{
 					ObjectMeta: metav1.ObjectMeta{Name: "template"},
@@ -104,6 +108,23 @@ func TestCreateInjectsTestResourceLabel(t *testing.T) {
 			}
 			if got := stored.GetLabels()[TestResourceLabelKey]; got != TestResourceLabelValue {
 				t.Fatalf("label %q = %q, want %q", TestResourceLabelKey, got, TestResourceLabelValue)
+			}
+
+			refs, err := ListNamespacedObjects(ctx, cs, namespace)
+			if err != nil {
+				t.Fatalf("list labeled objects: %v", err)
+			}
+			if tc.resource == "" {
+				if len(refs) != 0 {
+					t.Fatalf("cluster-scoped object included in namespaced list: %v", refs)
+				}
+				return
+			}
+			if len(refs) != 1 {
+				t.Fatalf("got %v, want one reference to the wrapped create result", refs)
+			}
+			if ref := refs[0]; ref.GVR.Resource != tc.resource || ref.Namespace != namespace || ref.Name != created.GetName() || ref.UID != created.GetUID() {
+				t.Fatalf("unexpected reference to wrapped create result: %+v", ref)
 			}
 		})
 	}

@@ -22,9 +22,57 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	resourcev1client "k8s.io/client-go/kubernetes/typed/resource/v1"
+)
+
+type registeredResource struct {
+	gvr  schema.GroupVersionResource
+	list func(context.Context, kubernetes.Interface, string, metav1.ListOptions) (runtime.Object, error)
+}
+
+type resourceLister[T runtime.Object] interface {
+	List(context.Context, metav1.ListOptions) (T, error)
+}
+
+type resourceRegistration[T runtime.Object, C resourceLister[T]] struct {
+	registeredResource
+	client func(kubernetes.Interface, string) C
+}
+
+func registerResource[T runtime.Object, C resourceLister[T]](gvr schema.GroupVersionResource, client func(kubernetes.Interface, string) C) resourceRegistration[T, C] {
+	return resourceRegistration[T, C]{
+		registeredResource: registeredResource{
+			gvr: gvr,
+			list: func(ctx context.Context, cs kubernetes.Interface, namespace string, opts metav1.ListOptions) (runtime.Object, error) {
+				return client(cs, namespace).List(ctx, opts)
+			},
+		},
+		client: client,
+	}
+}
+
+var (
+	wrappedPods = registerResource[*corev1.PodList](corev1.SchemeGroupVersion.WithResource("pods"),
+		func(cs kubernetes.Interface, namespace string) corev1client.PodInterface {
+			return cs.CoreV1().Pods(namespace)
+		})
+	wrappedResourceClaims = registerResource[*resourcev1.ResourceClaimList](resourcev1.SchemeGroupVersion.WithResource("resourceclaims"),
+		func(cs kubernetes.Interface, namespace string) resourcev1client.ResourceClaimInterface {
+			return cs.ResourceV1().ResourceClaims(namespace)
+		})
+	wrappedResourceClaimTemplates = registerResource[*resourcev1.ResourceClaimTemplateList](resourcev1.SchemeGroupVersion.WithResource("resourceclaimtemplates"),
+		func(cs kubernetes.Interface, namespace string) resourcev1client.ResourceClaimTemplateInterface {
+			return cs.ResourceV1().ResourceClaimTemplates(namespace)
+		})
+	wrappedResources = []registeredResource{
+		wrappedPods.registeredResource,
+		wrappedResourceClaims.registeredResource,
+		wrappedResourceClaimTemplates.registeredResource,
+	}
 )
 
 // labelingClientset adds the test ownership label to the objects the e2e suite
@@ -57,7 +105,7 @@ type labelingCoreV1 struct {
 
 func (c *labelingCoreV1) Pods(namespace string) corev1client.PodInterface {
 	return &labelingPods{
-		PodInterface: c.CoreV1Interface.Pods(namespace),
+		PodInterface: wrappedPods.client(c.owner.Interface, namespace),
 		owner:        c.owner,
 	}
 }
@@ -96,14 +144,14 @@ type labelingResourceV1 struct {
 
 func (c *labelingResourceV1) ResourceClaims(namespace string) resourcev1client.ResourceClaimInterface {
 	return &labelingResourceClaims{
-		ResourceClaimInterface: c.ResourceV1Interface.ResourceClaims(namespace),
+		ResourceClaimInterface: wrappedResourceClaims.client(c.owner.Interface, namespace),
 		owner:                  c.owner,
 	}
 }
 
 func (c *labelingResourceV1) ResourceClaimTemplates(namespace string) resourcev1client.ResourceClaimTemplateInterface {
 	return &labelingResourceClaimTemplates{
-		ResourceClaimTemplateInterface: c.ResourceV1Interface.ResourceClaimTemplates(namespace),
+		ResourceClaimTemplateInterface: wrappedResourceClaimTemplates.client(c.owner.Interface, namespace),
 		owner:                          c.owner,
 	}
 }
