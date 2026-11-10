@@ -19,8 +19,10 @@ package client
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -87,6 +89,18 @@ func NewK8SClientset(options ...Option) (kubernetes.Interface, error) {
 		config, err := NewK8SConfig()
 		if err != nil {
 			return nil, err
+		}
+		if opts.injectCreateLabels {
+			// The audit reads JSON bodies; generated clients default to protobuf.
+			config.ContentType = runtime.ContentTypeJSON
+			config.AcceptContentTypes = runtime.ContentTypeJSON
+			config.Wrap(func(rt http.RoundTripper) http.RoundTripper {
+				return &createLabelAudit{
+					base:  rt,
+					key:   TestResourceLabelKey,
+					value: TestResourceLabelValue,
+				}
+			})
 		}
 		clientset, err = kubernetes.NewForConfig(config)
 		if err != nil {

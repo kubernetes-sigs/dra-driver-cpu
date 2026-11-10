@@ -28,6 +28,11 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
+// These tests use a fake clientset, which implements kubernetes.Interface
+// directly and never goes through the HTTP transport.
+// Therefore we can't test the roudntripper auditor through it, it would
+// require an integration test (e.g. httptest) which is deferred for now
+
 func TestCreateInjectsTestResourceLabel(t *testing.T) {
 	const namespace = "test"
 
