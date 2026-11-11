@@ -52,6 +52,25 @@ and content has become over the time pretty much an unofficial API; we would lik
 path, and CBOR offers a well known, lightweight binary serialization format. Furthermore, `CBOR` was already
 an indirect dependency.
 
+## topology fingerprint
+
+the cpu allocation state persisted in the checkpoint makes sense only in relationship against a given
+the machine CPU topology. Therefore, the checkpoint stores a fingerprint of the CPU topology against
+which the allocation state was computed.
+The fingerprint is not meant to be cryptographically secure nor tamper-resistant, as it is meant
+to detect accidental corruption caused by preconditions being violated.
+The fingerprint is a fixed preamble (magic number + version + reserved space) and then the version-dependent
+signature of the topology data.
+
+The topology we use to compute the fingerprint should be the minimal viable subset of CPU
+topology information we can use to distinguish topologies. Derived fields, or non-topology-altering
+fields should be ignored.
+
+The topology fingerprint match is checked once at startup on loading. When storing checkpoints,
+since the driver does not support hotplug/hotunplug, the fingerprint can be pre-computed once at
+startup and reused. Therefore the fingerprinting hash needs to be reasonably efficient but has not
+strict performance requirements.
+
 ## implementation notes
 
 This section describe the first implementation of the state persistence added in version 0.4.0.
