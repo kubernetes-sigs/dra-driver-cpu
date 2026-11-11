@@ -176,9 +176,9 @@ func TestAllocationStateBind(t *testing.T) {
 			} else {
 				require.Equal(t, createAttemptsBefore+1, manager.createAttempts)
 				want := map[string]claimAllocationCheckpoint{
-					"a":        {CPUs: "0", Owner: ownerIdentCheckpoint{PodUID: "pod", ContainerName: "app"}},
-					"b":        {CPUs: "1", Owner: ownerIdentCheckpoint{PodUID: "pod", ContainerName: "app"}},
-					"sentinel": {CPUs: "2", Owner: ownerIdentCheckpoint{PodUID: "other-pod", ContainerName: "other-app"}},
+					"a":        {CPUs: "0", Owners: []ownerIdentCheckpoint{{PodUID: "pod", ContainerName: "app"}}},
+					"b":        {CPUs: "1", Owners: []ownerIdentCheckpoint{{PodUID: "pod", ContainerName: "app"}}},
+					"sentinel": {CPUs: "2", Owners: []ownerIdentCheckpoint{{PodUID: "other-pod", ContainerName: "other-app"}}},
 				}
 				require.Equal(t, want, readAllocationCheckpoint(t, manager).Payload.ClaimInfo)
 			}

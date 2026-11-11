@@ -51,9 +51,9 @@ type namespacedNameCheckpoint struct {
 }
 
 type claimAllocationCheckpoint struct {
-	Claim namespacedNameCheckpoint `cbor:"claim"`
-	CPUs  string                   `cbor:"cpus"`
-	Owner ownerIdentCheckpoint     `cbor:"owner"`
+	Claim  namespacedNameCheckpoint `cbor:"claim"`
+	CPUs   string                   `cbor:"cpus"`
+	Owners []ownerIdentCheckpoint   `cbor:"owners"`
 }
 
 type allocationStateCheckpointMeta struct {
@@ -137,12 +137,19 @@ func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr chec
 		if claimData.CPUs == "" {
 			return fmt.Errorf("restoring claim %q: malformed claim data cpus=%s", claimIdent, claimData.CPUs)
 		}
-		owner := OwnerIdent{
-			PodUID:        types.UID(claimData.Owner.PodUID),
-			ContainerName: claimData.Owner.ContainerName,
+		// The wire format supports sharing before the runtime does; never discard owners.
+		if len(claimData.Owners) > 1 {
+			return fmt.Errorf("restoring claim %q: %d owners are not supported by this version of the driver", claimIdent, len(claimData.Owners))
 		}
-		if !owner.Vacant() && !owner.Assigned() {
-			return fmt.Errorf("restoring claim %q: claim must be vacant or assigned (current %s)", claimIdent, owner.String())
+		var owner OwnerIdent
+		if len(claimData.Owners) == 1 {
+			owner = OwnerIdent{
+				PodUID:        types.UID(claimData.Owners[0].PodUID),
+				ContainerName: claimData.Owners[0].ContainerName,
+			}
+			if !owner.Assigned() {
+				return fmt.Errorf("restoring claim %q: owner must provide both a pod UID and container name", claimIdent)
+			}
 		}
 		cpus, err := cpuset.Parse(claimData.CPUs)
 		if err != nil {
@@ -199,16 +206,22 @@ func (s *AllocationState) storeStateLocked(logger logr.Logger, checkpointMgr che
 func (s *AllocationState) checkpointLocked() *AllocationStateCheckpoint {
 	claimInfo := make(map[string]claimAllocationCheckpoint, len(s.resourceClaimAllocations))
 	for claimUID, allocation := range s.resourceClaimAllocations {
+		var owners []ownerIdentCheckpoint
+		if !allocation.owner.Vacant() {
+			owners = []ownerIdentCheckpoint{
+				{
+					PodUID:        string(allocation.owner.PodUID),
+					ContainerName: allocation.owner.ContainerName,
+				},
+			}
+		}
 		claimInfo[string(claimUID)] = claimAllocationCheckpoint{
 			Claim: namespacedNameCheckpoint{
 				Namespace: allocation.claim.Namespace,
 				Name:      allocation.claim.Name,
 			},
-			CPUs: allocation.cpus.String(),
-			Owner: ownerIdentCheckpoint{
-				PodUID:        string(allocation.owner.PodUID),
-				ContainerName: allocation.owner.ContainerName,
-			},
+			CPUs:   allocation.cpus.String(),
+			Owners: owners,
 		}
 	}
 	return &AllocationStateCheckpoint{

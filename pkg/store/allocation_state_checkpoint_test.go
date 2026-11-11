@@ -209,9 +209,9 @@ func TestAllocationStateUnbindBatchKeepsStateWhenCheckpointWriteFails(t *testing
 	})
 	require.NoError(t, err)
 	wantClaims := map[string]claimAllocationCheckpoint{
-		"first":    {CPUs: "0", Owner: ownerIdentCheckpoint{PodUID: "pod", ContainerName: "container"}},
-		"second":   {CPUs: "1", Owner: ownerIdentCheckpoint{PodUID: "pod", ContainerName: "container"}},
-		"sentinel": {CPUs: "3", Owner: ownerIdentCheckpoint{PodUID: "other-pod", ContainerName: "other-app"}},
+		"first":    {CPUs: "0", Owners: []ownerIdentCheckpoint{{PodUID: "pod", ContainerName: "container"}}},
+		"second":   {CPUs: "1", Owners: []ownerIdentCheckpoint{{PodUID: "pod", ContainerName: "container"}}},
+		"sentinel": {CPUs: "3", Owners: []ownerIdentCheckpoint{{PodUID: "other-pod", ContainerName: "other-app"}}},
 	}
 	checkpointBefore := readAllocationCheckpoint(t, storage)
 	require.Equal(t, wantClaims, checkpointBefore.Payload.ClaimInfo)
@@ -276,10 +276,10 @@ func TestAllocationStateUnbindBatch(t *testing.T) {
 
 	require.Equal(t, writes+1, storage.createAttempts)
 	require.Equal(t, map[string]claimAllocationCheckpoint{
-		"claim":    {CPUs: "0"},                                                                         // successfully unbound, duplicated entry ignored
-		"claim2":   {CPUs: "1"},                                                                         // successfully unbound
-		"vacant":   {CPUs: "2"},                                                                         // never bound
-		"sentinel": {CPUs: "3", Owner: ownerIdentCheckpoint{PodUID: "pod", ContainerName: "container"}}, // still bound
+		"claim":    {CPUs: "0"},                                                                              // successfully unbound, duplicated entry ignored
+		"claim2":   {CPUs: "1"},                                                                              // successfully unbound
+		"vacant":   {CPUs: "2"},                                                                              // never bound
+		"sentinel": {CPUs: "3", Owners: []ownerIdentCheckpoint{{PodUID: "pod", ContainerName: "container"}}}, // still bound
 	}, readAllocationCheckpoint(t, storage).Payload.ClaimInfo)
 
 	for uid, want := range allocations {
@@ -330,7 +330,7 @@ func TestAllocationStateReleaseKeepsStateWhenCheckpointWriteFailsAfterBindUnbind
 	require.Equal(t, []types.UID{"claim"}, updatedClaims)
 	require.True(t, store.IsOwner("claim", "pod", "container"))
 	require.Equal(t, map[string]claimAllocationCheckpoint{
-		"claim": {CPUs: "0", Owner: ownerIdentCheckpoint{PodUID: "pod", ContainerName: "container"}},
+		"claim": {CPUs: "0", Owners: []ownerIdentCheckpoint{{PodUID: "pod", ContainerName: "container"}}},
 	}, readAllocationCheckpoint(t, storage).Payload.ClaimInfo)
 
 	require.NoError(t, store.Unbind(logger, storage, updatedClaims...))
@@ -532,7 +532,7 @@ func TestAllocationStatePersistsReserveAndRelease(t *testing.T) {
 			uid:     "claim",
 			want: map[string]claimAllocationCheckpoint{
 				"claim":    {CPUs: "0-1"},
-				"sentinel": {CPUs: "3", Owner: ownerIdentCheckpoint{PodUID: "other-pod", ContainerName: "other-app"}},
+				"sentinel": {CPUs: "3", Owners: []ownerIdentCheckpoint{{PodUID: "other-pod", ContainerName: "other-app"}}},
 			},
 			prepared: "0-1,3",
 			shared:   "2",
@@ -542,7 +542,7 @@ func TestAllocationStatePersistsReserveAndRelease(t *testing.T) {
 			bind: true,
 			uid:  "claim",
 			want: map[string]claimAllocationCheckpoint{
-				"sentinel": {CPUs: "3", Owner: ownerIdentCheckpoint{PodUID: "other-pod", ContainerName: "other-app"}},
+				"sentinel": {CPUs: "3", Owners: []ownerIdentCheckpoint{{PodUID: "other-pod", ContainerName: "other-app"}}},
 			},
 			prepared: "3",
 			shared:   "0-2",
@@ -675,10 +675,10 @@ func TestAllocationStateLoadStateDoesNotPartiallyApply(t *testing.T) {
 					Name:      "sentinel",
 				},
 				CPUs: "3",
-				Owner: ownerIdentCheckpoint{
+				Owners: []ownerIdentCheckpoint{{
 					PodUID:        "original-pod",
 					ContainerName: "original-app",
-				},
+				}},
 			},
 			injectedClaimUID: "claim-b",
 			injectedCPUs:     "invalid", // will cause parsing error
@@ -698,10 +698,10 @@ func TestAllocationStateLoadStateDoesNotPartiallyApply(t *testing.T) {
 					Name:      "sentinel",
 				},
 				CPUs: "3",
-				Owner: ownerIdentCheckpoint{
+				Owners: []ownerIdentCheckpoint{{
 					PodUID:        "original-pod",
 					ContainerName: "original-app",
-				},
+				}},
 			},
 			injectedClaimUID: "claim-b",
 			injectedCPUs:     "1-2", // cpu 1 overlaps
@@ -715,10 +715,10 @@ func TestAllocationStateLoadStateDoesNotPartiallyApply(t *testing.T) {
 					Name:      "sentinel",
 				},
 				CPUs: "3",
-				Owner: ownerIdentCheckpoint{
+				Owners: []ownerIdentCheckpoint{{
 					PodUID:        "original-pod",
 					ContainerName: "original-app",
-				},
+				}},
 			},
 			injectedClaimUID: "sentinel", // attempted replace
 			injectedCPUs:     "3",        // overlaps the target's existing sentinel allocation
@@ -749,10 +749,10 @@ func TestAllocationStateLoadStateDoesNotPartiallyApply(t *testing.T) {
 					Name:      tc.injectedClaimUID,
 				},
 				CPUs: tc.injectedCPUs,
-				Owner: ownerIdentCheckpoint{
+				Owners: []ownerIdentCheckpoint{{
 					PodUID:        "other-pod",
 					ContainerName: "other-app",
-				},
+				}},
 			}
 			require.NoError(t, storage.CreateCheckpoint(allocationCheckpointName, &AllocationStateCheckpoint{checkpointData: data}))
 			checkpointBefore := readAllocationCheckpoint(t, storage)
@@ -780,7 +780,7 @@ func TestAllocationStateLoadStateDoesNotPartiallyApply(t *testing.T) {
 					},
 				}
 				require.NoError(t, target.Reserve(logger, noop, sentinel, cpus, false))
-				_, err = target.Bind(logger, noop, types.UID(tc.sentinel.Owner.PodUID), tc.sentinel.Owner.ContainerName, map[types.UID]cpuset.CPUSet{sentinel.UID: cpus})
+				_, err = target.Bind(logger, noop, types.UID(tc.sentinel.Owners[0].PodUID), tc.sentinel.Owners[0].ContainerName, map[types.UID]cpuset.CPUSet{sentinel.UID: cpus})
 				require.NoError(t, err)
 				wantSnapshot = AllocationSnapshot{
 					AllocatedCPUs:        1,
@@ -983,22 +983,40 @@ func TestAllocationStateLoadStateConsistency(t *testing.T) {
 			wantErrText: "CPUs outside the available set: 3",
 		},
 		{
+			name: "empty owner",
+			mutate: func(data *allocationStateCheckpointData) {
+				claim := data.Payload.ClaimInfo["owned"]
+				claim.Owners = []ownerIdentCheckpoint{{}}
+				data.Payload.ClaimInfo["owned"] = claim
+			},
+			wantErrText: "owner must provide both a pod UID and container name",
+		},
+		{
+			name: "multiple owners",
+			mutate: func(data *allocationStateCheckpointData) {
+				claim := data.Payload.ClaimInfo["owned"]
+				claim.Owners = append(claim.Owners, ownerIdentCheckpoint{PodUID: "pod", ContainerName: "sidecar"})
+				data.Payload.ClaimInfo["owned"] = claim
+			},
+			wantErrText: "2 owners are not supported by this version of the driver",
+		},
+		{
 			name: "owner missing pod UID",
 			mutate: func(data *allocationStateCheckpointData) {
 				claim := data.Payload.ClaimInfo["owned"]
-				claim.Owner.PodUID = ""
+				claim.Owners[0].PodUID = ""
 				data.Payload.ClaimInfo["owned"] = claim
 			},
-			wantErrText: "claim must be vacant or assigned",
+			wantErrText: "owner must provide both a pod UID and container name",
 		},
 		{
 			name: "owner missing container name",
 			mutate: func(data *allocationStateCheckpointData) {
 				claim := data.Payload.ClaimInfo["owned"]
-				claim.Owner.ContainerName = ""
+				claim.Owners[0].ContainerName = ""
 				data.Payload.ClaimInfo["owned"] = claim
 			},
-			wantErrText: "claim must be vacant or assigned",
+			wantErrText: "owner must provide both a pod UID and container name",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1027,10 +1045,10 @@ func TestAllocationStateLoadStateConsistency(t *testing.T) {
 								Name:      "owned-claim",
 							},
 							CPUs: "1",
-							Owner: ownerIdentCheckpoint{
+							Owners: []ownerIdentCheckpoint{{
 								PodUID:        "pod",
 								ContainerName: "app",
-							},
+							}},
 						},
 					},
 				},
@@ -1107,10 +1125,10 @@ func TestAllocationStateLoadStateConsistencyClaims(t *testing.T) {
 						Name:      "owned-claim",
 					},
 					CPUs: "1",
-					Owner: ownerIdentCheckpoint{
+					Owners: []ownerIdentCheckpoint{{
 						PodUID:        "pod",
 						ContainerName: "app",
-					},
+					}},
 				},
 			},
 		},
@@ -1358,9 +1376,9 @@ func TestAllocationStateMutationsPreserveCheckpointMetadata(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		name      string
-		mutate    func() error
-		wantOwner ownerIdentCheckpoint
+		name       string
+		mutate     func() error
+		wantOwners []ownerIdentCheckpoint
 	}{
 		{
 			name: "reserve",
@@ -1376,10 +1394,10 @@ func TestAllocationStateMutationsPreserveCheckpointMetadata(t *testing.T) {
 				})
 				return err
 			},
-			wantOwner: ownerIdentCheckpoint{
+			wantOwners: []ownerIdentCheckpoint{{
 				PodUID:        "pod",
 				ContainerName: "app",
-			},
+			}},
 		},
 		{
 			name: "unbind",
@@ -1400,8 +1418,8 @@ func TestAllocationStateMutationsPreserveCheckpointMetadata(t *testing.T) {
 						Namespace: "workloads",
 						Name:      "cpu-claim",
 					},
-					CPUs:  "0",
-					Owner: tc.wantOwner,
+					CPUs:   "0",
+					Owners: tc.wantOwners,
 				},
 			}, data.Payload.ClaimInfo)
 		})
@@ -1482,6 +1500,64 @@ func TestAllocationStateLoadStateReservedCPUsChanged(t *testing.T) {
 			require.Equal(t, tc.current.String(), target.GetReservedCPUs().String())
 			require.Equal(t, writes, manager.createAttempts)
 			require.Equal(t, checkpointBefore, readAllocationCheckpoint(t, manager))
+		})
+	}
+}
+
+func TestAllocationStateCheckpointOwners(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		owners []ownerIdentCheckpoint
+	}{
+		{
+			name: "vacant",
+		},
+		{
+			name:   "empty",
+			owners: []ownerIdentCheckpoint{},
+		},
+		{
+			name: "single container",
+			owners: []ownerIdentCheckpoint{
+				{
+					PodUID:        "pod",
+					ContainerName: "app",
+				},
+			},
+		},
+		{
+			name: "multiple containers",
+			owners: []ownerIdentCheckpoint{
+				{
+					PodUID:        "pod",
+					ContainerName: "app",
+				},
+				{
+					PodUID:        "pod",
+					ContainerName: "sidecar",
+				},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := newRecordingCheckpointManager(t)
+			data := allocationStateCheckpointData{
+				Meta: allocationStateCheckpointMeta{Version: 1},
+				Payload: allocationStateCheckpointPayload{
+					ClaimInfo: map[string]claimAllocationCheckpoint{
+						"first": {
+							CPUs:   "0",
+							Owners: tc.owners,
+						},
+						"second": {
+							CPUs:   "1",
+							Owners: tc.owners,
+						},
+					},
+				},
+			}
+			require.NoError(t, manager.CreateCheckpoint(allocationCheckpointName, &AllocationStateCheckpoint{checkpointData: data}))
+			require.Equal(t, data, readAllocationCheckpoint(t, manager))
 		})
 	}
 }
