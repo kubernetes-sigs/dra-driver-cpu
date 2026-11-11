@@ -39,6 +39,7 @@ const (
 
 var (
 	ErrNilCheckpointManager = errors.New("checkpoint manager is nil")
+	ErrBootIDUnavailable    = errors.New("kernel boot ID unavailable; ensure the host procfs boot_id is readable")
 	ErrTopologyChanged      = errors.New("current machine topology differs from checkpointed machine topology")
 	ErrNodeChanged          = errors.New("current node differs from checkpointed node")
 )
@@ -69,6 +70,7 @@ type allocationStateCheckpointMeta struct {
 	NodeName            string `cbor:"nodeName"`
 	ReservedCPUs        string `cbor:"reservedCPUs"`
 	TopologyFingerprint string `cbor:"topologyFingerprint"`
+	BootID              string `cbor:"bootID"`
 }
 
 type allocationStateCheckpointPayload struct {
@@ -109,12 +111,22 @@ func (s *AllocationState) LoadState(logger logr.Logger, checkpointMgr checkpoint
 }
 
 func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr checkpoint.Manager) error {
+	bootID := checkpointMgr.GetBootID()
+	if bootID == "" {
+		return ErrBootIDUnavailable
+	}
+
 	cp := newAllocationStateCheckpoint()
 	if err := checkpointMgr.GetCheckpoint(allocationCheckpointName, cp); err != nil {
 		if errors.Is(err, checkpoint.ErrCheckpointNotFound) {
 			return nil
 		}
 		return err
+	}
+
+	if cp.checkpointData.Meta.BootID != bootID {
+		logger.Info("ignoring checkpoint because boot IDs differ", "current", bootID, "checkpointed", cp.checkpointData.Meta.BootID)
+		return nil
 	}
 
 	// GetCheckpoint validated the checkpoint transport integrity. Now we need to validate
@@ -220,7 +232,11 @@ func (s *AllocationState) storeStateLocked(logger logr.Logger, checkpointMgr che
 	if checkpointMgr == nil {
 		return ErrNilCheckpointManager
 	}
-	if err := checkpointMgr.CreateCheckpoint(allocationCheckpointName, s.checkpointLocked()); err != nil {
+	bootID := checkpointMgr.GetBootID()
+	if bootID == "" {
+		return ErrBootIDUnavailable
+	}
+	if err := checkpointMgr.CreateCheckpoint(allocationCheckpointName, s.checkpointLocked(bootID)); err != nil {
 		return fmt.Errorf("failed to write allocation state checkpoint: %w", err)
 	}
 	logger.V(6).Info("checkpoint created")
@@ -248,7 +264,7 @@ func makeRequestAllocationCheckpoint(req requestAllocation) requestAllocationChe
 	}
 }
 
-func (s *AllocationState) checkpointLocked() *AllocationStateCheckpoint {
+func (s *AllocationState) checkpointLocked(bootID string) *AllocationStateCheckpoint {
 	claimInfo := make(map[string]claimAllocationCheckpoint, len(s.resourceClaimAllocations))
 	for claimUID, allocation := range s.resourceClaimAllocations {
 		reqs := make(map[string]requestAllocationCheckpoint, len(allocation.requests))
@@ -272,6 +288,7 @@ func (s *AllocationState) checkpointLocked() *AllocationStateCheckpoint {
 				NodeName:            s.nodeName,
 				ReservedCPUs:        s.reservedCPUs.String(),
 				TopologyFingerprint: s.topologyFingerprint,
+				BootID:              bootID,
 			},
 			Payload: allocationStateCheckpointPayload{
 				ClaimInfo: claimInfo,

@@ -243,7 +243,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	if config.CheckpointDir == "" {
 		return nil, fmt.Errorf("missing checkpoint directory")
 	}
-	manager, err := checkpoint.NewManager(config.CheckpointDir)
+	manager, err := checkpoint.NewManager(logger, config.CheckpointDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create checkpoint manager: %w", err)
 	}
