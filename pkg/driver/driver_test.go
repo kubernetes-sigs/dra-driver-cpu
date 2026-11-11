@@ -30,8 +30,10 @@ import (
 	"github.com/go-logr/logr/testr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/stretchr/testify/require"
 	registerapi "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
+	"k8s.io/utils/cpuset"
 )
 
 var noop = checkpoint.NewNOOPManager()
@@ -390,4 +392,30 @@ func TestNewRejectsEmptyCheckpointDir(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "missing checkpoint directory")
 	require.Nil(t, drv)
+}
+
+func TestNewReserveWritesCheckpointToConfiguredDirectory(t *testing.T) {
+	infos := mockCPUInfos_SingleSocket_4CPUS_HT
+
+	providers := Providers{
+		CPUInfo: &cpuinfo.MockCPUInfoProvider{
+			CPUInfos: infos,
+		},
+		SysFS: testSysFS(infos),
+	}
+	drv, err := New(testr.New(t), providers, &Config{
+		DriverName:    testDriverName,
+		NodeName:      testNodeName,
+		CheckpointDir: filepath.Join(t.TempDir(), "checkpoints"),
+	})
+	require.NoError(t, err)
+
+	// use completely bogus bug valid data just to trigger a write
+	require.NoError(t, drv.allocationState.Reserve(testr.New(t), drv.checkpointMgr, store.ClaimIdentifier{UID: "claim-1"}, cpuset.New(0, 1), false))
+	// just verify _something_ was written
+	allocState := filepath.Join(drv.checkpointMgr.CheckpointPath(), "allocation_state")
+	require.FileExists(t, allocState)
+	info, err := os.Stat(allocState)
+	require.NoError(t, err)
+	require.Positive(t, info.Size(), "checkpoint file must not be empty")
 }

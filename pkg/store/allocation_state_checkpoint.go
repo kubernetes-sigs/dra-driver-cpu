@@ -25,6 +25,8 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/cpuset"
 )
 
 const (
@@ -32,20 +34,33 @@ const (
 	allocationCheckpointName         = "allocation_state"
 )
 
-var ErrNilCheckpointManager = errors.New("checkpoint manager is nil")
+var (
+	ErrNilCheckpointManager = errors.New("checkpoint manager is nil")
+	ErrTopologyChanged      = errors.New("current machine topology differs from checkpointed machine topology")
+	ErrNodeChanged          = errors.New("current node differs from checkpointed node")
+)
 
 type ownerIdentCheckpoint struct {
 	PodUID        string `cbor:"podUID"`
 	ContainerName string `cbor:"containerName"`
 }
 
+type namespacedNameCheckpoint struct {
+	Namespace string `cbor:"namespace"`
+	Name      string `cbor:"name"`
+}
+
 type claimAllocationCheckpoint struct {
-	CPUs  string               `cbor:"cpus"`
-	Owner ownerIdentCheckpoint `cbor:"owner"`
+	Claim namespacedNameCheckpoint `cbor:"claim"`
+	CPUs  string                   `cbor:"cpus"`
+	Owner ownerIdentCheckpoint     `cbor:"owner"`
 }
 
 type allocationStateCheckpointMeta struct {
-	Version int `cbor:"version"`
+	Version             int    `cbor:"version"`
+	NodeName            string `cbor:"nodeName"`
+	ReservedCPUs        string `cbor:"reservedCPUs"`
+	TopologyFingerprint string `cbor:"topologyFingerprint"`
 }
 
 type allocationStateCheckpointPayload struct {
@@ -66,6 +81,101 @@ type AllocationStateCheckpoint struct {
 
 var _ checkpoint.Checkpoint = (*AllocationStateCheckpoint)(nil)
 
+func newAllocationStateCheckpoint() *AllocationStateCheckpoint {
+	return &AllocationStateCheckpoint{
+		checkpointData: allocationStateCheckpointData{
+			Payload: allocationStateCheckpointPayload{
+				ClaimInfo: make(map[string]claimAllocationCheckpoint),
+			},
+		},
+	}
+}
+
+func (s *AllocationState) LoadState(logger logr.Logger, checkpointMgr checkpoint.Manager) error {
+	if checkpointMgr == nil {
+		return ErrNilCheckpointManager
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadStateLocked(logger, checkpointMgr)
+}
+
+func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr checkpoint.Manager) error {
+	cp := newAllocationStateCheckpoint()
+	if err := checkpointMgr.GetCheckpoint(allocationCheckpointName, cp); err != nil {
+		if errors.Is(err, checkpoint.ErrCheckpointNotFound) {
+			return nil
+		}
+		return err
+	}
+
+	// GetCheckpoint validated the checkpoint transport integrity. Now we need to validate
+	// the checkpoint semantic validity
+	if cp.checkpointData.Meta.TopologyFingerprint != s.topologyFingerprint {
+		return ErrTopologyChanged
+	}
+	if cp.checkpointData.Meta.NodeName != s.nodeName {
+		return ErrNodeChanged
+	}
+
+	checkpointedCPUs, err := cpuset.Parse(cp.checkpointData.Meta.ReservedCPUs)
+	if err != nil {
+		return fmt.Errorf("cannot recover checkpointed reserved cpus: %w", err)
+	}
+	if !checkpointedCPUs.Equals(s.reservedCPUs) {
+		logger.V(2).Info("reserved CPUs changed since checkpoint",
+			"checkpointedReservedCPUs", checkpointedCPUs.String(),
+			"configuredReservedCPUs", s.reservedCPUs.String())
+	}
+
+	loaded := 0
+	candidate := s.cloneLocked()
+	for claimIdent, claimData := range cp.checkpointData.Payload.ClaimInfo {
+		if claimIdent == "" {
+			return errors.New("restoring claim: missing ident")
+		}
+		if claimData.CPUs == "" {
+			return fmt.Errorf("restoring claim %q: malformed claim data cpus=%s", claimIdent, claimData.CPUs)
+		}
+		owner := OwnerIdent{
+			PodUID:        types.UID(claimData.Owner.PodUID),
+			ContainerName: claimData.Owner.ContainerName,
+		}
+		if !owner.Vacant() && !owner.Assigned() {
+			return fmt.Errorf("restoring claim %q: claim must be vacant or assigned (current %s)", claimIdent, owner.String())
+		}
+		cpus, err := cpuset.Parse(claimData.CPUs)
+		if err != nil {
+			return fmt.Errorf("restoring claim %q (owner=%s): %w", claimIdent, owner.String(), err)
+		}
+		if cpus.IsEmpty() {
+			return fmt.Errorf("restoring claim %q (owner=%s): CPUs are empty", claimIdent, owner.String())
+		}
+		if !cpus.IsSubsetOf(s.availableCPUs) {
+			return fmt.Errorf("restoring claim %q (owner=%s): CPUs outside the available set: %s", claimIdent, owner.String(), claimData.CPUs)
+		}
+		candidate.resourceClaimAllocations[types.UID(claimIdent)] = claimAllocation{
+			claim: types.NamespacedName{
+				Namespace: claimData.Claim.Namespace,
+				Name:      claimData.Claim.Name,
+			},
+			cpus:  cpus,
+			owner: owner,
+		}
+		overlap := candidate.preparedCPUs.Intersection(cpus)
+		if !overlap.IsEmpty() {
+			return fmt.Errorf("restoring claim %q cpus (owner=%s): overlap with already prepared CPUs %s", claimIdent, owner.String(), overlap.String())
+		}
+		candidate.preparedCPUs = candidate.preparedCPUs.Union(cpus)
+		loaded++
+	}
+
+	loadedCPUs := candidate.preparedCPUs.Difference(s.preparedCPUs)
+	s.applyLocked(candidate)
+	logger.V(4).Info("load state", "allocationCount", loaded, "preparedCPUs", loadedCPUs.String())
+	return nil
+}
+
 func (s *AllocationState) StoreState(logger logr.Logger, checkpointMgr checkpoint.Manager) error {
 	if checkpointMgr == nil {
 		return ErrNilCheckpointManager
@@ -82,6 +192,7 @@ func (s *AllocationState) storeStateLocked(logger logr.Logger, checkpointMgr che
 	if err := checkpointMgr.CreateCheckpoint(allocationCheckpointName, s.checkpointLocked()); err != nil {
 		return fmt.Errorf("failed to write allocation state checkpoint: %w", err)
 	}
+	logger.V(6).Info("checkpoint created")
 	return nil
 }
 
@@ -89,6 +200,10 @@ func (s *AllocationState) checkpointLocked() *AllocationStateCheckpoint {
 	claimInfo := make(map[string]claimAllocationCheckpoint, len(s.resourceClaimAllocations))
 	for claimUID, allocation := range s.resourceClaimAllocations {
 		claimInfo[string(claimUID)] = claimAllocationCheckpoint{
+			Claim: namespacedNameCheckpoint{
+				Namespace: allocation.claim.Namespace,
+				Name:      allocation.claim.Name,
+			},
 			CPUs: allocation.cpus.String(),
 			Owner: ownerIdentCheckpoint{
 				PodUID:        string(allocation.owner.PodUID),
@@ -99,7 +214,10 @@ func (s *AllocationState) checkpointLocked() *AllocationStateCheckpoint {
 	return &AllocationStateCheckpoint{
 		checkpointData: allocationStateCheckpointData{
 			Meta: allocationStateCheckpointMeta{
-				Version: allocationStateCheckpointVersion,
+				Version:             allocationStateCheckpointVersion,
+				NodeName:            s.nodeName,
+				ReservedCPUs:        s.reservedCPUs.String(),
+				TopologyFingerprint: s.topologyFingerprint,
 			},
 			Payload: allocationStateCheckpointPayload{
 				ClaimInfo: claimInfo,

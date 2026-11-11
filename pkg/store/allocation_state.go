@@ -24,6 +24,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/cpuset"
 )
@@ -79,6 +80,14 @@ type OwnerIdent struct {
 	ContainerName string
 }
 
+func (oi OwnerIdent) String() string {
+	return string(oi.PodUID) + "/" + oi.ContainerName
+}
+
+func (oi OwnerIdent) Assigned() bool {
+	return oi.PodUID != types.UID("") && oi.ContainerName != ""
+}
+
 func (oi OwnerIdent) Vacant() bool {
 	return oi.PodUID == types.UID("") && oi.ContainerName == ""
 }
@@ -88,8 +97,28 @@ func (oi OwnerIdent) Equal(ident OwnerIdent) bool {
 }
 
 type claimAllocation struct {
+	claim types.NamespacedName
 	cpus  cpuset.CPUSet
 	owner OwnerIdent
+}
+
+type ClaimIdentifier struct {
+	UID   types.UID
+	Claim types.NamespacedName
+}
+
+func ClaimIdentifierFrom(claim *resourceapi.ResourceClaim) ClaimIdentifier {
+	return ClaimIdentifier{
+		UID: claim.UID,
+		Claim: types.NamespacedName{
+			Namespace: claim.Namespace,
+			Name:      claim.Name,
+		},
+	}
+}
+
+func (ci ClaimIdentifier) Valid() bool {
+	return ci.UID != ""
 }
 
 // Acquire returns an owned copy if the allocation has no owner.
@@ -98,6 +127,7 @@ func (ca claimAllocation) Acquire(owner OwnerIdent) (claimAllocation, bool) {
 		return claimAllocation{}, false
 	}
 	return claimAllocation{
+		claim: ca.claim,
 		cpus:  ca.cpus.Clone(),
 		owner: owner,
 	}, true
@@ -106,14 +136,16 @@ func (ca claimAllocation) Acquire(owner OwnerIdent) (claimAllocation, bool) {
 // Release returns a copy without ownership, retaining its CPUs.
 func (ca claimAllocation) Release() claimAllocation {
 	return claimAllocation{
-		cpus: ca.cpus.Clone(),
+		claim: ca.claim,
+		cpus:  ca.cpus.Clone(),
 		// intentional empty owner
 	}
 }
 
 func (ca claimAllocation) Clone() claimAllocation {
 	return claimAllocation{
-		cpus: ca.cpus.Clone(),
+		claim: ca.claim,
+		cpus:  ca.cpus.Clone(),
 		owner: OwnerIdent{
 			PodUID:        ca.owner.PodUID,
 			ContainerName: ca.owner.ContainerName,
@@ -124,10 +156,12 @@ func (ca claimAllocation) Clone() claimAllocation {
 // AllocationState is the single source of truth for CPU allocations.
 type AllocationState struct {
 	mu                       sync.RWMutex
+	nodeName                 string
 	availableCPUs            cpuset.CPUSet
 	reservedCPUs             cpuset.CPUSet
 	preparedCPUs             cpuset.CPUSet
 	resourceClaimAllocations map[types.UID]claimAllocation
+	topologyFingerprint      string
 }
 
 // AllocationSnapshot is a point-in-time summary of CPU allocation state.
@@ -138,8 +172,8 @@ type AllocationSnapshot struct {
 	ActiveResourceClaims int
 }
 
-// NewAllocationState creates a new AllocationState.
-func NewAllocationState(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUSet) *AllocationState {
+// NewAllocationState creates a new AllocationState bound to a node.
+func NewAllocationState(nodeName string, cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CPUSet) *AllocationState {
 	cpuIDs := []int{}
 	for cpuID := range cpuTopology.CPUDetails {
 		cpuIDs = append(cpuIDs, cpuID)
@@ -148,10 +182,12 @@ func NewAllocationState(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CP
 	availableCPUs := allCPUsSet.Difference(reservedCPUs)
 
 	return &AllocationState{
+		nodeName:                 nodeName,
 		availableCPUs:            availableCPUs,
 		reservedCPUs:             reservedCPUs,
 		preparedCPUs:             cpuset.New(),
 		resourceClaimAllocations: make(map[types.UID]claimAllocation),
+		topologyFingerprint:      MakeTopologyFingerprint(*cpuTopology),
 	}
 }
 
@@ -159,32 +195,37 @@ func NewAllocationState(cpuTopology *cpuinfo.CPUTopology, reservedCPUs cpuset.CP
 // to shared containers and other exclusive claims until Unprepare. When shared
 // containers are present, the reservation must leave at least one CPU in the
 // shared pool because NRI cannot represent an empty CPUSet.
-func (s *AllocationState) Reserve(logger logr.Logger, checkpointMgr checkpoint.Manager, claimUID types.UID, cpus cpuset.CPUSet, hasSharedContainers bool) error {
+func (s *AllocationState) Reserve(logger logr.Logger, checkpointMgr checkpoint.Manager, claim ClaimIdentifier, cpus cpuset.CPUSet, hasSharedContainers bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if allocation, ok := s.resourceClaimAllocations[claimUID]; ok {
+	if !claim.Valid() {
+		return fmt.Errorf("invalid claim identifier %+v", claim)
+	}
+	if cpus.IsEmpty() {
+		return fmt.Errorf("claim %q has no CPUs", claim.UID)
+	}
+	if allocation, ok := s.resourceClaimAllocations[claim.UID]; ok {
 		if allocation.cpus.Equals(cpus) {
 			return nil
 		}
-		return fmt.Errorf("claim %q is already prepared with CPUs %q (requested %q)", claimUID, allocation.cpus.String(), cpus.String())
+		return fmt.Errorf("claim %q is already prepared with CPUs %q (requested %q)", claim.UID, allocation.cpus.String(), cpus.String())
 	}
 	sharedCPUs := s.availableCPUs.Difference(s.preparedCPUs)
 	if !cpus.IsSubsetOf(sharedCPUs) {
-		return fmt.Errorf("claim %q has overlapping CPU assignment %q", claimUID, cpus.String())
+		return fmt.Errorf("claim %q has overlapping CPU assignment %q", claim.UID, cpus.String())
 	}
-	if hasSharedContainers && !cpus.IsEmpty() && sharedCPUs.Difference(cpus).IsEmpty() {
-		return fmt.Errorf("claim %q would exhaust the shared CPU pool while shared containers are running", claimUID)
+	if hasSharedContainers && sharedCPUs.Difference(cpus).IsEmpty() {
+		return fmt.Errorf("claim %q would exhaust the shared CPU pool while shared containers are running", claim.UID)
 	}
 	candidate := s.cloneLocked()
-	candidate.resourceClaimAllocations[claimUID] = claimAllocation{
-		cpus: cpus,
+	candidate.resourceClaimAllocations[claim.UID] = claimAllocation{
+		claim: claim.Claim,
+		cpus:  cpus,
 	}
 	candidate.preparedCPUs = candidate.preparedCPUs.Union(cpus)
-	if err := candidate.storeStateLocked(logger, checkpointMgr); err != nil {
+	if err := s.commitLocked(logger, checkpointMgr, candidate); err != nil {
 		return err
 	}
-	s.resourceClaimAllocations = candidate.resourceClaimAllocations
-	s.preparedCPUs = candidate.preparedCPUs
 	logger.Info("reserved allocation for resource claim", "cpus", cpus.String())
 	return nil
 }
@@ -199,11 +240,9 @@ func (s *AllocationState) Release(logger logr.Logger, checkpointMgr checkpoint.M
 	}
 	candidate := s.cloneLocked()
 	candidate.removeLocked(claimUID)
-	if err := candidate.storeStateLocked(logger, checkpointMgr); err != nil {
+	if err := s.commitLocked(logger, checkpointMgr, candidate); err != nil {
 		return err
 	}
-	s.resourceClaimAllocations = candidate.resourceClaimAllocations
-	s.preparedCPUs = candidate.preparedCPUs
 	logger.Info("removed allocation for resource claim", "cpus", allocation.cpus.String())
 	return nil
 }
@@ -218,6 +257,9 @@ func (s *AllocationState) Bind(logger logr.Logger, checkpointMgr checkpoint.Mana
 	curIdent := OwnerIdent{
 		PodUID:        podUID,
 		ContainerName: containerName,
+	}
+	if !curIdent.Assigned() {
+		return nil, fmt.Errorf("invalid claim owner podUID=%q containerName=%q: provide both a pod UID and container name", podUID, containerName)
 	}
 
 	s.mu.Lock()
@@ -260,10 +302,9 @@ func (s *AllocationState) Bind(logger logr.Logger, checkpointMgr checkpoint.Mana
 	if len(updatedClaims) == 0 {
 		return updatedClaims, nil
 	}
-	if err := candidate.storeStateLocked(logger, checkpointMgr); err != nil {
+	if err := s.commitLocked(logger, checkpointMgr, candidate); err != nil {
 		return nil, err
 	}
-	s.resourceClaimAllocations = candidate.resourceClaimAllocations
 	for _, claimUID := range updatedClaims {
 		logger.V(4).Info("claim bound", "claimUID", claimUID)
 	}
@@ -293,10 +334,9 @@ func (s *AllocationState) Unbind(logger logr.Logger, checkpointMgr checkpoint.Ma
 	if !changed {
 		return nil
 	}
-	if err := candidate.storeStateLocked(logger, checkpointMgr); err != nil {
+	if err := s.commitLocked(logger, checkpointMgr, candidate); err != nil {
 		return err
 	}
-	s.resourceClaimAllocations = candidate.resourceClaimAllocations
 	for claimUID, oldOwner := range previousOwners {
 		logger.V(4).Info("claim unbound", "claimUID", claimUID, "previousPodUID", oldOwner.PodUID, "previousContainerName", oldOwner.ContainerName)
 	}
@@ -372,11 +412,26 @@ func (s *AllocationState) cloneLocked() *AllocationState {
 	}
 
 	return &AllocationState{
+		nodeName:                 s.nodeName,
 		availableCPUs:            s.availableCPUs.Clone(),
 		reservedCPUs:             s.reservedCPUs.Clone(),
 		preparedCPUs:             s.preparedCPUs.Clone(),
 		resourceClaimAllocations: allocations,
+		topologyFingerprint:      s.topologyFingerprint,
 	}
+}
+
+func (s *AllocationState) commitLocked(logger logr.Logger, checkpointMgr checkpoint.Manager, candidate *AllocationState) error {
+	if err := candidate.storeStateLocked(logger, checkpointMgr); err != nil {
+		return err
+	}
+	s.applyLocked(candidate)
+	return nil
+}
+
+func (s *AllocationState) applyLocked(candidate *AllocationState) {
+	s.resourceClaimAllocations = candidate.resourceClaimAllocations
+	s.preparedCPUs = candidate.preparedCPUs
 }
 
 func (s *AllocationState) removeLocked(claimUID types.UID) {
