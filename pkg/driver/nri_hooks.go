@@ -135,7 +135,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				// the shared-pool guard applies only to new reservations.
 				// TODO: split CDI env per request; until then "" represents the entire claim.
 				// See: https://github.com/kubernetes-sigs/dra-driver-cpu/issues/389
-				if err := allocationState.Reserve(caLogger, checkpointMgr, uid, map[string]cpuset.CPUSet{"": cpus}, false); err != nil {
+				if err := allocationState.Reserve(caLogger, checkpointMgr, store.ClaimIdentifier{UID: uid}, map[string]cpuset.CPUSet{"": cpus}, false); err != nil {
 					return nil, err
 				}
 

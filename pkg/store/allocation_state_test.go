@@ -40,12 +40,12 @@ func newTestAllocationState(t *testing.T, logger logr.Logger, allCPUs, reserved 
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
 	topo, err := mockProvider.GetCPUTopology(logger)
 	require.NoError(t, err) // if fail there's a so severe bug that we should be loud
-	return NewAllocationState(topo, reserved)
+	return NewAllocationState("testNode", topo, reserved)
 }
 
 func requirePreparedAllocation(t testing.TB, logger logr.Logger, store *AllocationState, claimUID types.UID, cpus cpuset.CPUSet) {
 	t.Helper()
-	require.NoError(t, store.Reserve(logger, noop, claimUID, map[string]cpuset.CPUSet{"": cpus}, false))
+	require.NoError(t, store.Reserve(logger, noop, ClaimIdentifier{UID: claimUID}, map[string]cpuset.CPUSet{"": cpus}, false))
 }
 
 func TestAllocationStatePreparedLifecycle(t *testing.T) {
@@ -55,9 +55,9 @@ func TestAllocationStatePreparedLifecycle(t *testing.T) {
 	claimCPUs := cpuset.New(0, 1)
 	store := newTestAllocationState(t, logger, allCPUs, cpuset.New())
 
-	require.NoError(t, store.Reserve(logger, noop, claimUID, map[string]cpuset.CPUSet{"": claimCPUs}, false))
+	require.NoError(t, store.Reserve(logger, noop, ClaimIdentifier{UID: claimUID}, map[string]cpuset.CPUSet{"": claimCPUs}, false))
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
-	require.Error(t, store.Reserve(logger, noop, "claim-2", map[string]cpuset.CPUSet{"": claimCPUs}, false))
+	require.Error(t, store.Reserve(logger, noop, ClaimIdentifier{UID: "claim-2"}, map[string]cpuset.CPUSet{"": claimCPUs}, false))
 
 	updatedClaims, err := store.Bind(logger, noop, "pod", "app", map[types.UID]cpuset.CPUSet{claimUID: claimCPUs})
 	require.NoError(t, err)
@@ -268,7 +268,7 @@ func TestAllocationStateBind(t *testing.T) {
 				PodUID:        "other-pod",
 				ContainerName: "other-app",
 			}
-			require.NoError(t, store.Reserve(logger, manager, "sentinel", map[string]cpuset.CPUSet{"": cpuset.New(4)}, false))
+			require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: "sentinel"}, map[string]cpuset.CPUSet{"": cpuset.New(4)}, false))
 			_, err := store.Bind(logger, manager, sentinelOwner.PodUID, sentinelOwner.ContainerName, map[types.UID]cpuset.CPUSet{"sentinel": cpuset.New(4)})
 			require.NoError(t, err)
 
@@ -287,9 +287,9 @@ func TestAllocationStateBind(t *testing.T) {
 			}
 
 			for uid, cpus := range allocations {
-				require.NoError(t, store.Reserve(logger, manager, uid, map[string]cpuset.CPUSet{"": cpus}, false))
+				require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: uid}, map[string]cpuset.CPUSet{"": cpus}, false))
 			}
-			require.NoError(t, store.Reserve(logger, manager, "c", map[string]cpuset.CPUSet{"x": cpuset.New(2), "y": cpuset.New(3)}, false))
+			require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: "c"}, map[string]cpuset.CPUSet{"x": cpuset.New(2), "y": cpuset.New(3)}, false))
 			if tc.initial != nil {
 				_, err := store.Bind(logger, manager, tc.initial.PodUID, tc.initial.ContainerName, map[types.UID]cpuset.CPUSet{"b": cpuset.New(1)})
 				require.NoError(t, err)
@@ -519,13 +519,13 @@ func TestAllocationStateReserveRepeatedCalls(t *testing.T) {
 			if tc.firstRequests != nil {
 				first = tc.firstRequests
 			}
-			require.NoError(t, store.Reserve(logger, manager, claimUID, first, false))
+			require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: claimUID}, first, false))
 
 			// overloading the test to check the write invariant
 			before := readAllocationCheckpoint(t, manager)
 			writes := manager.createAttempts
 
-			err := store.Reserve(logger, manager, claimUID, map[string]cpuset.CPUSet{"": tc.secondCPUs}, false)
+			err := store.Reserve(logger, manager, ClaimIdentifier{UID: claimUID}, map[string]cpuset.CPUSet{"": tc.secondCPUs}, false)
 			if tc.expectError {
 				require.Error(t, err)
 			} else {
@@ -593,7 +593,7 @@ func TestAllocationStateReserveSharedPoolGuard(t *testing.T) {
 			store := newTestAllocationState(t, logger, allCPUs, cpuset.New())
 
 			// add a sentinel which pre-exists and is not mutated by the reserve under tests, so we check no unrelated overwrites
-			require.NoError(t, store.Reserve(logger, manager, "sentinel", map[string]cpuset.CPUSet{"": allCPUs.Difference(claimedCPUs)}, false))
+			require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: "sentinel"}, map[string]cpuset.CPUSet{"": allCPUs.Difference(claimedCPUs)}, false))
 			stateBefore := readAllocationCheckpoint(t, manager)
 			writesBefore := manager.createAttempts
 
@@ -602,11 +602,12 @@ func TestAllocationStateReserveSharedPoolGuard(t *testing.T) {
 			if requests == nil {
 				requests = map[string]cpuset.CPUSet{"": test.cpus}
 			}
-			err := store.Reserve(logger, manager, "claim", requests, test.hasSharedContainers)
-
+			err := store.Reserve(logger, manager, ClaimIdentifier{UID: "claim"}, requests, test.hasSharedContainers)
 			// TODO: verification gets very complex very fast. We should probably split the tests in happy and error path to simplify
 			if test.wantErr != "" {
 				require.ErrorContains(t, err, test.wantErr)
+				require.Equal(t, writesBefore, manager.createAttempts)
+				require.Equal(t, stateBefore, readAllocationCheckpoint(t, manager))
 				_, ok := store.GetResourceClaimAllocation("claim")
 				require.False(t, ok)
 				require.True(t, store.GetSharedCPUs().Equals(claimedCPUs))
