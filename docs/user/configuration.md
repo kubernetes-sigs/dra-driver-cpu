@@ -186,6 +186,12 @@ the pool and a retry would only re-release a claim that is already gone.
   it is recommended to store the checkpoint on a tmpfs volume (e.g. under `/run`).
 - In addition to the persistence recommendations, storing the checkpoint on a
   tmpfs volume is also recommended for best performances.
+- Checkpoints record the kernel boot ID.
+  The loader implementation ignores checkpoints from a different boot.
+  **NOTE**: Checkpoint restoration is not yet wired into driver startup.
+- The driver requires a readable, valid `/proc/sys/kernel/random/boot_id` and
+  fails to start if it is unavailable or invalid. You may use the environment
+  variable `HOST_ROOT` to override the path.
 
 #### Example
 

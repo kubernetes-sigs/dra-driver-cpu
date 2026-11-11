@@ -26,8 +26,14 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
+	"github.com/go-logr/logr"
+	"github.com/google/uuid"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"k8s.io/utils/dump"
 )
 
@@ -52,9 +58,13 @@ type Manager interface {
 	// CheckpointPath returns the directory backing the manager, or an empty
 	// string when checkpoint persistence is disabled.
 	CheckpointPath() string
+	// GetBootID returns the kernel boot ID, or an empty string if it could not be read.
+	GetBootID() string
 }
 
-type noopImpl struct{}
+type noopImpl struct {
+	bootID string
+}
 
 func (mgr noopImpl) CreateCheckpoint(checkpointKey string, checkpoint Checkpoint) error {
 	return nil
@@ -76,24 +86,50 @@ func (mgr noopImpl) CheckpointPath() string {
 	return ""
 }
 
+func (mgr noopImpl) GetBootID() string {
+	return mgr.bootID
+}
+
 func NewNOOPManager() Manager {
-	return noopImpl{}
+	return noopImpl{
+		bootID: uuid.New().String(),
+	}
 }
 
 type impl struct {
-	path  string
-	store *fileStore
-	mutex sync.Mutex
+	path   string
+	bootID string
+	store  *fileStore
+	mutex  sync.Mutex
 }
 
 // NewManager returns a new instance of a checkpoint manager.
-func NewManager(checkpointDir string) (Manager, error) {
+func NewManager(logger logr.Logger, checkpointDir string) (Manager, error) {
+	bootIDPath := filepath.Join(cpuinfo.ProcfsRoot(), "sys", "kernel", "random", "boot_id")
+	data, err := os.ReadFile(bootIDPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read the kernel bootID in %q: %w", bootIDPath, err)
+	}
+	bootID := strings.TrimSpace(string(data))
+	if err := uuid.Validate(bootID); err != nil {
+		return nil, fmt.Errorf("invalid kernel boot ID in %q: %w", bootIDPath, err)
+	}
+	logger.Info("read kernel bootID", "value", bootID)
+
 	store, err := newFileStore(checkpointDir)
 	if err != nil {
 		return nil, err
 	}
 
-	return &impl{path: checkpointDir, store: store}, nil
+	return &impl{
+		bootID: bootID,
+		path:   checkpointDir,
+		store:  store,
+	}, nil
+}
+
+func (manager *impl) GetBootID() string {
+	return manager.bootID
 }
 
 // CreateCheckpoint persists checkpoint in CheckpointStore.
