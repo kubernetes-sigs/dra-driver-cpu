@@ -59,6 +59,10 @@ func (m failingCheckpointManager) CheckpointPath() string {
 	return ""
 }
 
+func (m failingCheckpointManager) GetBootID() string {
+	return "67318ffa-61f1-4450-8e1d-2a8e6688c683" // random valid UUIDv4. No special meaning.
+}
+
 type recordingCheckpointManager struct {
 	checkpoint.Manager
 	createAttempts int
@@ -68,7 +72,7 @@ type recordingCheckpointManager struct {
 
 func newRecordingCheckpointManager(t *testing.T) *recordingCheckpointManager {
 	t.Helper()
-	manager, err := checkpoint.NewManager(t.TempDir())
+	manager, err := checkpoint.NewManager(testr.New(t), t.TempDir())
 	require.NoError(t, err)
 	return &recordingCheckpointManager{Manager: manager}
 }
@@ -1029,6 +1033,7 @@ func TestAllocationStateLoadStateConsistency(t *testing.T) {
 					NodeName:            "test-node-load-state",
 					ReservedCPUs:        "3",
 					TopologyFingerprint: MakeTopologyFingerprint(*topology),
+					BootID:              storage.GetBootID(),
 				},
 				Payload: allocationStateCheckpointPayload{
 					ClaimInfo: map[string]claimAllocationCheckpoint{
@@ -1109,6 +1114,7 @@ func TestAllocationStateLoadStateConsistencyClaims(t *testing.T) {
 			NodeName:            "test-node-load-claims",
 			ReservedCPUs:        "3",
 			TopologyFingerprint: MakeTopologyFingerprint(*topology),
+			BootID:              storage.GetBootID(),
 		},
 		Payload: allocationStateCheckpointPayload{
 			ClaimInfo: map[string]claimAllocationCheckpoint{
@@ -1220,6 +1226,7 @@ func TestAllocationStateLoadStateReadFailure(t *testing.T) {
 			NodeName:            "read-fail",
 			ReservedCPUs:        "3",
 			TopologyFingerprint: MakeTopologyFingerprint(*topology),
+			BootID:              storage.GetBootID(),
 		},
 		Payload: allocationStateCheckpointPayload{
 			ClaimInfo: map[string]claimAllocationCheckpoint{},
@@ -1323,6 +1330,7 @@ func TestAllocationStateLoadStateChecksum(t *testing.T) {
 			NodeName:            "load-node",
 			ReservedCPUs:        "3",
 			TopologyFingerprint: MakeTopologyFingerprint(*topology),
+			BootID:              storage.GetBootID(),
 		},
 		Payload: allocationStateCheckpointPayload{
 			ClaimInfo: map[string]claimAllocationCheckpoint{},
@@ -1373,6 +1381,7 @@ func TestAllocationStateMutationsPreserveCheckpointMetadata(t *testing.T) {
 		NodeName:            "metadata-node",
 		ReservedCPUs:        "3",
 		TopologyFingerprint: MakeTopologyFingerprint(*topology),
+		BootID:              storage.GetBootID(),
 	}
 
 	for _, tc := range []struct {
@@ -1560,4 +1569,101 @@ func TestAllocationStateCheckpointOwners(t *testing.T) {
 			require.Equal(t, data, readAllocationCheckpoint(t, manager))
 		})
 	}
+}
+
+type unavailableBootIDCheckpointManager struct {
+	checkpoint.Manager
+}
+
+func (m unavailableBootIDCheckpointManager) GetBootID() string {
+	return ""
+}
+
+func TestAllocationStateLoadRejectsUnavailableBootID(t *testing.T) {
+	logger := testr.New(t)
+	manager := unavailableBootIDCheckpointManager{
+		Manager: newRecordingCheckpointManager(t),
+	}
+	state := newTestAllocationState(t, logger, cpuset.New(0, 1, 2, 3), cpuset.New())
+	before := state.Snapshot()
+
+	require.ErrorIs(t, state.LoadState(logger, manager), ErrBootIDUnavailable)
+	require.Equal(t, before, state.Snapshot())
+}
+
+func TestAllocationStateStoreRejectsUnavailableBootID(t *testing.T) {
+	logger := testr.New(t)
+	manager := unavailableBootIDCheckpointManager{
+		Manager: newRecordingCheckpointManager(t),
+	}
+	state := newTestAllocationState(t, logger, cpuset.New(0, 1, 2, 3), cpuset.New())
+
+	require.ErrorIs(t, state.StoreState(logger, manager), ErrBootIDUnavailable)
+	files, err := manager.ListCheckpoints()
+	require.NoError(t, err)
+	require.Empty(t, files)
+}
+
+func TestAllocationStateLoadStateSameBootID(t *testing.T) {
+	const initialBootID = "72f32830-fd68-4d12-9986-7d7350e65208" // random valid UUIDv4, no special meaning
+
+	logger := testr.New(t)
+
+	root := t.TempDir()
+	t.Setenv("HOST_ROOT", root)
+	bootIDPath := filepath.Join(root, "proc", "sys", "kernel", "random", "boot_id")
+	require.NoError(t, os.MkdirAll(filepath.Dir(bootIDPath), 0o755))
+	require.NoError(t, os.WriteFile(bootIDPath, []byte(initialBootID+"\n"), 0o600))
+
+	dir := t.TempDir()
+	writer, err := checkpoint.NewManager(logger, dir)
+	require.NoError(t, err)
+	topology := newLoadStateTestTopology()
+	source := NewAllocationState("boot-test", topology, cpuset.New(3))
+	require.NoError(t, source.Reserve(logger, writer, ClaimIdentifier{UID: "claim"}, cpuset.New(0, 1), false))
+	require.Equal(t, initialBootID, readAllocationCheckpoint(t, writer).Meta.BootID)
+
+	// fake driver restaret
+	reader, err := checkpoint.NewManager(logger, dir)
+	require.NoError(t, err)
+	require.Equal(t, initialBootID, reader.GetBootID())
+	target := NewAllocationState("boot-test", topology, cpuset.New(3))
+	require.NoError(t, target.LoadState(logger, reader))
+	cpus, found := target.GetResourceClaimAllocation("claim")
+	require.True(t, found)
+	require.Equal(t, "0-1", cpus.String())
+	require.Equal(t, source.Snapshot(), target.Snapshot())
+	require.Equal(t, "0-1", target.GetPreparedCPUs().String())
+	require.Equal(t, "2", target.GetSharedCPUs().String())
+}
+
+func TestAllocationStateLoadStateDifferentBootID(t *testing.T) {
+	const initialBootID = "f8425f61-6408-4e07-8dfe-717b60b682b6" // random valid UUIDv4, no special meaning
+	const currentBootID = "ee87c745-2600-4f09-a297-b003a6d28016" // ditto
+
+	logger := testr.New(t)
+	root := t.TempDir()
+	t.Setenv("HOST_ROOT", root)
+	bootIDPath := filepath.Join(root, "proc", "sys", "kernel", "random", "boot_id")
+	require.NoError(t, os.MkdirAll(filepath.Dir(bootIDPath), 0o755))
+	require.NoError(t, os.WriteFile(bootIDPath, []byte(initialBootID+"\n"), 0o600))
+
+	dir := t.TempDir()
+	writer, err := checkpoint.NewManager(logger, dir)
+	require.NoError(t, err)
+	topology := newLoadStateTestTopology()
+	source := NewAllocationState("boot-test", topology, cpuset.New(3))
+	require.NoError(t, source.Reserve(logger, writer, ClaimIdentifier{UID: "claim"}, cpuset.New(0, 1), false))
+	require.Equal(t, initialBootID, readAllocationCheckpoint(t, writer).Meta.BootID)
+
+	// fake node restart
+	require.NoError(t, os.WriteFile(bootIDPath, []byte(currentBootID+"\n"), 0o600))
+	reader, err := checkpoint.NewManager(logger, dir)
+	require.NoError(t, err)
+	require.Equal(t, currentBootID, reader.GetBootID())
+	target, verifyPristine := newAllocationStateForLoadStateTest("boot-test", topology, cpuset.New(3))
+	require.NoError(t, target.LoadState(logger, reader))
+	_, found := target.GetResourceClaimAllocation("claim")
+	require.False(t, found)
+	verifyPristine(t, target)
 }

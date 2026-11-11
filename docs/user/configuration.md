@@ -135,8 +135,12 @@ on - is configured through other Helm values, not through this file.
 
 - Directory used to store driver checkpoint state.
 - Must be non-empty, absolute, and writable.
-- Since driver state persistence across node restarts is not guaranteed,
-  it is recommended to store the checkpoint on a tmpfs volume (e.g. under `/run`).
+- Checkpoints record the kernel boot ID. Loading ignores checkpoints from a
+  different boot, whether the directory on which the checkpoints are stored.
+  Further validation is done to ensure consistency when boot ID matches.
+- The driver requires a readable, valid `/proc/sys/kernel/random/boot_id` and
+  fails to start if it is unavailable or invalid. You may use the environment
+  variable `HOST_ROOT` to override the path.
 
 #### Example
 

@@ -34,6 +34,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-logr/logr/testr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -100,7 +101,7 @@ func (cp *CheckpointData) GetData() ([]*PortMapping, bool) {
 func newTestCheckpointManagerWithDir(t *testing.T) (Manager, string) {
 	t.Helper()
 	dir := t.TempDir()
-	manager, err := NewManager(dir)
+	manager, err := NewManager(testr.New(t), dir)
 	require.NoError(t, err)
 	return manager, dir
 }
@@ -389,4 +390,62 @@ func TestCheckpointManagerMarshalFailureDoesNotMutateWrittenCheckpoint(t *testin
 	require.True(t, out.Data.HostNetwork)
 	require.Equal(t, out.Data.PortMappings, portMappings)
 	requireNoTemporaryFiles(t, dir)
+}
+
+func TestNewManagerValidatesBootID(t *testing.T) {
+	const bootID = "7e7883d6-b5fa-4d57-a298-ff7540ffc0dc" // random valid UUIDv4. No special meaning.
+	for _, tc := range []struct {
+		name      string
+		data      string
+		wantError bool
+	}{
+		{
+			name: "valid",
+			data: bootID,
+		},
+		{
+			name: "trailing newline",
+			data: bootID + "\n",
+		},
+		{
+			name:      "empty",
+			wantError: true,
+		},
+		{
+			name:      "whitespace only",
+			data:      " \n\t",
+			wantError: true,
+		},
+		{
+			name:      "malformed",
+			data:      "not-a-uuid\n",
+			wantError: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("HOST_ROOT", root)
+			path := filepath.Join(root, "proc", "sys", "kernel", "random", "boot_id")
+			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+			require.NoError(t, os.WriteFile(path, []byte(tc.data), 0o600))
+
+			manager, err := NewManager(testr.New(t), t.TempDir())
+			if tc.wantError {
+				require.ErrorContains(t, err, "invalid kernel boot ID")
+				require.ErrorContains(t, err, path)
+				require.Nil(t, manager)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, bootID, manager.GetBootID())
+			}
+		})
+	}
+}
+
+func TestNewManagerUnreadableBootID(t *testing.T) {
+	t.Setenv("HOST_ROOT", t.TempDir())
+	manager, err := NewManager(testr.New(t), t.TempDir())
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.ErrorContains(t, err, "boot_id")
+	require.Nil(t, manager)
 }
