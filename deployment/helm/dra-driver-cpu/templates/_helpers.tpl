@@ -122,10 +122,13 @@ render and pass it in, instead of re-running validation on every mount/hostPath.
 
 {{/*
 Effective driverConfig: folds deprecated args.* fields (cpuDeviceMode,
-groupBy, reservedCPUs, hostnameOverride) into driverConfig, args.* wins on
-conflicts.
+groupBy, reservedCPUs) into driverConfig, args.* wins on conflicts.
+hostnameOverride is refused: one value would name every node the same.
 */}}
 {{- define "dra-driver-cpu.effectiveDriverConfig" -}}
+{{- if or .Values.args.hostnameOverride (get (.Values.driverConfig | default dict) "hostnameOverride") }}
+{{- fail "hostnameOverride is not supported by the chart; remove it" -}}
+{{- end }}
 {{- $cfg := deepCopy (.Values.driverConfig | default dict) -}}
 {{- if .Values.args.cpuDeviceMode }}
 {{- $_ := set $cfg "cpuDeviceMode" .Values.args.cpuDeviceMode }}
@@ -135,9 +138,6 @@ conflicts.
 {{- end }}
 {{- if .Values.args.reservedCPUs }}
 {{- $_ := set $cfg "reservedCPUs" .Values.args.reservedCPUs }}
-{{- end }}
-{{- if .Values.args.hostnameOverride }}
-{{- $_ := set $cfg "hostnameOverride" .Values.args.hostnameOverride }}
 {{- end }}
 {{- toYaml $cfg -}}
 {{- end }}

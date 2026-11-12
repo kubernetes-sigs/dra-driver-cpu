@@ -49,13 +49,12 @@ accepts() {
 		-expect-root-flag="${want_flag}"
 }
 
-# checkNodeName <name> <want_config> [helm args...]; the chart must supply the Node name
+# checkNodeName <name> [helm args...]; the chart must supply the Node name
 # through the NODE_NAME downward API env var and must not pass the removed
-# --hostname-override flag. An explicit hostnameOverride reaches the driver
-# through the config file and must fold into the rendered config.yaml.
+# --hostname-override flag.
 checkNodeName() {
-	local name=$1 want_config=$2
-	shift 2
+	local name=$1
+	shift
 
 	echo "node name render check: ${name}"
 	"${helm}" "${template_args[@]}" "$@" \
@@ -65,16 +64,6 @@ checkNodeName() {
 		-expected-root "${default_root}" \
 		-expect-root-flag=false \
 		-check-hostname-override
-
-	if [[ -n ${want_config} ]]; then
-		"${helm}" template test "${chart}" --kube-version "${kube_version}" \
-			--show-only templates/configmap.yaml "$@" \
-			>"${tmp}/${name}-configmap.yaml"
-		if ! grep -Fq "hostnameOverride: ${want_config}" "${tmp}/${name}-configmap.yaml"; then
-			echo "the rendered config does not contain hostnameOverride: ${want_config}" >&2
-			return 1
-		fi
-	fi
 }
 
 # refuses <name> <message> <helm args...>; the render has to fail and name the
@@ -117,10 +106,11 @@ accepts single-dollar '/var/lib/$kubelet' '/var/lib/$kubelet' true
 accepts socket-budget "/$(printf 'x%.0s' {1..72})" "/$(printf 'x%.0s' {1..72})" true
 
 # The node name cases, judged by their own dedicated checks.
-checkNodeName fallback ''
-checkNodeName args-override mynode \
+checkNodeName fallback
+# A chart-wide override would name every node the same.
+refuses args-override 'hostnameOverride is not supported' \
 	--set-string 'args.hostnameOverride=mynode'
-checkNodeName config-override mynode \
+refuses config-override 'hostnameOverride is not supported' \
 	--set-string 'driverConfig.hostnameOverride=mynode'
 
 # The guard this change adds.
