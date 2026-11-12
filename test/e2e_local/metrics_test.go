@@ -29,14 +29,7 @@ import (
 
 var _ = ginkgo.Describe("[Local] dracpu introspect metrics", func() {
 	ginkgo.It("should output valid JSON with custom metric descriptors", func() {
-		cmdline := []string{binPath, "introspect", "metrics"}
-		fmt.Fprintf(ginkgo.GinkgoWriter, "running: %v\n", cmdline)
-
-		cmd := exec.Command(cmdline[0], cmdline[1:]...)
-		cmd.Stderr = ginkgo.GinkgoWriter
-
-		out, err := cmd.Output()
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		out := runCommand(binPath, "introspect", "metrics")
 
 		// TODO: undecided: this import allows us clean validation, but
 		// we have now a build dep and the tests are no longer truly blackbox.
@@ -65,7 +58,7 @@ var _ = ginkgo.Describe("[Local] dracpu root usage", func() {
 
 		usage := string(out)
 		gomega.Expect(usage).To(gomega.ContainSubstring("dracpu gatherinfo [flags]"))
-		gomega.Expect(usage).To(gomega.ContainSubstring("dracpu introspect metrics"))
+		gomega.Expect(usage).To(gomega.ContainSubstring("dracpu introspect [metrics|config]"))
 		gomega.Expect(usage).To(gomega.ContainSubstring("dracpu-gatherinfo [flags]"))
 		gomega.Expect(usage).ToNot(gomega.ContainSubstring("--show-metrics"))
 	})
