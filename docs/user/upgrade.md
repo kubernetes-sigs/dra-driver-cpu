@@ -73,10 +73,15 @@ Move the values to the configuration file before upgrading:
 - `--cpu-device-mode` → `cpuDeviceMode`
 - `--group-by` → `groupBy`
 - `--reserved-cpus` → `reservedCPUs`
-- `--hostname-override` → `hostnameOverride`
+- `--hostname-override` → the `NODE_NAME` environment variable
 - `--sysfs-overlay` → `sysfsOverlay`
 
 See [configuration](configuration.md#command-line-flags) for details.
+
+#### Deprecated `hostnameOverride`
+
+Remove `args.hostnameOverride` and `driverConfig.hostnameOverride` before upgrading;
+the chart now refuses them. The field will be removed in 0.5.0.
 
 #### API packages reorganization
 
@@ -103,6 +108,8 @@ Anticipated breaking or possibly breaking changes are:
   reason: configuration overhaul. Some combination of options may need fixing.
 - possibly breaking: driver persistence (https://github.com/kubernetes-sigs/dra-driver-cpu/issues/258)
   reason: implementation dependent.
+- breaking in 0.5.0: `hostnameOverride` removal (https://github.com/kubernetes-sigs/dra-driver-cpu/issues/387)
+  reason: the config loader rejects unknown fields, so configs that still set it will fail to load.
 
 ## Upgrade from 0.2.0 to 0.3.0
 

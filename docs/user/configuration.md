@@ -108,9 +108,9 @@ on - is configured through other Helm values, not through this file.
   of the kubelet's `kubeReserved` and `systemReserved` settings, so that the kubelet
   subtracts the right number of CPUs from `Node.Status.Allocatable`.
 
-`hostnameOverride` (string)
+`hostnameOverride` (string, deprecated)
 
-- Override the node hostname the driver registers under.
+- Will be removed in v0.5.0. The Helm chart refuses it.
 
 `kubeconfig` (string)
 
@@ -158,9 +158,9 @@ an error.
 covering all driver settings — there is no separate Helm value per field). `args.*` on the other
 hand exposes individual fields as explicit Helm values.
 
-- `args.cpuDeviceMode`, `args.groupBy`, `args.reservedCPUs`, and `args.hostnameOverride` are
-  deprecated: instead of being emitted as CLI flags, they are now folded into the generated
-  `driverConfig` ConfigMap.
+- `args.cpuDeviceMode`, `args.groupBy`, and `args.reservedCPUs` are deprecated: instead of
+  being emitted as CLI flags, they are now folded into the generated `driverConfig` ConfigMap.
+- `args.hostnameOverride` and `driverConfig.hostnameOverride` are refused.
 - Both reach the same driver settings; `args.*` takes priority when both are set for the same
   field.
 - The intent is to eventually deprecate `args.*` entirely in favour of `driverConfig` as the
@@ -195,8 +195,7 @@ now rejects them as unknown flags. Set the config file equivalents instead:
 - `--cpu-device-mode` → `cpuDeviceMode`
 - `--group-by` → `groupBy`
 - `--reserved-cpus` → `reservedCPUs`
-- `--hostname-override` → `hostnameOverride` (when unset, the driver uses the `NODE_NAME`
-  environment variable, which the Helm chart sets from the downward API)
+- `--hostname-override` → `NODE_NAME` (set by the Helm chart)
 - `--sysfs-overlay` → `sysfsOverlay`
 
 The remaining flags are still supported:
