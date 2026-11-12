@@ -30,6 +30,7 @@ import (
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
@@ -131,6 +132,7 @@ type CPUDriver struct {
 	nriPlugin               stub.Stub
 	podState                *store.PodState
 	allocationState         *store.AllocationState
+	checkpointMgr           checkpoint.Manager
 	cdiMgr                  cdiManager
 	topology                deviceTopology
 	cpuDeviceMode           string
@@ -193,6 +195,8 @@ type Config struct {
 	// driverconfig.Resolve refuses an empty or relative value, and New takes it as
 	// given rather than checking it again.
 	KubeletRootDir string
+	// CheckpointDir (required) is the directory used by the allocation state checkpoint.
+	CheckpointDir string
 	// PublishNodeAllocatableResourceMapping publishes KEP-5517 nodeAllocatableResources mappings in
 	// ResourceSlice devices. Requires the DRANodeAllocatableResources feature gate to be enabled in the cluster.
 	PublishNodeAllocatableResourceMapping bool
@@ -235,6 +239,16 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		health:                  newHealthTracker(),
 		kubeletRootDir:          config.KubeletRootDir,
 	}
+
+	if config.CheckpointDir == "" {
+		return nil, fmt.Errorf("missing checkpoint directory")
+	}
+	manager, err := checkpoint.NewManager(logger, config.CheckpointDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create checkpoint manager: %w", err)
+	}
+	plugin.checkpointMgr = manager
+
 	topo, err := providers.EnsureCPUInfo().GetCPUTopology(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get CPU topology: %w", err)
@@ -252,7 +266,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		}
 	}
 
-	plugin.allocationState = store.NewAllocationState(plugin.topology.CPUTopology, config.ReservedCPUs)
+	plugin.allocationState = store.NewAllocationState(config.NodeName, topo, config.ReservedCPUs)
 	plugin.refreshAllocationMetrics()
 	plugin.podState = store.NewPodState()
 

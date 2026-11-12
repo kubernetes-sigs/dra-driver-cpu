@@ -131,6 +131,17 @@ on - is configured through other Helm values, not through this file.
 - Requires the `DRANodeAllocatableResources` feature gate (alpha, 1.37+). See
   [Workload Configuration Requirements](workload-requirements.md).
 
+`checkpointDir` (string, default: `/run/dra-driver-cpu`)
+
+- Directory used to store driver checkpoint state.
+- Must be non-empty, absolute, and writable.
+- Checkpoints record the kernel boot ID. Loading ignores checkpoints from a
+  different boot, whether the directory on which the checkpoints are stored.
+  Further validation is done to ensure consistency when boot ID matches.
+- The driver requires a readable, valid `/proc/sys/kernel/random/boot_id` and
+  fails to start if it is unavailable or invalid. You may use the environment
+  variable `HOST_ROOT` to override the path.
+
 #### Example
 
 ```yaml

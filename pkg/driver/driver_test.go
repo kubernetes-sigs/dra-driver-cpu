@@ -19,15 +19,24 @@ package driver
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/testr"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/stretchr/testify/require"
 	registerapi "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
+	"k8s.io/utils/cpuset"
 )
+
+var noop = checkpoint.NewNOOPManager()
 
 type mockNRIRunner struct {
 	runFunc func(ctx context.Context) error
@@ -329,4 +338,84 @@ func TestStartRefusesARootWithNoRoomForTheSocket(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Unix socket path")
+}
+
+type trackingCPUInfoProvider struct {
+	inner     *cpuinfo.MockCPUInfoProvider
+	callCount int
+}
+
+func (p *trackingCPUInfoProvider) GetCPUTopology(logger logr.Logger) (*cpuinfo.CPUTopology, error) {
+	p.callCount++
+	return p.inner.GetCPUTopology(logger)
+}
+
+func TestNewCheckpointManagerFailurePrecedesCPUTopology(t *testing.T) {
+	infos := mockCPUInfos_SingleSocket_4CPUS_HT
+	// The easiest failure to inject: use a regular file as parent
+	// for the checkpoint directory given to the checkpoint manager
+	regularFile := filepath.Join(t.TempDir(), "regular-file")
+	require.NoError(t, os.WriteFile(regularFile, []byte(""), 0600))
+	cpuInfo := &trackingCPUInfoProvider{
+		inner: &cpuinfo.MockCPUInfoProvider{
+			CPUInfos: infos,
+		},
+	}
+	providers := Providers{
+		CPUInfo: cpuInfo,
+		SysFS:   testSysFS(infos),
+	}
+
+	_, err := New(testr.New(t), providers, &Config{
+		DriverName:    testDriverName,
+		NodeName:      testNodeName,
+		CheckpointDir: filepath.Join(regularFile, "checkpoints"),
+	})
+
+	require.ErrorContains(t, err, "failed to create checkpoint manager")
+	require.Zero(t, cpuInfo.callCount, "topology discovery must not run when checkpoint setup fails")
+}
+
+func TestNewRejectsEmptyCheckpointDir(t *testing.T) {
+	infos := mockCPUInfos_SingleSocket_4CPUS_HT
+	providers := Providers{
+		CPUInfo: &cpuinfo.MockCPUInfoProvider{
+			CPUInfos: infos,
+		},
+		SysFS: testSysFS(infos),
+	}
+
+	drv, err := New(testr.New(t), providers, &Config{
+		DriverName: testDriverName,
+		NodeName:   testNodeName,
+		// NOTE empty checkpointDir!
+	})
+	require.ErrorContains(t, err, "missing checkpoint directory")
+	require.Nil(t, drv)
+}
+
+func TestNewReserveWritesCheckpointToConfiguredDirectory(t *testing.T) {
+	infos := mockCPUInfos_SingleSocket_4CPUS_HT
+
+	providers := Providers{
+		CPUInfo: &cpuinfo.MockCPUInfoProvider{
+			CPUInfos: infos,
+		},
+		SysFS: testSysFS(infos),
+	}
+	drv, err := New(testr.New(t), providers, &Config{
+		DriverName:    testDriverName,
+		NodeName:      testNodeName,
+		CheckpointDir: filepath.Join(t.TempDir(), "checkpoints"),
+	})
+	require.NoError(t, err)
+
+	// use completely bogus bug valid data just to trigger a write
+	require.NoError(t, drv.allocationState.Reserve(testr.New(t), drv.checkpointMgr, store.ClaimIdentifier{UID: "claim-1"}, cpuset.New(0, 1), false))
+	// just verify _something_ was written
+	allocState := filepath.Join(drv.checkpointMgr.CheckpointPath(), "allocation_state")
+	require.FileExists(t, allocState)
+	info, err := os.Stat(allocState)
+	require.NoError(t, err)
+	require.Positive(t, info.Size(), "checkpoint file must not be empty")
 }
