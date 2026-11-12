@@ -194,7 +194,6 @@ func collectReport(logger logr.Logger, driverCmdlinePath string) (gatherinfoapi.
 func makeDriverConfigSnapshot(cfg driverconfig.Config) gatherinfoapi.DriverConfig {
 	return gatherinfoapi.DriverConfig{
 		Kubeconfig:                            cfg.Kubeconfig,
-		HostnameOverride:                      cfg.HostnameOverride,
 		BindAddress:                           cfg.BindAddress,
 		ReservedCPUs:                          cfg.ReservedCPUs,
 		CPUDeviceMode:                         cfg.CPUDeviceMode,

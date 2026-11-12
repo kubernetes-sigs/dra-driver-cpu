@@ -68,9 +68,6 @@ func TestRunWritesReportFile(t *testing.T) {
 	if report.DriverConfig.GroupBy != device.GROUP_BY_SOCKET {
 		t.Fatalf("groupBy = %q, want %q", report.DriverConfig.GroupBy, device.GROUP_BY_SOCKET)
 	}
-	if report.DriverConfig.HostnameOverride != "node-a" {
-		t.Fatalf("hostnameOverride = %q, want node-a", report.DriverConfig.HostnameOverride)
-	}
 }
 
 func TestRunWritesReportToStdout(t *testing.T) {
