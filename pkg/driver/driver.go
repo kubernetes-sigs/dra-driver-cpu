@@ -32,6 +32,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpupartition"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
@@ -120,6 +121,9 @@ type CPUDriver struct {
 	// Acquire it before store locks; never call into the runtime while holding it.
 	stateMu         sync.Mutex
 	hasSynchronized bool
+	partitions      *cpupartition.Manager
+	// logger is for Stop, which has no context.
+	logger logr.Logger
 	// initialSync is closed when hasSynchronized first becomes true.
 	initialSync     chan struct{}
 	initialSyncWait time.Duration
@@ -188,6 +192,8 @@ type Config struct {
 	Allocator        string
 	ExposePCIeRoots  bool
 	Metrics          Recorder
+	// CPUSetPartition enables experimental cpuset partitions.
+	CPUSetPartition cpupartition.Config
 	// KubeletRootDir is the kubelet root directory, from which the registrar
 	// and plugin data directories are derived. Required and absolute:
 	// driverconfig.Resolve refuses an empty or relative value, and New takes it as
@@ -211,12 +217,24 @@ func (cfg Config) DevicesPerResourceSlice() int {
 // No external listeners or goroutines are started; call Start to begin serving.
 func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, error) {
 	logger = logger.WithValues("driver", config.DriverName)
+	var partitions *cpupartition.Manager
+	if config.CPUSetPartition.Enabled() {
+		var err error
+		if partitions, err = cpupartition.New(config.CPUSetPartition); err != nil {
+			return nil, fmt.Errorf("experimental cpuset partitions: %w", err)
+		}
+		if err := partitions.CheckHost(); err != nil {
+			return nil, errors.Join(fmt.Errorf("experimental cpuset partitions: %w", err), partitions.Close())
+		}
+	}
 
 	metricsRecorder := config.Metrics
 	if metricsRecorder == nil {
 		metricsRecorder = cpumetrics.Noop()
 	}
 	plugin := &CPUDriver{
+		partitions:      partitions,
+		logger:          logger,
 		initialSync:     make(chan struct{}),
 		initialSyncWait: initialSyncWait,
 		driverName:      config.DriverName,
@@ -406,6 +424,10 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 	// health.go)
 	go cp.healthResendLoop(ctx)
 
+	if cp.partitions != nil {
+		go cp.partitionRepairLoop(ctx)
+	}
+
 	return asyncErr, nil
 }
 
@@ -414,6 +436,13 @@ func (cp *CPUDriver) Stop() {
 	cp.health.Stop()
 	cp.nriPlugin.Stop()
 	cp.draPlugin.Stop()
+	if cp.partitions != nil {
+		cp.stateMu.Lock()
+		defer cp.stateMu.Unlock()
+		if err := cp.partitions.Close(); err != nil {
+			cp.logger.Error(err, "closing cpuset partition watcher")
+		}
+	}
 }
 
 func getDeviceAttributes(deviceSlices [][]resourceapi.Device, deviceName string) (map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, bool) {

@@ -18,6 +18,7 @@ package driverconfig
 
 import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpupartition"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 )
 
@@ -37,5 +38,9 @@ func Default() Config {
 		GroupBy:        device.GROUP_BY_NUMA_NODE,
 		KubeletRootDir: DefaultKubeletRootDir,
 		Allocator:      cpuallocator.ModeCPUManager,
+		ExperimentalCPUSetPartition: cpupartition.Config{
+			CgroupRoot: cpupartition.DefaultCgroupRoot,
+			Scope:      cpupartition.DefaultScope,
+		},
 	}
 }

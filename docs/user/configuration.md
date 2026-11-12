@@ -57,8 +57,9 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
 
 #### driverConfig sub-fields
 
-The config file is a flat YAML map - there are no nested groups. All fields are optional
-except where noted. Unknown fields are rejected at startup to catch typos early.
+The config file is a YAML map. Only `experimentalCPUSetPartition` has nested fields. All
+fields are optional except where noted. Unknown fields are rejected at startup to catch
+typos early.
 
 These fields only affect the driver's own behavior (CPU allocation, hostname, sysfs path,
 etc.). Anything about the driver's Pod itself - image, resources, node placement, and so
@@ -130,6 +131,26 @@ on - is configured through other Helm values, not through this file.
   and kubelet account claimed CPUs as node allocatable `cpu`.
 - Requires the `DRANodeAllocatableResources` feature gate (alpha, 1.37+). See
   [Workload Configuration Requirements](workload-requirements.md).
+
+`experimentalCPUSetPartition` (object, default: disabled)
+
+- **Experimental.** Makes the cgroup of each running container with exclusive CPUs a
+  cgroup v2 remote cpuset partition, so the kernel keeps other tasks off those CPUs.
+  Setting `mode` enables it.
+- `mode`: `root`, or `isolated` to also disable load balancing and unbound workqueues on
+  the CPUs.
+- `cgroupRoot` (default: `/sys/fs/cgroup`): the host cgroup v2 mount, writable by the
+  driver. The chart does not mount it; add it with `extraVolumes` and `extraVolumeMounts`.
+- `scope` (default: `kubepods.slice`): the subtree of `cgroupRoot` that holds container
+  cgroups. The driver removes partition state in it that no running container explains.
+- Prerequisites, checked where possible at startup:
+  - Linux 7.0 or later. The driver refuses to start on older kernels.
+  - No other writer of `cpuset.cpus.partition` on `scope` or its ancestors. The driver
+    refuses to start if one of them is already a partition, for example from systemd
+    `CPUSetPartition=`.
+  - The kubelet uses `cpuManagerPolicy: none`.
+  - The container runtime requires this NRI plugin. Otherwise a container can start
+    without its partition if the plugin is unavailable.
 
 #### Example
 
