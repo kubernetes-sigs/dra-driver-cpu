@@ -38,7 +38,7 @@
           ]
         },
         "hostnameOverride": {
-          "description": "**Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.hostnameOverride` instead. Overrides the node name the driver registers under. When unset in both `args` and `driverConfig`, the driver falls back to the `NODE_NAME` environment variable that the chart sets via the downward API, so each node registers under its Node object name even if the kernel hostname differs.",
+          "description": "**Deprecated:** refused by the chart, as is `driverConfig.hostnameOverride`. Will be removed in v0.5.0.",
           "type": "string"
         },
         "logLevel": {
@@ -67,7 +67,7 @@
       "additionalProperties": false
     },
     "driverConfig": {
-      "description": "Driver config file contents. When non-empty, or when a deprecated `args.*` field below is set, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. `args.*` fields that mirror a deprecated CLI flag (`cpuDeviceMode`, `groupBy`, `reservedCPUs`, `hostnameOverride`) are folded into the generated config automatically and take priority over the same field set here.",
+      "description": "Driver config file contents. When non-empty, or when a deprecated `args.*` field below is set, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. `args.*` fields that mirror a deprecated CLI flag (`cpuDeviceMode`, `groupBy`, `reservedCPUs`) are folded into the generated config automatically and take priority over the same field set here.",
       "$ref": "driverconfig.schema.json",
       "type": "object"
     },

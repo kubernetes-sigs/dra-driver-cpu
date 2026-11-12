@@ -86,7 +86,7 @@ args:
   groupBy: "" # @schema enum:["",numanode,socket,machine];required:true
   # -- **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.reservedCPUs` instead. CPUs reserved for the OS and kubelet, excluded from DRA management (e.g. `"0-1"`).
   reservedCPUs: ""
-  # -- **Deprecated:** folded into the generated `driverConfig` ConfigMap and takes priority over it; use `driverConfig.hostnameOverride` instead. Overrides the node name the driver registers under. When unset in both `args` and `driverConfig`, the driver falls back to the `NODE_NAME` environment variable that the chart sets via the downward API, so each node registers under its Node object name even if the kernel hostname differs.
+  # -- **Deprecated:** refused by the chart, as is `driverConfig.hostnameOverride`. Will be removed in v0.5.0.
   hostnameOverride: ""
   # -- Discover and expose PCIe roots as device attributes. Requires the `DRAListTypeAttributes=true` feature gate in the cluster. Not configurable via `driverConfig`; use this flag instead
   exposePCIeRoots: false # @schema type:boolean
@@ -113,7 +113,7 @@ kubeletRootDir: /var/lib/kubelet # @schema type:string;minLength:1;pattern:^/
 # -- Driver config file contents. When non-empty, or when a deprecated
 # `args.*` field below is set, a ConfigMap is created and mounted into the
 # driver container as /etc/dracpu/config.yaml. `args.*` fields that mirror a
-# deprecated CLI flag (`cpuDeviceMode`, `groupBy`, `reservedCPUs`,
-# `hostnameOverride`) are folded into the generated config automatically and
-# take priority over the same field set here.
+# deprecated CLI flag (`cpuDeviceMode`, `groupBy`, `reservedCPUs`) are folded
+# into the generated config automatically and take priority over the same
+# field set here.
 driverConfig: {} # @schema $ref: ./driverconfig.schema.json
