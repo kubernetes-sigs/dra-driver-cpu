@@ -19,6 +19,38 @@ While considering extending the testsuite, adding tests, cases or sub-suites, pl
      Flakes should be avoided and actively mitigated. The experience strongly suggests that is better to have a small
      set of representative, high value, highly reliably tests than a larger set of flakier tests.
 
+### adding or enhancing e2e tests
+
+When changing the e2e suite codebase, make sure to use a `Fixture` object the e2e utility packages provide.
+
+```golang
+import (
+    //...
+	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
+    //...
+)
+
+var _ = ginkgo.Describe("Your suite", ..., func() {
+	var (
+		rootFxt *fixture.Fixture
+	)
+
+	ginkgo.BeforeEach(func(ctx context.Context) {
+        //...
+		rootFxt, err = fixture.ForGinkgo()
+		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot create root fixture: %v", err)
+        //...
+    })
+
+//...
+```
+
+The fixture object will transparently provide:
+
+- a `logr.Logger` you can use for debug information; prefer `ginkgo.By` to document test steps
+- a `kubernetes.Interface` client enhanced to address the testsuite needs (e.g. object labelling)
+  you can use to manipulate kubernetes objects.
+
 ## configure using environment variables
 
 The following environment variable allow to change the behavior of the e2e tests.
