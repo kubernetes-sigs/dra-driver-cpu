@@ -72,7 +72,6 @@ type ToolVersion struct {
 // See the driverconfig API for details.
 type DriverConfig struct {
 	Kubeconfig                            string `json:"kubeconfig,omitempty"`
-	HostnameOverride                      string `json:"hostnameOverride,omitempty"`
 	BindAddress                           string `json:"bindAddress,omitempty"`
 	ReservedCPUs                          string `json:"reservedCPUs,omitempty"`
 	CPUDeviceMode                         string `json:"cpuDeviceMode,omitempty"`
