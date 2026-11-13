@@ -201,14 +201,15 @@ func (pr Providers) EnsureSysFS() sysfs.FS {
 
 // Config is the configuration for the CPUDriver.
 type Config struct {
-	DriverName       string
-	NodeName         string
-	ReservedCPUs     cpuset.CPUSet
-	CPUDeviceMode    string
-	CPUDeviceGroupBy string
-	Allocator        string
-	ExposePCIeRoots  bool
-	Metrics          Recorder
+	DriverName         string
+	NodeName           string
+	ReservedCPUs       cpuset.CPUSet
+	ReservedCPUsPolicy string
+	CPUDeviceMode      string
+	CPUDeviceGroupBy   string
+	Allocator          string
+	ExposePCIeRoots    bool
+	Metrics            Recorder
 	// KubeletRootDir is the kubelet root directory, from which the registrar
 	// and plugin data directories are derived. Required and absolute:
 	// driverconfig.Resolve refuses an empty or relative value, and New takes it as
@@ -282,7 +283,18 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		}
 	}
 
-	plugin.allocationState = store.NewAllocationState(plugin.topology.CPUTopology, config.ReservedCPUs)
+	if config.ReservedCPUsPolicy == cpuinfo.ReservedCPUsPolicyShared {
+		// Shared reserved CPUs go into container cpusets as is, so they must be
+		// online in the kernel; the topology-validated set may omit valid CPUs.
+		onlineCPUs, err := cpuinfo.ReadOnlineCPUs(providers.EnsureSysFS())
+		if err != nil {
+			return nil, fmt.Errorf("failed to read online CPUs: %w", err)
+		}
+		if !config.ReservedCPUs.IsSubsetOf(onlineCPUs) {
+			return nil, fmt.Errorf("reservedCPUs %q are not all online (online CPUs %q)", config.ReservedCPUs.String(), onlineCPUs.String())
+		}
+	}
+	plugin.allocationState = store.NewAllocationState(plugin.topology.CPUTopology, config.ReservedCPUs, config.ReservedCPUsPolicy)
 	plugin.refreshAllocationMetrics()
 	plugin.podState = store.NewPodState()
 

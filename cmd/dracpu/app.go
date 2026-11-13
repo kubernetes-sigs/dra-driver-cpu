@@ -215,6 +215,7 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 		DriverName:                            dracpuapi.DriverName,
 		NodeName:                              nodeName,
 		ReservedCPUs:                          reservedCPUSet,
+		ReservedCPUsPolicy:                    cfg.ReservedCPUsPolicy,
 		CPUDeviceMode:                         cfg.CPUDeviceMode,
 		CPUDeviceGroupBy:                      cfg.GroupBy,
 		ExposePCIeRoots:                       cfg.ExposePCIeRoots,

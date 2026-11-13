@@ -3,7 +3,7 @@
 ## Currently Supported
 
 - **Exclusive CPU Allocation**: Pods that request CPUs via a ResourceClaim are allocated exclusive CPUs based on the chosen mode and topology.
-- **Shared CPU Pool Management**: All other containers without a ResourceClaim are confined to a shared pool of CPUs that are not reserved.
+- **Shared CPU Pool Management**: All other containers without a ResourceClaim are confined to a shared pool of CPUs that are not reserved. With `reservedCPUsPolicy: shared`, the reserved CPUs are part of that pool too.
 - **Topology Awareness**: The driver discovers detailed CPU topology including sockets, NUMA nodes, cores, SMT siblings, L3 cache (UncoreCache), and core types (Performance/Efficiency).
 - **Advanced CPU Allocation Strategies**: When in `"grouped"` mode, the driver utilizes allocation logic adapted from the Kubelet's CPU Manager, including:
   - NUMA aware best-fit allocation.
@@ -52,7 +52,7 @@ Reference: [kubernetes 1.35.0](https://github.com/kubernetes/kubernetes/blob/v1.
 | DistributeCPUsAcrossNUMA  | beta     | active                     | see issue: https://github.com/kubernetes-sigs/dra-driver-cpu/issues/46 | see below for details |
 | PreferAlignByUnCoreCache  | beta     | active                     | builtin; enabled by default                                            |                       |
 | FullPCPUsOnly             | GA       | N/A                        | see issue: https://github.com/kubernetes-sigs/dra-driver-cpu/issues/45 |                       |
-| StrictCPUReservation      | GA       | N/A                        | builtin; enabled by default                                            |                       |
+| StrictCPUReservation      | GA       | N/A                        | `reservedCPUsPolicy` config option; `strict` (default) or `shared`     |                       |
 
 ### Distributing CPUs across NUMA nodes
 

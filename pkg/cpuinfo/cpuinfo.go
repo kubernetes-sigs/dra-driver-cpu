@@ -39,9 +39,9 @@ func ProcfsRoot() string {
 	return path.Join(os.Getenv("HOST_ROOT"), procfsRoot)
 }
 
-// readOnlineCPUs returns the kernel's raw online CPU set. Callers that need
+// ReadOnlineCPUs returns the kernel's raw online CPU set. Callers that need
 // CPUs usable by the driver should use CPUTopology.CPUDetails instead.
-func readOnlineCPUs(sysfs fs.ReadLinkFS) (cpuset.CPUSet, error) {
+func ReadOnlineCPUs(sysfs fs.ReadLinkFS) (cpuset.CPUSet, error) {
 	cpuData, err := fs.ReadFile(sysfs, filepath.Join("devices", "system", "cpu", "online"))
 	if err != nil {
 		return cpuset.New(), err
@@ -52,6 +52,13 @@ func readOnlineCPUs(sysfs fs.ReadLinkFS) (cpuset.CPUSet, error) {
 	}
 	return allCPUs, nil
 }
+
+const (
+	// ReservedCPUsPolicyStrict keeps reservedCPUs out of every container cpuset.
+	ReservedCPUsPolicyStrict = "strict"
+	// ReservedCPUsPolicyShared adds reservedCPUs to shared container cpusets.
+	ReservedCPUsPolicyShared = "shared"
+)
 
 // CoreType is an enum for the type of CPU core.
 type CoreType int
@@ -233,7 +240,7 @@ func (s *SystemCPUInfo) IsSMTEnabled() (bool, error) {
 
 // GetCPUInfos returns a slice of CPUInfo structs, one for each logical CPU.
 func (s *SystemCPUInfo) GetCPUInfos(logger logr.Logger) ([]CPUInfo, error) {
-	onlineCPUs, err := readOnlineCPUs(s.sysfs)
+	onlineCPUs, err := ReadOnlineCPUs(s.sysfs)
 	if err != nil {
 		return []CPUInfo{}, fmt.Errorf("could not get online CPUs: %w", err)
 	}

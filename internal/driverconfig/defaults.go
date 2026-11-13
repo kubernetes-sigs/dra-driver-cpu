@@ -18,6 +18,7 @@ package driverconfig
 
 import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 )
 
@@ -32,10 +33,11 @@ const (
 // Default returns a Config with built-in default values.
 func Default() Config {
 	return Config{
-		BindAddress:    DefaultBindAddress,
-		CPUDeviceMode:  device.CPU_DEVICE_MODE_GROUPED,
-		GroupBy:        device.GROUP_BY_NUMA_NODE,
-		KubeletRootDir: DefaultKubeletRootDir,
-		Allocator:      cpuallocator.ModeCPUManager,
+		BindAddress:        DefaultBindAddress,
+		CPUDeviceMode:      device.CPU_DEVICE_MODE_GROUPED,
+		GroupBy:            device.GROUP_BY_NUMA_NODE,
+		KubeletRootDir:     DefaultKubeletRootDir,
+		Allocator:          cpuallocator.ModeCPUManager,
+		ReservedCPUsPolicy: cpuinfo.ReservedCPUsPolicyStrict,
 	}
 }

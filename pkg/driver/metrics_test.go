@@ -67,7 +67,7 @@ func newMetricsTestDriverWithCPUInfos(t *testing.T, cpuInfos []cpuinfo.CPUInfo) 
 			},
 		},
 		podState:        store.NewPodState(),
-		allocationState: store.NewAllocationState(topo, cpuset.New()),
+		allocationState: store.NewAllocationState(topo, cpuset.New(), cpuinfo.ReservedCPUsPolicyStrict),
 		cdiMgr:          newMockCdiMgr(),
 		metrics:         recorder,
 	}

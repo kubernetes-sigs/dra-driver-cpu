@@ -28,14 +28,14 @@ import (
 	"k8s.io/utils/cpuset"
 )
 
-func newTestAllocationState(logger logr.Logger, allCPUs, reserved cpuset.CPUSet) *AllocationState {
+func newTestAllocationState(logger logr.Logger, allCPUs, reserved cpuset.CPUSet, reservedCPUsPolicy string) *AllocationState {
 	var infos []cpuinfo.CPUInfo
 	for _, cpuID := range allCPUs.UnsortedList() {
 		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
 	}
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: infos}
 	topo, _ := mockProvider.GetCPUTopology(logger)
-	return NewAllocationState(topo, reserved)
+	return NewAllocationState(topo, reserved, reservedCPUsPolicy)
 }
 
 func requirePreparedAllocation(t testing.TB, logger logr.Logger, store *AllocationState, claimUID types.UID, cpus cpuset.CPUSet) {
@@ -48,7 +48,7 @@ func TestAllocationStatePreparedLifecycle(t *testing.T) {
 	allCPUs := cpuset.New(0, 1, 2, 3)
 	claimUID := types.UID("claim-1")
 	claimCPUs := cpuset.New(0, 1)
-	store := newTestAllocationState(logger, allCPUs, cpuset.New())
+	store := newTestAllocationState(logger, allCPUs, cpuset.New(), cpuinfo.ReservedCPUsPolicyStrict)
 
 	require.NoError(t, store.Reserve(logger, claimUID, map[string]cpuset.CPUSet{"": claimCPUs}, false))
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
@@ -137,7 +137,7 @@ func TestAllocationStateBind(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			logger := testr.New(t)
-			store := newTestAllocationState(logger, cpuset.New(0, 1, 2, 3, 4), cpuset.New())
+			store := newTestAllocationState(logger, cpuset.New(0, 1, 2, 3, 4), cpuset.New(), cpuinfo.ReservedCPUsPolicyStrict)
 			for uid, cpus := range allocations {
 				requirePreparedAllocation(t, logger, store, uid, cpus)
 			}
@@ -169,7 +169,7 @@ func TestAllocationStateBind(t *testing.T) {
 
 func TestAllocationStateBindErrorDetails(t *testing.T) {
 	logger := testr.New(t)
-	store := newTestAllocationState(logger, cpuset.New(0, 1, 2), cpuset.New())
+	store := newTestAllocationState(logger, cpuset.New(0, 1, 2), cpuset.New(), cpuinfo.ReservedCPUsPolicyStrict)
 	requirePreparedAllocation(t, logger, store, "a", cpuset.New(0))
 
 	_, err := store.Bind(logger, "pod", "app", map[types.UID]cpuset.CPUSet{"missing": cpuset.New(2)})
@@ -195,7 +195,7 @@ func TestAllocationStateBindErrorDetails(t *testing.T) {
 
 func TestAllocationStateCloneRetainsOwnership(t *testing.T) {
 	logger := testr.New(t)
-	store := newTestAllocationState(logger, cpuset.New(0, 1, 2), cpuset.New())
+	store := newTestAllocationState(logger, cpuset.New(0, 1, 2), cpuset.New(), cpuinfo.ReservedCPUsPolicyStrict)
 	requirePreparedAllocation(t, logger, store, "a", cpuset.New(0))
 	requirePreparedAllocation(t, logger, store, "b", cpuset.New(1))
 	_, err := store.Bind(logger, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
@@ -250,7 +250,7 @@ func TestNewAllocationState(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			store := newTestAllocationState(logger, tc.allCPUs, tc.reservedCPUs)
+			store := newTestAllocationState(logger, tc.allCPUs, tc.reservedCPUs, cpuinfo.ReservedCPUsPolicyStrict)
 			require.NotNil(t, store)
 			require.True(t, store.availableCPUs.Equals(tc.expectedAvailable))
 			require.True(t, store.GetSharedCPUs().Equals(tc.expectedSharedCPUs))
@@ -261,7 +261,7 @@ func TestNewAllocationState(t *testing.T) {
 func TestAllocationStateResourceClaimAllocation(t *testing.T) {
 	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
-	store := newTestAllocationState(logger, allCPUs, cpuset.New())
+	store := newTestAllocationState(logger, allCPUs, cpuset.New(), cpuinfo.ReservedCPUsPolicyStrict)
 	claimUID := types.UID("claim-uid-1")
 	cpus := cpuset.New(0, 1)
 
@@ -284,11 +284,12 @@ func TestAllocationStateGetSharedCPUs(t *testing.T) {
 	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	reserved := cpuset.New(0)
-	store := newTestAllocationState(logger, allCPUs, reserved)
+	store := newTestAllocationState(logger, allCPUs, reserved, cpuinfo.ReservedCPUsPolicyStrict)
 	available := allCPUs.Difference(reserved)
 
 	// No allocations
 	require.True(t, store.GetSharedCPUs().Equals(available))
+	require.True(t, store.GetAvailableCPUs().Equals(available))
 
 	// With allocations
 	claimUID1 := types.UID("claim-uid-1")
@@ -296,12 +297,14 @@ func TestAllocationStateGetSharedCPUs(t *testing.T) {
 	requirePreparedAllocation(t, logger, store, claimUID1, cpus1)
 	expectedShared := available.Difference(cpus1)
 	require.True(t, store.GetSharedCPUs().Equals(expectedShared))
+	require.True(t, store.GetAvailableCPUs().Equals(expectedShared))
 
 	claimUID2 := types.UID("claim-uid-2")
 	cpus2 := cpuset.New(3, 4)
 	requirePreparedAllocation(t, logger, store, claimUID2, cpus2)
 	expectedShared = expectedShared.Difference(cpus2)
 	require.True(t, store.GetSharedCPUs().Equals(expectedShared))
+	require.True(t, store.GetAvailableCPUs().Equals(expectedShared))
 }
 
 func TestAllocationStateReserveRepeatedCalls(t *testing.T) {
@@ -349,7 +352,7 @@ func TestAllocationStateReserveRepeatedCalls(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			store := newTestAllocationState(logger, allCPUs, cpuset.New())
+			store := newTestAllocationState(logger, allCPUs, cpuset.New(), cpuinfo.ReservedCPUsPolicyStrict)
 			claimUID := types.UID("claim-uid-1")
 
 			first := map[string]cpuset.CPUSet{"": tc.firstCPUs}
@@ -381,12 +384,20 @@ func TestAllocationStateReserveSharedPoolGuard(t *testing.T) {
 		cpus                cpuset.CPUSet
 		requests            map[string]cpuset.CPUSet // replaces cpus, if set
 		hasSharedContainers bool
+		policy              string
 		wantErr             string
 	}{
 		{
 			name:                "rejects exhausting pool with shared containers",
 			cpus:                allCPUs,
 			hasSharedContainers: true,
+			wantErr:             "would exhaust the shared CPU pool",
+		},
+		{
+			name:                "rejects exhausting pool with shared containers and shared reserved CPUs but no reserved CPUs",
+			cpus:                allCPUs,
+			hasSharedContainers: true,
+			policy:              cpuinfo.ReservedCPUsPolicyShared,
 			wantErr:             "would exhaust the shared CPU pool",
 		},
 		{
@@ -418,7 +429,7 @@ func TestAllocationStateReserveSharedPoolGuard(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := newTestAllocationState(logger, allCPUs, cpuset.New())
+			store := newTestAllocationState(logger, allCPUs, cpuset.New(), test.policy)
 			requests := test.requests
 			if requests == nil {
 				requests = map[string]cpuset.CPUSet{"": test.cpus}
@@ -440,7 +451,7 @@ func TestAllocationStateReserveSharedPoolGuard(t *testing.T) {
 func TestAllocationStateStoreCacheConsistency(t *testing.T) {
 	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
-	store := newTestAllocationState(logger, allCPUs, cpuset.New())
+	store := newTestAllocationState(logger, allCPUs, cpuset.New(), cpuinfo.ReservedCPUsPolicyStrict)
 
 	requirePreparedAllocation(t, logger, store, "claim-1", cpuset.New(0, 1))
 	requirePreparedAllocation(t, logger, store, "claim-2", cpuset.New(2, 3))
@@ -461,18 +472,49 @@ func TestAllocationStateStoreCacheConsistency(t *testing.T) {
 	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
 }
 
+func TestAllocationStateSharedReservedCPUs(t *testing.T) {
+	logger := testr.New(t)
+	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
+	reserved := cpuset.New(0, 4)
+	managed := allCPUs.Difference(reserved)
+	store := newTestAllocationState(logger, allCPUs, reserved, cpuinfo.ReservedCPUsPolicyShared)
+
+	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
+	require.True(t, store.GetAvailableCPUs().Equals(managed))
+	require.ErrorContains(t, store.Reserve(logger, "claim-reserved", map[string]cpuset.CPUSet{"": cpuset.New(0, 1)}, true), "overlapping CPU assignment")
+
+	// Reserved CPUs keep the shared pool non-empty, so a claim may take every managed CPU.
+	require.NoError(t, store.Reserve(logger, "claim-all", map[string]cpuset.CPUSet{"": managed}, true))
+	require.True(t, store.GetSharedCPUs().Equals(reserved))
+	require.True(t, store.GetAvailableCPUs().IsEmpty())
+	require.Equal(t, AllocationSnapshot{
+		AllocatedCPUs:        managed.Size(),
+		AvailableCPUs:        0,
+		ReservedCPUs:         reserved.Size(),
+		ActiveResourceClaims: 1,
+	}, store.Snapshot())
+
+	clone := store.Clone()
+	require.True(t, clone.GetSharedCPUs().Equals(reserved))
+	require.True(t, clone.GetAvailableCPUs().IsEmpty())
+
+	store.Release(logger, "claim-all")
+	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
+	require.True(t, store.GetAvailableCPUs().Equals(managed))
+}
+
 func TestAllocationStateGetReservedCPUs(t *testing.T) {
 	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	reserved := cpuset.New(0, 1)
-	store := newTestAllocationState(logger, allCPUs, reserved)
+	store := newTestAllocationState(logger, allCPUs, reserved, cpuinfo.ReservedCPUsPolicyStrict)
 	require.True(t, store.GetReservedCPUs().Equals(reserved))
 }
 
 func TestAllocationStateGetPreparedCPUs(t *testing.T) {
 	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
-	store := newTestAllocationState(logger, allCPUs, cpuset.New())
+	store := newTestAllocationState(logger, allCPUs, cpuset.New(), cpuinfo.ReservedCPUsPolicyStrict)
 
 	require.True(t, store.GetPreparedCPUs().IsEmpty())
 
@@ -489,7 +531,7 @@ func TestAllocationStateSnapshot(t *testing.T) {
 	logger := testr.New(t)
 	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
 	reserved := cpuset.New(0, 1)
-	store := newTestAllocationState(logger, allCPUs, reserved)
+	store := newTestAllocationState(logger, allCPUs, reserved, cpuinfo.ReservedCPUsPolicyStrict)
 
 	require.Equal(t, AllocationSnapshot{
 		AllocatedCPUs:        0,
@@ -577,7 +619,7 @@ func BenchmarkGetSharedCPUs(b *testing.B) {
 		})
 
 		b.Run(tc.name+"/optimized", func(b *testing.B) {
-			store := NewAllocationState(topo, cpuset.New())
+			store := NewAllocationState(topo, cpuset.New(), cpuinfo.ReservedCPUsPolicyStrict)
 			for claimUID, cpus := range allocations {
 				requirePreparedAllocation(b, logr.Discard(), store, claimUID, cpus)
 			}
