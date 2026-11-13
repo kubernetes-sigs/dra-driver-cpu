@@ -1,0 +1,15 @@
+# Copyright 2026 The Kubernetes Authors.
+# SPDX-License-Identifier: Apache-2.0
+fullnameOverride: dracpu
+image:
+  repository: dra-cpu-poc
+  tag: local
+  pullPolicy: Never
+enableMemory: true
+nodeSelector:
+  node-role.kubernetes.io/worker: ""
+driverConfig:
+  cpuDeviceMode: grouped
+  groupBy: numanode
+  reservedCPUs: "0"
+  publishNodeAllocatableResourceMapping: true

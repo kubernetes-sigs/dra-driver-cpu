@@ -144,4 +144,22 @@ refuses miscased-key 'differs from kubeletRootDir only in case' \
 refuses over-budget 'over the 107-byte limit' \
 	--skip-schema-validation --set-string "kubeletRootDir=/$(printf 'x%.0s' {1..73})"
 
+# Every class must select its resource type, not every device from this driver.
+for enabled in true false; do
+    output="${tmp}/memory-${enabled}.yaml"
+    "${helm}" template test "${chart}" --kube-version "${kube_version}" \
+        --set "enableMemory=${enabled}" >"${output}"
+    want=1
+    if [[ ${enabled} == true ]]; then want=4; fi
+    [[ $(grep -c '^kind: DeviceClass$' "${output}") == "${want}" ]]
+    grep -Fq 'expression: device.driver == "dra.cpu" && device.attributes["dra.cpu"].resourceType == "cpu"' "${output}"
+    grep -Fq -- "--enable-memory=${enabled}" "${output}"
+    if [[ ${enabled} == true ]]; then
+        for kind in memory hugepages-2m hugepages-1g; do
+            grep -Fq "name: dra.${kind}" "${output}"
+            grep -Fq "resourceType == \"${kind}\"" "${output}"
+        done
+    fi
+done
+
 echo "render checks passed"

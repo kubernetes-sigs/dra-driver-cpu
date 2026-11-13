@@ -1,6 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
+  "required": [
+    "enableMemory"
+  ],
   "properties": {
     "affinity": {
       "description": "Affinity rules for scheduling the DaemonSet pods",
@@ -60,7 +63,7 @@
       ],
       "properties": {
         "create": {
-          "description": "Create the `dra.cpu` DeviceClass. The name is fixed, so when several releases of this chart share a cluster (for example one release per node class with a different `reservedCPUs`), leave it enabled in exactly one of them. Each release then needs its own `nodeSelector` or `affinity` so that no node runs two drivers, and the release that owns the DeviceClass is uninstalled last, since removing it deletes the DeviceClass that the other releases' claims reference. Do not reuse `fullnameOverride` across releases: it replaces the release name in the ClusterRole and ClusterRoleBinding names",
+          "description": "Create the CPU DeviceClass and, when enableMemory is true, the three memory-family DeviceClasses. The name is fixed, so when several releases of this chart share a cluster (for example one release per node class with a different `reservedCPUs`), leave it enabled in exactly one of them. Each release then needs its own `nodeSelector` or `affinity` so that no node runs two drivers, and the release that owns the DeviceClass is uninstalled last, since removing it deletes the DeviceClass that the other releases' claims reference. Do not reuse `fullnameOverride` across releases: it replaces the release name in the ClusterRole and ClusterRoleBinding names",
           "type": "boolean"
         }
       },
@@ -70,6 +73,10 @@
       "description": "Driver config file contents. When non-empty, or when a deprecated `args.*` field below is set, a ConfigMap is created and mounted into the driver container as /etc/dracpu/config.yaml. `args.*` fields that mirror a deprecated CLI flag (`cpuDeviceMode`, `groupBy`, `reservedCPUs`, `hostnameOverride`) are folded into the generated config automatically and take priority over the same field set here.",
       "$ref": "driverconfig.schema.json",
       "type": "object"
+    },
+    "enableMemory": {
+      "description": "Enable the experimental memory and hugepages family. Requires driverConfig.publishNodeAllocatableResourceMapping and the cluster DRANodeAllocatableResources feature gate; see docs/user/memory-poc.md",
+      "type": "boolean"
     },
     "extraVolumeMounts": {
       "description": "Extra volume mounts for the driver container",
