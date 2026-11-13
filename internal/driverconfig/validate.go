@@ -22,6 +22,7 @@ import (
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 )
 
 // Validate checks that enum fields hold recognised values and that
@@ -45,6 +46,10 @@ func (c Config) Validate() error {
 	}
 	if c.CPUDeviceMode == device.CPU_DEVICE_MODE_GROUPED && c.GroupBy == device.GROUP_BY_MACHINE && c.Allocator != cpuallocator.ModeExternal {
 		return fmt.Errorf("invalid allocator %q with groupBy %q: must be %q", c.Allocator, device.GROUP_BY_MACHINE, cpuallocator.ModeExternal)
+	}
+	if c.ReservedCPUsPolicy != store.ReservedCPUsPolicyStrict && c.ReservedCPUsPolicy != store.ReservedCPUsPolicyShared {
+		return fmt.Errorf("invalid reservedCPUsPolicy %q: must be %q or %q",
+			c.ReservedCPUsPolicy, store.ReservedCPUsPolicyStrict, store.ReservedCPUsPolicyShared)
 	}
 	// The kubelet root becomes socket and mount locations, so a relative path
 	// would resolve against the working directory and silently break

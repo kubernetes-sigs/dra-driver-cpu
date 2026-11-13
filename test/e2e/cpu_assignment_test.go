@@ -73,6 +73,7 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		cpuDeviceMode                 string
 		groupBy                       string
 		publishNodeAllocatableMapping bool
+		shareReservedCPUs             bool
 	)
 
 	ginkgo.BeforeAll(func(ctx context.Context) {
@@ -113,6 +114,9 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		driverConfig := getDriverConfig(ctx, rootFxt.K8SClientset)
 		publishNodeAllocatableMapping = driverConfig.PublishNodeAllocatableResourceMapping
 		rootFxt.Log.Info("driver node allocatable mapping", "enabled", publishNodeAllocatableMapping)
+		// An unset policy is the driver default, strict.
+		shareReservedCPUs = driverConfig.ReservedCPUsPolicy == "shared"
+		rootFxt.Log.Info("driver reserved CPUs policy", "policy", driverConfig.ReservedCPUsPolicy, "shared", shareReservedCPUs)
 
 		targetNode, err = e2enode.PickWorker(ctx, rootFxt.K8SClientset, 5*time.Second, 1*time.Minute, rootFxt.Log)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -176,6 +180,36 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				fixture.By("found target nodes with %d allocatable cpus", len(targetNodeCPUInfo.CPUs))
 			})
 
+			mustCreateClaimTemplate := func(ctx context.Context, fxt *fixture.Fixture, name string, claimSize int) string {
+				ginkgo.GinkgoHelper()
+				claimTemplate := resourcev1.ResourceClaimTemplate{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: name,
+					},
+					Spec: resourcev1.ResourceClaimTemplateSpec{
+						Spec: makeResourceClaimSpec(claimSize, cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED),
+					},
+				}
+				createdClaimTemplate, err := fxt.K8SClientset.ResourceV1().ResourceClaimTemplates(fxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				return createdClaimTemplate.Name
+			}
+
+			// mustRunExclusivePod runs a pod consuming claimSize CPUs through the template
+			// and checks the CPUs are driver-managed and disjoint from alreadyAllocated.
+			mustRunExclusivePod := func(ctx context.Context, fxt *fixture.Fixture, claimTemplateName string, claimSize int, alreadyAllocated cpuset.CPUSet) (*v1.Pod, cpuset.CPUSet) {
+				ginkgo.GinkgoHelper()
+				exclusivePod := makeTesterPodWithExclusiveCPUClaimWithoutCPURequest(fxt.Namespace.Name, dracpuTesterImage, claimTemplateName, targetNode.Name)
+				createdExclusivePod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, exclusivePod)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				allocation := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, createdExclusivePod)
+				gomega.Expect(allocation.CPUAssigned).To(cpusetmatchers.HaveSize(claimSize), "the DRA pod should consume its requested CPU pool")
+				gomega.Expect(allocation.CPUAssigned).To(cpusetmatchers.BeSubsetOf(availableCPUs), "the DRA pod should consume only driver-managed CPUs")
+				gomega.Expect(allocation.CPUAssigned).To(cpusetmatchers.HaveNoOverlapWith(alreadyAllocated), "DRA pod allocations must not overlap")
+				expectNodeAllocatableClaimStatus(ctx, fxt.K8SClientset, createdExclusivePod, int64(claimSize), publishNodeAllocatableMapping)
+				return createdExclusivePod, allocation.CPUAssigned
+			}
+
 			ginkgo.It("should allocate exclusive CPUs and remove from the shared pool", func(ctx context.Context) {
 				if cpuDeviceMode == "grouped" && groupBy == "machine" {
 					ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
@@ -227,10 +261,10 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 					expectNodeAllocatableClaimStatus(ctx, fxt.K8SClientset, pod, int64(cpusPerClaim), publishNodeAllocatableMapping)
 				}
 				gomega.Expect(allAllocatedCPUs).To(cpusetmatchers.HaveSize(numPods * cpusPerClaim))
-				rootFxt.Log.Info("All exclusive allocation", "pod", "exclusive CPUs", allAllocatedCPUs.String(), "expected Shared CPUs", availableCPUs.Difference(allAllocatedCPUs).String())
+				expectedSharedCPUs := expectedSharedPool(shareReservedCPUs, reservedCPUs, availableCPUs, allAllocatedCPUs)
+				rootFxt.Log.Info("All exclusive allocation", "pod", "exclusive CPUs", allAllocatedCPUs.String(), "expected Shared CPUs", expectedSharedCPUs.String())
 
 				fixture.By("checking the shared pool does not include anymore the exclusively allocated CPUs")
-				expectedSharedCPUs := availableCPUs.Difference(allAllocatedCPUs)
 
 				fixture.By("creating a second best-effort reference pod")
 				shrPod2 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
@@ -259,66 +293,29 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				if publishNodeAllocatableMapping {
 					ginkgo.Skip("skipping this test with node allocatable mapping enabled: scheduler-side accounting prevents exhausting the shared pool")
 				}
+				if shareReservedCPUs {
+					ginkgo.Skip("skipping this test with reservedCPUsPolicy shared: the reserved CPUs keep the shared pool non-empty, so the claim is accepted")
+				}
 
 				fixture.By("creating ResourceClaims which consume all driver-managed CPUs")
-				claimSizes := []int{availableCPUs.Size()}
-				if cpuDeviceMode == "grouped" && (groupBy == "numanode" || groupBy == "socket") {
-					byGroup := map[int]int{}
-					for _, cpu := range targetNodeCPUInfo.CPUs {
-						if availableCPUs.Contains(cpu.CpuID) {
-							groupID := cpu.NUMANodeID
-							if groupBy == device.GROUP_BY_SOCKET {
-								groupID = cpu.SocketID
-							}
-							byGroup[groupID]++
-						}
-					}
-					groupIDs := make([]int, 0, len(byGroup))
-					for groupID := range byGroup {
-						groupIDs = append(groupIDs, groupID)
-					}
-					sort.Ints(groupIDs)
-					claimSizes = claimSizes[:0]
-					for _, groupID := range groupIDs {
-						claimSizes = append(claimSizes, byGroup[groupID])
-					}
-					// Allocate the largest group request first so the scheduler cannot
-					// consume a large device for a smaller request.
-					sort.Sort(sort.Reverse(sort.IntSlice(claimSizes)))
-				}
+				claimSizes := claimSizesCoveringAvailableCPUs(targetNodeCPUInfo, availableCPUs, cpuDeviceMode, groupBy)
 
 				exclusiveAllocation := cpuset.New()
 				var blockedPod *v1.Pod
 				for i, claimSize := range claimSizes {
-					claimTemplate := resourcev1.ResourceClaimTemplate{
-						ObjectMeta: metav1.ObjectMeta{
-							Name: fmt.Sprintf("cpu-request-all-excl-%d", i),
-						},
-						Spec: resourcev1.ResourceClaimTemplateSpec{
-							Spec: makeResourceClaimSpec(claimSize, cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED),
-						},
-					}
-					createdClaimTemplate, err := fxt.K8SClientset.ResourceV1().ResourceClaimTemplates(fxt.Namespace.Name).Create(ctx, &claimTemplate, metav1.CreateOptions{})
-					gomega.Expect(err).ToNot(gomega.HaveOccurred())
-
-					exclusivePod := makeTesterPodWithExclusiveCPUClaimWithoutCPURequest(fxt.Namespace.Name, dracpuTesterImage, createdClaimTemplate.Name, targetNode.Name)
+					claimTemplateName := mustCreateClaimTemplate(ctx, fxt, fmt.Sprintf("cpu-request-all-excl-%d", i), claimSize)
 					if i == len(claimSizes)-1 {
 						// The last claim would exhaust the shared pool. Existing kube-system
 						// containers are shared containers, so the driver must reject the claim
 						// during Prepare instead of letting NRI send an empty CPUSet update.
+						exclusivePod := makeTesterPodWithExclusiveCPUClaimWithoutCPURequest(fxt.Namespace.Name, dracpuTesterImage, claimTemplateName, targetNode.Name)
 						createdExclusivePod, err := fxt.K8SClientset.CoreV1().Pods(exclusivePod.Namespace).Create(ctx, exclusivePod, metav1.CreateOptions{})
 						gomega.Expect(err).ToNot(gomega.HaveOccurred())
 						blockedPod = createdExclusivePod
 						continue
 					}
-					createdExclusivePod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, exclusivePod)
-					gomega.Expect(err).ToNot(gomega.HaveOccurred())
-					allocation := getTesterPodCPUAllocation(fxt.K8SClientset, ctx, createdExclusivePod)
-					gomega.Expect(allocation.CPUAssigned).To(cpusetmatchers.HaveSize(claimSize), "the DRA pod should consume its requested CPU pool")
-					gomega.Expect(allocation.CPUAssigned).To(cpusetmatchers.BeSubsetOf(availableCPUs), "the DRA pod should consume only driver-managed CPUs")
-					gomega.Expect(allocation.CPUAssigned).To(cpusetmatchers.HaveNoOverlapWith(exclusiveAllocation), "DRA pod allocations must not overlap")
-					exclusiveAllocation = exclusiveAllocation.Union(allocation.CPUAssigned)
-					expectNodeAllocatableClaimStatus(ctx, fxt.K8SClientset, createdExclusivePod, int64(claimSize), publishNodeAllocatableMapping)
+					_, allocated := mustRunExclusivePod(ctx, fxt, claimTemplateName, claimSize, exclusiveAllocation)
+					exclusiveAllocation = exclusiveAllocation.Union(allocated)
 				}
 				gomega.Expect(exclusiveAllocation.Size()+claimSizes[len(claimSizes)-1]).To(gomega.Equal(availableCPUs.Size()), "the DRA Claims should consume the complete driver-managed CPU pool")
 
@@ -343,6 +340,51 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				expectedCPUs := availableCPUs.Difference(exclusiveAllocation)
 				gomega.Eventually(observeAssignedCPUs(ctx, fxt, createdSharedAfter)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(expectedCPUs), "the shared pod %s does not have the expected shared CPU set", e2epod.Identify(createdSharedAfter))
+			})
+
+			ginkgo.It("should keep shared containers on the reserved CPUs when claims take every driver-managed CPU", func(ctx context.Context) {
+				if cpuDeviceMode == "grouped" && groupBy == "machine" {
+					ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
+				}
+				if !shareReservedCPUs {
+					ginkgo.Skip("this test requires reservedCPUsPolicy shared")
+				}
+				if publishNodeAllocatableMapping {
+					ginkgo.Skip("skipping this test with node allocatable mapping enabled: scheduler-side accounting prevents claiming every driver-managed CPU")
+				}
+
+				fullSharedPool := availableCPUs.Union(reservedCPUs)
+
+				fixture.By("creating a best-effort reference pod")
+				shrPod1 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod1)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(fullSharedPool), "the best-effort pod %s does not have the expected shared CPU set", e2epod.Identify(shrPod1))
+
+				fixture.By("creating ResourceClaims which consume all driver-managed CPUs")
+				var exclPods []*v1.Pod
+				exclusiveAllocation := cpuset.New()
+				for i, claimSize := range claimSizesCoveringAvailableCPUs(targetNodeCPUInfo, availableCPUs, cpuDeviceMode, groupBy) {
+					claimTemplateName := mustCreateClaimTemplate(ctx, fxt, fmt.Sprintf("cpu-request-all-excl-shared-%d", i), claimSize)
+					pod, allocated := mustRunExclusivePod(ctx, fxt, claimTemplateName, claimSize, exclusiveAllocation)
+					exclPods = append(exclPods, pod)
+					exclusiveAllocation = exclusiveAllocation.Union(allocated)
+				}
+				gomega.Expect(exclusiveAllocation).To(cpusetmatchers.Equal(availableCPUs), "the DRA Claims should consume the complete driver-managed CPU pool")
+
+				fixture.By("checking the shared containers fall back to the reserved CPUs")
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod1)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(reservedCPUs), "the best-effort pod %s does not have the expected shared CPU set", e2epod.Identify(shrPod1))
+
+				fixture.By("creating a best-effort pod while every driver-managed CPU is claimed")
+				shrPod2 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod2)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(reservedCPUs), "the best-effort pod %s does not have the expected shared CPU set", e2epod.Identify(shrPod2))
+
+				fixture.By("deleting the pods with exclusive CPUs")
+				for _, pod := range exclPods {
+					gomega.Expect(e2epod.DeleteSync(ctx, fxt.K8SClientset, pod)).To(gomega.Succeed(), "cannot delete pod %s", e2epod.Identify(pod))
+				}
+
+				fixture.By("checking a new best-effort pod gets the full shared pool back")
+				shrPod3 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod3)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(fullSharedPool), "the best-effort pod %s does not have the expected shared CPU set", e2epod.Identify(shrPod3))
 			})
 
 			ginkgo.It("should allocate non-overlapping CPUs for multiple requests in the same grouped claim", func(ctx context.Context) {
@@ -710,11 +752,12 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				claim2CPUs := cpuset.New(availableList[1])
 
 				claimCPUs := claim1CPUs.Union(claim2CPUs)
-				expectedSharedCPUs := availableCPUs.Difference(claimCPUs)
+				expectedSharedCPUs := expectedSharedPool(shareReservedCPUs, reservedCPUs, availableCPUs, claimCPUs)
+				initialSharedCPUs := expectedSharedPool(shareReservedCPUs, reservedCPUs, availableCPUs, cpuset.New())
 
 				fixture.By("creating a best-effort pod")
 				shrPod1 := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
-				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod1)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(availableCPUs), "the best-effort pod %s does not have the expected available CPU set", e2epod.Identify(shrPod1))
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, shrPod1)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).Should(cpusetmatchers.Equal(initialSharedCPUs), "the best-effort pod %s does not have the expected available CPU set", e2epod.Identify(shrPod1))
 
 				claimsAndCPUSets := []struct {
 					name   string
@@ -772,3 +815,30 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		})
 	})
 })
+
+// claimSizesCoveringAvailableCPUs returns claim sizes that together take every
+// driver-managed CPU. A claim cannot span devices, so NUMA node and socket
+// grouping get one claim per group.
+func claimSizesCoveringAvailableCPUs(cpuInfo discovery.DRACPUInfo, availableCPUs cpuset.CPUSet, cpuDeviceMode, groupBy string) []int {
+	if cpuDeviceMode != device.CPU_DEVICE_MODE_GROUPED || (groupBy != device.GROUP_BY_NUMA_NODE && groupBy != device.GROUP_BY_SOCKET) {
+		return []int{availableCPUs.Size()}
+	}
+	byGroup := map[int]int{}
+	for _, cpu := range cpuInfo.CPUs {
+		if availableCPUs.Contains(cpu.CpuID) {
+			groupID := cpu.NUMANodeID
+			if groupBy == device.GROUP_BY_SOCKET {
+				groupID = cpu.SocketID
+			}
+			byGroup[groupID]++
+		}
+	}
+	claimSizes := make([]int, 0, len(byGroup))
+	for _, size := range byGroup {
+		claimSizes = append(claimSizes, size)
+	}
+	// Allocate the largest group request first so the scheduler cannot
+	// consume a large device for a smaller request.
+	sort.Sort(sort.Reverse(sort.IntSlice(claimSizes)))
+	return claimSizes
+}
