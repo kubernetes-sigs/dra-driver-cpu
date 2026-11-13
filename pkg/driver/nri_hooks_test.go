@@ -39,14 +39,14 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 	testCases := []struct {
 		name                  string
 		envs                  []string
-		expectedAllocations   map[types.UID]cpuset.CPUSet
+		expectedAllocations   map[types.UID]map[string]cpuset.CPUSet
 		expectedErrorContains string
 	}{
 		{
 			name: "single valid env",
 			envs: []string{fmt.Sprintf("%s_claim-uid-1=%s", cdiEnvVarPrefix, "0-1")},
-			expectedAllocations: map[types.UID]cpuset.CPUSet{
-				"claim-uid-1": cpuset.New(0, 1),
+			expectedAllocations: map[types.UID]map[string]cpuset.CPUSet{
+				"claim-uid-1": {"": cpuset.New(0, 1)},
 			},
 		},
 		{
@@ -55,9 +55,22 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 				fmt.Sprintf("%s_claim-uid-1=%s", cdiEnvVarPrefix, "0,1"),
 				fmt.Sprintf("%s_claim-uid-2=%s", cdiEnvVarPrefix, "2,3"),
 			},
-			expectedAllocations: map[types.UID]cpuset.CPUSet{
-				"claim-uid-1": cpuset.New(0, 1),
-				"claim-uid-2": cpuset.New(2, 3),
+			expectedAllocations: map[types.UID]map[string]cpuset.CPUSet{
+				"claim-uid-1": {"": cpuset.New(0, 1)},
+				"claim-uid-2": {"": cpuset.New(2, 3)},
+			},
+		},
+		{
+			name: "per-request envs for same claim",
+			envs: []string{
+				fmt.Sprintf("%s_claim-uid-1_req-a=%s", cdiEnvVarPrefix, "0,1"),
+				fmt.Sprintf("%s_claim-uid-1_req-b=%s", cdiEnvVarPrefix, "2,3"),
+			},
+			expectedAllocations: map[types.UID]map[string]cpuset.CPUSet{
+				"claim-uid-1": {
+					"req-a": cpuset.New(0, 1),
+					"req-b": cpuset.New(2, 3),
+				},
 			},
 		},
 		{
@@ -66,14 +79,14 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 				fmt.Sprintf("%s_claim-uid-1=0-1", cdiEnvVarPrefix),
 				dracpuapi.EnvVarExclusiveAssignedCPUSet + "=0-1",
 			},
-			expectedAllocations: map[types.UID]cpuset.CPUSet{
-				"claim-uid-1": cpuset.New(0, 1),
+			expectedAllocations: map[types.UID]map[string]cpuset.CPUSet{
+				"claim-uid-1": {"": cpuset.New(0, 1)},
 			},
 		},
 		{
 			name:                "no relevant envs",
 			envs:                []string{"OTHER_ENV=value"},
-			expectedAllocations: map[types.UID]cpuset.CPUSet{},
+			expectedAllocations: map[types.UID]map[string]cpuset.CPUSet{},
 		},
 		{
 			name:                  "malformed env - no equals",
@@ -88,7 +101,7 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 		{
 			name:                "empty env",
 			envs:                []string{},
-			expectedAllocations: map[types.UID]cpuset.CPUSet{},
+			expectedAllocations: map[types.UID]map[string]cpuset.CPUSet{},
 		},
 	}
 
@@ -100,12 +113,7 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 				require.Contains(t, err.Error(), tc.expectedErrorContains)
 			} else {
 				require.NoError(t, err)
-				require.Equal(t, len(tc.expectedAllocations), len(allocations))
-				for uid, expectedCpus := range tc.expectedAllocations {
-					actualCpus, ok := allocations[uid]
-					require.True(t, ok)
-					require.True(t, expectedCpus.Equals(actualCpus))
-				}
+				require.Equal(t, tc.expectedAllocations, allocations)
 			}
 		})
 	}
@@ -151,9 +159,9 @@ func TestCreateContainer(t *testing.T) {
 			name:     "guaranteed container triggers container adjustment with cpus in resource claim",
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
-				store := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(0, 1, 2, 3), false))
-				return store
+				s := store.NewAllocationState(topo, cpuset.New())
+				require.NoError(t, s.Reserve(logger, types.UID(claimUID), map[string]cpuset.CPUSet{"": cpuset.New(0, 1, 2, 3)}, false))
+				return s
 			}(),
 			container: newTestContainer(claimUID, "0-3"),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
@@ -176,9 +184,9 @@ func TestCreateContainer(t *testing.T) {
 			name:     "shared container created after guaranteed allocation uses shared pool",
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
-				store := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(0, 1, 2, 3), false))
-				return store
+				s := store.NewAllocationState(topo, cpuset.New())
+				require.NoError(t, s.Reserve(logger, types.UID(claimUID), map[string]cpuset.CPUSet{"": cpuset.New(0, 1, 2, 3)}, false))
+				return s
 			}(),
 			container: newTestContainer("", ""),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
@@ -191,7 +199,7 @@ func TestCreateContainer(t *testing.T) {
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
 				allocation := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), allCPUs, false))
+				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), map[string]cpuset.CPUSet{"": allCPUs}, false))
 				return allocation
 			}(),
 			container:             newTestContainer("", ""),
@@ -206,9 +214,9 @@ func TestCreateContainer(t *testing.T) {
 				return conf
 			}(),
 			allocationState: func() *store.AllocationState {
-				store := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(2, 3), false))
-				return store
+				s := store.NewAllocationState(topo, cpuset.New())
+				require.NoError(t, s.Reserve(logger, types.UID(claimUID), map[string]cpuset.CPUSet{"": cpuset.New(2, 3)}, false))
+				return s
 			}(),
 			container: newTestContainer(claimUID, "2-3"),
 			expectedContainerAdjustment: &api.ContainerAdjustment{
@@ -235,7 +243,7 @@ func TestCreateContainer(t *testing.T) {
 			}(),
 			allocationState: func() *store.AllocationState {
 				allocation := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), allCPUs, false))
+				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), map[string]cpuset.CPUSet{"": allCPUs}, false))
 				return allocation
 			}(),
 			container:             newTestContainer(claimUID, "0-7"),
@@ -246,7 +254,7 @@ func TestCreateContainer(t *testing.T) {
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
 				allocation := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), allCPUs, false))
+				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), map[string]cpuset.CPUSet{"": allCPUs}, false))
 				return allocation
 			}(),
 			container: newTestContainer(claimUID, "0-7"),
@@ -282,9 +290,9 @@ func TestCreateContainer(t *testing.T) {
 			name:     "container with DRA env that differs from prepared allocation fails closed",
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
-				store := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(0, 1), false))
-				return store
+				s := store.NewAllocationState(topo, cpuset.New())
+				require.NoError(t, s.Reserve(logger, types.UID(claimUID), map[string]cpuset.CPUSet{"": cpuset.New(0, 1)}, false))
+				return s
 			}(),
 			container: newTestContainer(claimUID, "0-3"),
 			expectedErrorContains: fmt.Sprintf(
@@ -352,7 +360,7 @@ func TestStopContainer(t *testing.T) {
 					metrics:         cpumetrics.Noop(),
 				}
 				claimUID := types.UID("claim-uid-1")
-				require.NoError(t, driver.allocationState.Reserve(logger, claimUID, cpuset.New(0, 1), false))
+				require.NoError(t, driver.allocationState.Reserve(logger, claimUID, map[string]cpuset.CPUSet{"": cpuset.New(0, 1)}, false))
 				driver.podState.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id), claimUID))
 				driver.podState.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
 				return driver
@@ -396,7 +404,7 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 	claimUID := types.UID("claim-restart")
 	claimCPUs := cpuset.New(0, 1)
 	allocState := store.NewAllocationState(topo, cpuset.New())
-	require.NoError(t, allocState.Reserve(logger, claimUID, claimCPUs, false))
+	require.NoError(t, allocState.Reserve(logger, claimUID, map[string]cpuset.CPUSet{"": claimCPUs}, false))
 	driver := &CPUDriver{
 		podState:        store.NewPodState(),
 		allocationState: allocState,
@@ -469,9 +477,9 @@ func TestGuaranteedContainerRestartNotBlockedByEmptySharedPool(t *testing.T) {
 
 	claimUID := types.UID("claim-full")
 	allocState := store.NewAllocationState(topo, cpuset.New())
-	require.NoError(t, allocState.Reserve(logger, claimUID, allCPUs, false))
+	require.NoError(t, allocState.Reserve(logger, claimUID, map[string]cpuset.CPUSet{"": allCPUs}, false))
 	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod", Name: "pod", Namespace: "ns"}
-	_, err = allocState.Bind(logger, types.UID(pod.Uid), "app", map[types.UID]cpuset.CPUSet{claimUID: allCPUs})
+	_, err = allocState.Bind(logger, types.UID(pod.Uid), "app", map[types.UID]map[string]cpuset.CPUSet{claimUID: {"": allCPUs}})
 	require.NoError(t, err)
 
 	driver := &CPUDriver{
@@ -807,7 +815,7 @@ func TestStopContainerKeepsClaimOutOfSharedPoolUntilUnprepare(t *testing.T) {
 	claimedCPUs := cpuset.New(0, 1)
 
 	allocationState := store.NewAllocationState(topo, cpuset.New())
-	require.NoError(t, allocationState.Reserve(logger, claimUID, claimedCPUs, false))
+	require.NoError(t, allocationState.Reserve(logger, claimUID, map[string]cpuset.CPUSet{"": claimedCPUs}, false))
 
 	driver := &CPUDriver{
 		cdiMgr:          newMockCdiMgr(),
@@ -817,7 +825,7 @@ func TestStopContainerKeepsClaimOutOfSharedPoolUntilUnprepare(t *testing.T) {
 		metrics:         cpumetrics.Noop(),
 	}
 	driver.cdiMgr.(*mockCdiMgr).devices[getCDIDeviceName(claimUID)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, claimedCPUs.String())
-	_, err := driver.allocationState.Bind(logger, types.UID(guaranteedPod.Uid), guaranteedCtr.Name, map[types.UID]cpuset.CPUSet{claimUID: claimedCPUs})
+	_, err := driver.allocationState.Bind(logger, types.UID(guaranteedPod.Uid), guaranteedCtr.Name, map[types.UID]map[string]cpuset.CPUSet{claimUID: {"": claimedCPUs}})
 	require.NoError(t, err)
 	driver.podState.SetContainerState(types.UID(guaranteedPod.Uid),
 		store.NewContainerState(guaranteedCtr.Name, types.UID(guaranteedCtr.Id), claimUID))
