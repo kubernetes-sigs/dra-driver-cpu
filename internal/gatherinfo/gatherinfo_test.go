@@ -28,11 +28,12 @@ import (
 	gatherinfoapi "github.com/kubernetes-sigs/dra-driver-cpu/api/gatherinfo/v1"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/gatherinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"sigs.k8s.io/yaml"
 )
 
 func TestRunWritesReportFile(t *testing.T) {
-	setupFakeHostWithConfig(t, "reservedCPUs: \"4-7\"\ncpuDeviceMode: individual\ngroupBy: socket\nhostnameOverride: node-a\n", "--v=4", "--logging-format=json")
+	setupFakeHostWithConfig(t, "reservedCPUs: \"4-7\"\nreservedCPUsPolicy: shared\ncpuDeviceMode: individual\ngroupBy: socket\nhostnameOverride: node-a\n", "--v=4", "--logging-format=json")
 
 	outputDir := filepath.Join(t.TempDir(), "reports")
 	err := gatherinfo.Run([]string{"--output-dir=" + outputDir}, gatherinfo.Options{}, logr.Discard())
@@ -61,6 +62,9 @@ func TestRunWritesReportFile(t *testing.T) {
 
 	if report.DriverConfig.ReservedCPUs != "4-7" {
 		t.Fatalf("reservedCPUs = %q, want 4-7", report.DriverConfig.ReservedCPUs)
+	}
+	if report.DriverConfig.ReservedCPUsPolicy != store.ReservedCPUsPolicyShared {
+		t.Fatalf("reservedCPUsPolicy = %q, want %q", report.DriverConfig.ReservedCPUsPolicy, store.ReservedCPUsPolicyShared)
 	}
 	if report.DriverConfig.CPUDeviceMode != device.CPU_DEVICE_MODE_INDIVIDUAL {
 		t.Fatalf("cpuDeviceMode = %q, want %q", report.DriverConfig.CPUDeviceMode, device.CPU_DEVICE_MODE_INDIVIDUAL)

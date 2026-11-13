@@ -197,6 +197,7 @@ func makeDriverConfigSnapshot(cfg driverconfig.Config) gatherinfoapi.DriverConfi
 		HostnameOverride:                      cfg.HostnameOverride,
 		BindAddress:                           cfg.BindAddress,
 		ReservedCPUs:                          cfg.ReservedCPUs,
+		ReservedCPUsPolicy:                    cfg.ReservedCPUsPolicy,
 		CPUDeviceMode:                         cfg.CPUDeviceMode,
 		GroupBy:                               cfg.GroupBy,
 		ExposePCIeRoots:                       cfg.ExposePCIeRoots,
