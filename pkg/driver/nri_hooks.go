@@ -84,8 +84,8 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			}
 			containerUID := types.UID(container.GetId())
 			allGuaranteedCPUs := cpuset.New()
-			validatedClaimAllocations := make(map[types.UID]cpuset.CPUSet)
-			for uid, cpus := range claimAllocations {
+			validatedClaimAllocations := make(map[types.UID]map[string]cpuset.CPUSet)
+			for uid, requests := range claimAllocations {
 				var prepared, owned bool
 				if cp.hasSynchronized {
 					_, prepared = cp.allocationState.GetResourceClaimAllocation(uid)
@@ -109,7 +109,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 					caLogger.Error(err, "ignoring claim not prepared by this driver during synchronize")
 					continue
 				}
-				err = validateSynchronizedClaimAllocation(caLogger, uid, cpus, envs)
+				err = validateSynchronizedClaimAllocation(caLogger, uid, requests, envs)
 				if err != nil {
 					if cp.hasSynchronized && prepared && owned {
 						return nil, fmt.Errorf("failed to validate claim allocation for container %q during synchronize: %w", container.Name, err)
@@ -127,12 +127,14 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				}
 				// Synchronize restores an allocation that already exists in the runtime;
 				// the shared-pool guard applies only to new reservations.
-				if err := allocationState.Reserve(caLogger, uid, cpus, false); err != nil {
+				if err := allocationState.Reserve(caLogger, uid, requests, false); err != nil {
 					return nil, err
 				}
 
-				allGuaranteedCPUs = allGuaranteedCPUs.Union(cpus)
-				validatedClaimAllocations[uid] = cpus
+				for _, cpus := range requests {
+					allGuaranteedCPUs = allGuaranteedCPUs.Union(cpus)
+				}
+				validatedClaimAllocations[uid] = requests
 			}
 
 			var state *store.ContainerState
@@ -179,8 +181,8 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	return containerUpdates, nil
 }
 
-func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types.UID]cpuset.CPUSet, error) {
-	allocations := make(map[types.UID]cpuset.CPUSet)
+func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types.UID]map[string]cpuset.CPUSet, error) {
+	allocations := make(map[types.UID]map[string]cpuset.CPUSet)
 	for _, env := range envs {
 		key, value, hasValue := strings.Cut(env, "=")
 		// We won't have a conflict by constructions with the vars we inject from DRA side
@@ -196,36 +198,44 @@ func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types
 		if !hasValue {
 			return nil, fmt.Errorf("malformed DRA env entry %q", env)
 		}
-		var claimUID types.UID
-		if after, ok := strings.CutPrefix(key, cdiEnvVarPrefix+"_"); ok {
-			uidStr := after
-			claimUID = types.UID(uidStr)
-		} else {
+		after, ok := strings.CutPrefix(key, cdiEnvVarPrefix+"_")
+		if !ok || after == "" {
 			continue
 		}
+		uidStr, reqName, _ := strings.Cut(after, "_")
+		claimUID := types.UID(uidStr)
 
 		parsedSet, err := cpuset.Parse(value)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse cpuset value %q from env %q: %w", value, env, err)
 		}
-		allocations[claimUID] = parsedSet
+		if allocations[claimUID] == nil {
+			allocations[claimUID] = make(map[string]cpuset.CPUSet)
+		}
+		allocations[claimUID][reqName] = parsedSet
 	}
 
 	return allocations, nil
 }
 
-func validateSynchronizedClaimAllocation(logger logr.Logger, uid types.UID, cpus cpuset.CPUSet, envs []string) error {
+func validateSynchronizedClaimAllocation(logger logr.Logger, uid types.UID, requests map[string]cpuset.CPUSet, envs []string) error {
 	allocations, err := parseDRAEnvToClaimAllocations(logger, envs)
 	if err != nil {
 		return fmt.Errorf("failed to parse CDI env for claim %q: %w", uid, err)
 	}
 
-	preparedCPUs, ok := allocations[uid]
+	preparedRequests, ok := allocations[uid]
 	if !ok {
 		return fmt.Errorf("validation failed for claim %q: driver-owned CDI spec %q does not contain a matching DRA allocation", uid, getCDIDeviceName(uid))
 	}
-	if !preparedCPUs.Equals(cpus) {
-		return fmt.Errorf("validation failed for claim %q during synchronize: cpuset mismatch (expected %q from CDI, got %q from runtime)", uid, preparedCPUs.String(), cpus.String())
+	for reqName, cpus := range requests {
+		preparedCPUs, ok := preparedRequests[reqName]
+		if !ok {
+			return fmt.Errorf("validation failed for claim %q: driver-owned CDI spec %q does not contain a matching DRA allocation", uid, getCDIDeviceName(uid))
+		}
+		if !preparedCPUs.Equals(cpus) {
+			return fmt.Errorf("validation failed for claim %q during synchronize: cpuset mismatch (expected %q from CDI, got %q from runtime)", uid, preparedCPUs.String(), cpus.String())
+		}
 	}
 	return nil
 }
@@ -308,8 +318,10 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		// entries that match a claim prepared by this driver.
 		guaranteedCPUs := cpuset.New()
 		claimUIDs := []types.UID{}
-		for uid, cpus := range claimAllocations {
-			guaranteedCPUs = guaranteedCPUs.Union(cpus)
+		for uid, requests := range claimAllocations {
+			for _, cpus := range requests {
+				guaranteedCPUs = guaranteedCPUs.Union(cpus)
+			}
 			claimUIDs = append(claimUIDs, uid)
 		}
 		updatedClaims, err := cp.allocationState.Bind(logger, podUID, ctr.Name, claimAllocations)

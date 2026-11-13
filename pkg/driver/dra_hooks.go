@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
+	"k8s.io/dynamic-resource-allocation/resourceclaim"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/utils/cpuset"
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
@@ -134,9 +135,9 @@ func (cp *CPUDriver) checkAdminAccess(claim *resourceapi.ResourceClaim) error {
 // the shared-pool guard for currently running shared containers. A shared
 // container from the same pod may not have been created yet when this DRA hook
 // runs, so that case is detected later by the NRI CreateContainer check.
-func (cp *CPUDriver) reserveResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet) error {
+func (cp *CPUDriver) reserveResourceClaimAllocation(logger logr.Logger, claimUID types.UID, requests map[string]cpuset.CPUSet) error {
 	hasSharedContainers := len(cp.podState.GetContainersWithSharedCPUs()) > 0
-	return cp.allocationState.Reserve(logger, claimUID, cpus, hasSharedContainers)
+	return cp.allocationState.Reserve(logger, claimUID, requests, hasSharedContainers)
 }
 
 func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
@@ -167,6 +168,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim
 	}
 
 	var assignedCPUs cpuset.CPUSet
+	claimRequestCPUs := make(map[string]cpuset.CPUSet)
 	allocatableCPUs := cp.allocationState.GetSharedCPUs()
 
 	for _, alloc := range claim.Status.Allocation.Devices.Results {
@@ -223,6 +225,8 @@ func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim
 		if err := cp.cpuAllocator.Validate(cur, assignedCPUs, cp.allocationState.GetPreparedCPUs()); err != nil {
 			return kubeletplugin.PrepareResult{Err: err}
 		}
+		baseReq := resourceclaim.BaseRequestRef(alloc.Request)
+		claimRequestCPUs[baseReq] = claimRequestCPUs[baseReq].Union(cur)
 		assignedCPUs = assignedCPUs.Union(cur)
 		logger.V(2).Info("CPU assignment for device", "device", alloc.Device, "assigned", cur.String(), "allAssigned", assignedCPUs.String())
 	}
@@ -233,7 +237,7 @@ func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim
 	}
 
 	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.
-	if err := cp.reserveResourceClaimAllocation(logger, claim.UID, assignedCPUs); err != nil {
+	if err := cp.reserveResourceClaimAllocation(logger, claim.UID, claimRequestCPUs); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
 	result := cp.prepareDevices(logger, claim, assignedCPUs)
@@ -276,6 +280,7 @@ func (cp *CPUDriver) prepareIndividualResourceClaimLocked(logger logr.Logger, cl
 	}
 
 	claimCPUIDs := []int{}
+	requests := make(map[string]cpuset.CPUSet)
 	for _, alloc := range claim.Status.Allocation.Devices.Results {
 		if alloc.Driver != cp.driverName {
 			continue
@@ -286,6 +291,8 @@ func (cp *CPUDriver) prepareIndividualResourceClaimLocked(logger logr.Logger, cl
 				Err: fmt.Errorf("device %q not found in device to CPU ID map", alloc.Device),
 			}
 		}
+		baseReq := resourceclaim.BaseRequestRef(alloc.Request)
+		requests[baseReq] = requests[baseReq].Union(cpuset.New(cpuID))
 		claimCPUIDs = append(claimCPUIDs, cpuID)
 	}
 
@@ -315,7 +322,7 @@ func (cp *CPUDriver) prepareIndividualResourceClaimLocked(logger logr.Logger, cl
 	}
 
 	// Reserve before CDI I/O so concurrent Prepare calls cannot select the same CPUs.
-	if err := cp.reserveResourceClaimAllocation(logger, claim.UID, claimCPUSet); err != nil {
+	if err := cp.reserveResourceClaimAllocation(logger, claim.UID, requests); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
 	}
 	result := cp.prepareDevices(logger, claim, claimCPUSet)
