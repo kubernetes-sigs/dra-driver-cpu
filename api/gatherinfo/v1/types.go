@@ -75,6 +75,7 @@ type DriverConfig struct {
 	HostnameOverride                      string `json:"hostnameOverride,omitempty"`
 	BindAddress                           string `json:"bindAddress,omitempty"`
 	ReservedCPUs                          string `json:"reservedCPUs,omitempty"`
+	ReservedCPUsPolicy                    string `json:"reservedCPUsPolicy,omitempty"`
 	CPUDeviceMode                         string `json:"cpuDeviceMode,omitempty"`
 	GroupBy                               string `json:"groupBy,omitempty"`
 	ExposePCIeRoots                       bool   `json:"exposePCIeRoots,omitempty"`

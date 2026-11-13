@@ -279,6 +279,44 @@ func TestCreateContainer(t *testing.T) {
 			),
 		},
 		{
+			name:     "shared container gets reserved CPUs when the managed pool is exhausted under the shared policy",
+			podState: store.NewPodState(),
+			allocationState: func() *store.AllocationState {
+				store := store.NewAllocationState(topo, cpuset.New(0, 1), store.WithSharedReservedCPUs())
+				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(2, 3, 4, 5, 6, 7), true))
+				return store
+			}(),
+			container: newTestContainer("", ""),
+			expectedContainerAdjustment: &api.ContainerAdjustment{
+				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1"}}},
+			},
+			expectedContainerUpdates: []*api.ContainerUpdate{},
+		},
+		{
+			name: "guaranteed container taking every managed CPU moves other shared containers to the reserved CPUs under the shared policy",
+			podState: func() *store.PodState {
+				conf := store.NewPodState()
+				conf.SetContainerState("shared-pod-1", store.NewContainerState("shared-ctr-1", "shared-uid-1"))
+				return conf
+			}(),
+			allocationState: func() *store.AllocationState {
+				store := store.NewAllocationState(topo, cpuset.New(0, 1), store.WithSharedReservedCPUs())
+				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(2, 3, 4, 5, 6, 7), true))
+				return store
+			}(),
+			container: newTestContainer(claimUID, "2-7"),
+			expectedContainerAdjustment: &api.ContainerAdjustment{
+				Env:   []*api.KeyValue{{Key: dracpuapi.EnvVarExclusiveAssignedCPUSet, Value: "2-7"}},
+				Linux: &api.LinuxContainerAdjustment{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-7"}}},
+			},
+			expectedContainerUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "shared-uid-1",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1"}}},
+				},
+			},
+		},
+		{
 			name:     "container with DRA env that differs from prepared allocation fails closed",
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
