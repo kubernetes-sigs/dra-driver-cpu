@@ -5,4 +5,4 @@ metadata:
 spec:
   selectors:
     - cel:
-        expression: device.driver == "dra.cpu"
+        expression: device.driver == "dra.cpu" && device.attributes["dra.cpu"].resourceType == "cpu"

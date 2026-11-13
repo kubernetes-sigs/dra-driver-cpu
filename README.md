@@ -108,6 +108,7 @@ See our [backward compatibility policy](docs/user/upgrade.md#backward-compatibil
 - [Quickstart](docs/user/quickstart.md) - install, run a pod on exclusive CPUs, and verify each step.
 - [Installation](docs/user/installation.md) - compatibility, runtime setup, security, uninstall, and migration from `install.yaml`.
 - [Upgrade](docs/user/upgrade.md) - backward compatibility policy and release-specific upgrade actions. Read this before upgrading the driver!
+- [Memory integration POC](docs/user/memory-poc.md) - setup, examples, e2e tests, and cleanup for the experimental four-class driver.
 - [Configuration](docs/user/configuration.md) - the config file schema, command-line flags, and kubelet prerequisites.
 - [How it Works](docs/user/how-it-works.md) - driver architecture, CDI, and NRI integration.
 - [Feature Support](docs/user/feature-support.md) - supported/unsupported features.

@@ -66,6 +66,7 @@ spec:
         args:
           - /dracpu
           - --v={{ .Values.args.logLevel }}
+          - --enable-memory={{ .Values.enableMemory }}
           {{- if .Values.healthzPort }}
           - --bind-address=:{{ .Values.healthzPort }}
           {{- end }}

@@ -37,13 +37,14 @@ const (
 )
 
 const (
-	AttributeSocketID   resourceapi.QualifiedName = "dra.cpu/socketID"
-	AttributeSMTEnabled resourceapi.QualifiedName = "dra.cpu/smtEnabled"
-	AttributeCacheL3ID  resourceapi.QualifiedName = "dra.cpu/cacheL3ID"
-	AttributeCoreType   resourceapi.QualifiedName = "dra.cpu/coreType"
-	AttributeCoreID     resourceapi.QualifiedName = "dra.cpu/coreID"
-	AttributeCPUID      resourceapi.QualifiedName = "dra.cpu/cpuID"
-	AttributeNumCPUs    resourceapi.QualifiedName = "dra.cpu/numCPUs"
+	AttributeResourceType resourceapi.QualifiedName = "dra.cpu/resourceType"
+	AttributeSocketID     resourceapi.QualifiedName = "dra.cpu/socketID"
+	AttributeSMTEnabled   resourceapi.QualifiedName = "dra.cpu/smtEnabled"
+	AttributeCacheL3ID    resourceapi.QualifiedName = "dra.cpu/cacheL3ID"
+	AttributeCoreType     resourceapi.QualifiedName = "dra.cpu/coreType"
+	AttributeCoreID       resourceapi.QualifiedName = "dra.cpu/coreID"
+	AttributeCPUID        resourceapi.QualifiedName = "dra.cpu/cpuID"
+	AttributeNumCPUs      resourceapi.QualifiedName = "dra.cpu/numCPUs"
 	// AttributeAllocatedNumCPUs is a metadata-only attribute (not published in
 	// ResourceSlice) that indicates how many CPUs were allocated to a specific
 	// claim from a grouped device's capacity.

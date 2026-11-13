@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"time"
 
@@ -51,7 +52,16 @@ func (cp *CPUDriver) PublishResources(ctx context.Context) {
 
 	slices := make([]resourceslice.Slice, 0, len(cp.topology.deviceSlices))
 	for _, chunk := range cp.topology.deviceSlices {
-		slices = append(slices, resourceslice.Slice{Devices: chunk})
+		published := make([]resourceapi.Device, len(chunk))
+		for i, d := range chunk {
+			d.Attributes = maps.Clone(d.Attributes)
+			if d.Attributes == nil {
+				d.Attributes = make(map[resourceapi.QualifiedName]resourceapi.DeviceAttribute)
+			}
+			d.Attributes[device.AttributeResourceType] = resourceapi.DeviceAttribute{StringValue: new("cpu")}
+			published[i] = d
+		}
+		slices = append(slices, resourceslice.Slice{Devices: published})
 	}
 
 	resources := resourceslice.DriverResources{
@@ -61,6 +71,7 @@ func (cp *CPUDriver) PublishResources(ctx context.Context) {
 		},
 	}
 
+	cp.addMemoryPools(&resources)
 	err := cp.draPlugin.PublishResources(ctx, resources)
 	if err != nil {
 		logger.Error(err, "error publishing resources")
@@ -173,54 +184,8 @@ func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim
 		if alloc.Driver != cp.driverName {
 			continue
 		}
-		claimCPUCount, err := device.ConsumedCPUCount(alloc, cp.driverName)
+		cur, err := cp.allocateCPUResultLocked(logger, claim.Status.Allocation, alloc, assignedCPUs, allocatableCPUs)
 		if err != nil {
-			return kubeletplugin.PrepareResult{Err: err}
-		}
-		logger.V(4).Info("found CPU request", "numCPUs", claimCPUCount, "device", alloc.Device)
-
-		topo := cp.topology.CPUTopology
-		// TODO: what if `claimCPUCount==0`?
-
-		// The preferred hint comes from the request's opaque config (if any); the
-		// group-specific branches below pick the actual CPUs out of it.
-		preferredCPUs, err := cp.cpuAllocator.GetPreferredCPUs(logger, claim.Status.Allocation, alloc)
-		if err != nil {
-			return kubeletplugin.PrepareResult{Err: err}
-		}
-
-		var cur cpuset.CPUSet
-		switch cp.cpuDeviceGroupBy {
-		case device.GROUP_BY_SOCKET:
-			socketID, ok := cp.topology.NameToSocketID[alloc.Device]
-			if !ok {
-				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid socket ID found for device %s", alloc.Device)}
-			}
-			socketCPUs := topo.CPUDetails.CPUsInSockets(socketID)
-			availableCPUsForDevice := allocatableCPUs.Difference(assignedCPUs).Intersection(socketCPUs)
-			logger.V(4).Info("socket CPU availability", "socketID", socketID, "socketCPUs", socketCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
-			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, preferredCPUs, claimCPUCount)
-		case device.GROUP_BY_NUMA_NODE:
-			numaNodeID, ok := cp.topology.NameToNUMANodeID[alloc.Device]
-			if !ok {
-				return kubeletplugin.PrepareResult{Err: fmt.Errorf("no valid NUMA node ID found for device %s", alloc.Device)}
-			}
-			numaCPUs := topo.CPUDetails.CPUsInNUMANodes(numaNodeID)
-			availableCPUsForDevice := allocatableCPUs.Difference(assignedCPUs).Intersection(numaCPUs)
-			logger.V(4).Info("NUMA node CPU availability", "numaNodeID", numaNodeID, "numaCPUs", numaCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
-			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, preferredCPUs, claimCPUCount)
-		case device.GROUP_BY_MACHINE:
-			// no mapping needed in machine mode - just one device = the whole machine
-			availableCPUs := topo.CPUDetails.CPUs().Difference(cp.topology.ReservedCPUs)
-			logger.V(4).Info("Machine CPU availability", "availableCPUs", availableCPUs.String())
-			cur, err = cp.cpuAllocator.Allocate(logger, availableCPUs, preferredCPUs, claimCPUCount)
-			logger.V(2).Info("using opaque config CPU assignment", "device", alloc.Device, "assigned", cur.String())
-		}
-
-		if err != nil {
-			return kubeletplugin.PrepareResult{Err: err}
-		}
-		if err := cp.cpuAllocator.Validate(cur, assignedCPUs, cp.allocationState.GetPreparedCPUs()); err != nil {
 			return kubeletplugin.PrepareResult{Err: err}
 		}
 		assignedCPUs = assignedCPUs.Union(cur)
@@ -259,6 +224,13 @@ func (cp *CPUDriver) prepareResourceClaim(ctx context.Context, logger logr.Logge
 	}
 	if err := cp.checkAdminAccess(claim); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
+	}
+	composed, err := cp.classifyClaim(claim)
+	if err != nil {
+		return kubeletplugin.PrepareResult{Err: err}
+	}
+	if composed {
+		return cp.prepareComposedClaimLocked(logger, claim)
 	}
 	if cp.cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED {
 		return cp.prepareGroupedResourceClaimLocked(logger, claim)
@@ -417,6 +389,7 @@ func (cp *CPUDriver) unprepareResourceClaim(ctx context.Context, logger logr.Log
 		return err
 	}
 	cp.allocationState.Release(logger, claim.UID)
+	delete(cp.composedClaims, claim.UID)
 	cp.refreshAllocationMetrics()
 	// TODO(#279): Update existing shared containers here once all supported runtimes can
 	// safely process unsolicited NRI UpdateContainers calls. Until then, each container
@@ -480,4 +453,58 @@ func checkDeviceRequestCountUpTo(claim *resourceapi.ResourceClaim, limit int64, 
 		}
 	}
 	return nil
+}
+
+func (cp *CPUDriver) allocateCPUResultLocked(logger logr.Logger, allocation *resourceapi.AllocationResult, alloc resourceapi.DeviceRequestAllocationResult, assignedCPUs, allocatableCPUs cpuset.CPUSet) (cpuset.CPUSet, error) {
+	claimCPUCount, err := device.ConsumedCPUCount(alloc, cp.driverName)
+	if err != nil {
+		return cpuset.New(), err
+	}
+	logger.V(4).Info("found CPU request", "numCPUs", claimCPUCount, "device", alloc.Device)
+
+	topo := cp.topology.CPUTopology
+	// TODO: what if `claimCPUCount==0`?
+
+	// The preferred hint comes from the request's opaque config (if any); the
+	// group-specific branches below pick the actual CPUs out of it.
+	preferredCPUs, err := cp.cpuAllocator.GetPreferredCPUs(logger, allocation, alloc)
+	if err != nil {
+		return cpuset.New(), err
+	}
+
+	var cur cpuset.CPUSet
+	switch cp.cpuDeviceGroupBy {
+	case device.GROUP_BY_SOCKET:
+		socketID, ok := cp.topology.NameToSocketID[alloc.Device]
+		if !ok {
+			return cpuset.New(), fmt.Errorf("no valid socket ID found for device %s", alloc.Device)
+		}
+		socketCPUs := topo.CPUDetails.CPUsInSockets(socketID)
+		availableCPUsForDevice := allocatableCPUs.Difference(assignedCPUs).Intersection(socketCPUs)
+		logger.V(4).Info("socket CPU availability", "socketID", socketID, "socketCPUs", socketCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
+		cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, preferredCPUs, claimCPUCount)
+	case device.GROUP_BY_NUMA_NODE:
+		numaNodeID, ok := cp.topology.NameToNUMANodeID[alloc.Device]
+		if !ok {
+			return cpuset.New(), fmt.Errorf("no valid NUMA node ID found for device %s", alloc.Device)
+		}
+		numaCPUs := topo.CPUDetails.CPUsInNUMANodes(numaNodeID)
+		availableCPUsForDevice := allocatableCPUs.Difference(assignedCPUs).Intersection(numaCPUs)
+		logger.V(4).Info("NUMA node CPU availability", "numaNodeID", numaNodeID, "numaCPUs", numaCPUs.String(), "availableCPUs", availableCPUsForDevice.String())
+		cur, err = cp.cpuAllocator.Allocate(logger, availableCPUsForDevice, preferredCPUs, claimCPUCount)
+	case device.GROUP_BY_MACHINE:
+		// no mapping needed in machine mode - just one device = the whole machine
+		availableCPUs := topo.CPUDetails.CPUs().Difference(cp.topology.ReservedCPUs)
+		logger.V(4).Info("Machine CPU availability", "availableCPUs", availableCPUs.String())
+		cur, err = cp.cpuAllocator.Allocate(logger, availableCPUs, preferredCPUs, claimCPUCount)
+		logger.V(2).Info("using opaque config CPU assignment", "device", alloc.Device, "assigned", cur.String())
+	}
+
+	if err != nil {
+		return cpuset.New(), err
+	}
+	if err := cp.cpuAllocator.Validate(cur, assignedCPUs, cp.allocationState.GetPreparedCPUs()); err != nil {
+		return cpuset.New(), err
+	}
+	return cur, nil
 }

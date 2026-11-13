@@ -20,5 +20,19 @@ metadata:
 spec:
   selectors:
     - cel:
-        expression: device.driver == "dra.cpu"
+        expression: device.driver == "dra.cpu" && device.attributes["dra.cpu"].resourceType == "cpu"
+{{- end }}
+
+{{- if and .Values.deviceClass.create .Values.enableMemory }}
+{{- range $kind := list "memory" "hugepages-2m" "hugepages-1g" }}
+---
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: dra.{{ $kind }}
+spec:
+  selectors:
+    - cel:
+        expression: device.driver == "dra.cpu" && device.attributes["dra.cpu"].resourceType == "{{ $kind }}"
+{{- end }}
 {{- end }}

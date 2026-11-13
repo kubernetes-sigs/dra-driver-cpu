@@ -150,11 +150,18 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 					ContainerId: container.GetId(),
 				}
 				guaranteedUpdate.SetLinuxCPUSetCPUs(allGuaranteedCPUs.String())
-				containerUpdates = append(containerUpdates, guaranteedUpdate)
+				if !hasResourceEnv(container.Env) {
+					containerUpdates = append(containerUpdates, guaranteedUpdate)
+				}
 			}
 			podState.SetContainerState(types.UID(pod.GetUid()), state)
 			cLogger.V(6).Info("set container state", "claims", len(validatedClaimAllocations))
 		}
+	}
+
+	composedClaims, composedUpdates, err := cp.synchronizeComposed(logger, pods, containers, allocationState, podState)
+	if err != nil {
+		return nil, err
 	}
 
 	// Reconcile container CPU masks to handle cases where the NRI plugin might have crashed
@@ -164,12 +171,21 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	if err != nil {
 		return nil, err
 	}
-	containerUpdates = append(containerUpdates, sharedContainerUpdates...)
+	for _, update := range sharedContainerUpdates {
+		idx := slices.IndexFunc(composedUpdates, func(composed *api.ContainerUpdate) bool { return composed.ContainerId == update.ContainerId })
+		if idx >= 0 {
+			composedUpdates[idx].SetLinuxCPUSetCPUs(update.Linux.Resources.Cpu.Cpus)
+		} else {
+			containerUpdates = append(containerUpdates, update)
+		}
+	}
+	containerUpdates = append(containerUpdates, composedUpdates...)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	cp.podState = podState
 	cp.allocationState = allocationState
+	cp.composedClaims = composedClaims
 	if !cp.hasSynchronized && cp.initialSync != nil {
 		close(cp.initialSync)
 	}
@@ -275,6 +291,10 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 	logger.V(2).Info("begin: CreateContainer")
 	defer logger.V(2).Info("end: CreateContainer")
 
+	if hasResourceEnv(ctr.Env) {
+		return cp.createComposedContainerLocked(logger, pod, ctr)
+	}
+
 	adjust := &api.ContainerAdjustment{}
 	var updates []*api.ContainerUpdate
 
@@ -284,6 +304,11 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 	if err != nil {
 		logger.Error(err, "error parsing DRA env for container")
 		return nil, nil, fmt.Errorf("failed to parse DRA environment for container %q in pod %q: %w", ctr.Name, pod.Uid, err)
+	}
+	for uid := range claimAllocations {
+		if cp.composedClaims[uid] != nil {
+			return nil, nil, fmt.Errorf("claim %q uses request-scoped CDI data; remove legacy DRA_CPUSET variables", uid)
+		}
 	}
 	claimCount = len(claimAllocations)
 

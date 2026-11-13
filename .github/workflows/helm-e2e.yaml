@@ -93,6 +93,7 @@ jobs:
             --kubeconfig /tmp/kubeconfig-dra-driver-cpu \
             --namespace kube-system \
             --set fullnameOverride=dracpu \
+            --set enableMemory=false \
             --set podLabels.app=dracpu \
             --set image.repository="${IMAGE}" \
             --set image.tag="${TAG}" \
