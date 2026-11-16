@@ -136,7 +136,11 @@ func (cp *CPUDriver) checkAdminAccess(claim *resourceapi.ResourceClaim) error {
 // runs, so that case is detected later by the NRI CreateContainer check.
 func (cp *CPUDriver) reserveResourceClaimAllocation(logger logr.Logger, claimUID types.UID, cpus cpuset.CPUSet) error {
 	hasSharedContainers := len(cp.podState.GetContainersWithSharedCPUs()) > 0
-	return cp.allocationState.Reserve(logger, claimUID, cpus, hasSharedContainers)
+	// TODO: Handle the per-request CPU assignment split.
+	// See: https://github.com/kubernetes-sigs/dra-driver-cpu/issues/389
+	// For now, use the empty request name (the entire claim), because every
+	// container that references the claim gets all claim CPUs.
+	return cp.allocationState.Reserve(logger, claimUID, map[string]cpuset.CPUSet{"": cpus}, hasSharedContainers)
 }
 
 func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {

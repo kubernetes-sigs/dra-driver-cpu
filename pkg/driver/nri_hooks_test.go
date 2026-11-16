@@ -152,7 +152,7 @@ func TestCreateContainer(t *testing.T) {
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
 				store := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(0, 1, 2, 3), false))
+				require.NoError(t, store.Reserve(logger, types.UID(claimUID), map[string]cpuset.CPUSet{"": cpuset.New(0, 1, 2, 3)}, false))
 				return store
 			}(),
 			container: newTestContainer(claimUID, "0-3"),
@@ -177,7 +177,7 @@ func TestCreateContainer(t *testing.T) {
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
 				store := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(0, 1, 2, 3), false))
+				require.NoError(t, store.Reserve(logger, types.UID(claimUID), map[string]cpuset.CPUSet{"": cpuset.New(0, 1, 2, 3)}, false))
 				return store
 			}(),
 			container: newTestContainer("", ""),
@@ -191,7 +191,7 @@ func TestCreateContainer(t *testing.T) {
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
 				allocation := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), allCPUs, false))
+				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), map[string]cpuset.CPUSet{"": allCPUs}, false))
 				return allocation
 			}(),
 			container:             newTestContainer("", ""),
@@ -207,7 +207,7 @@ func TestCreateContainer(t *testing.T) {
 			}(),
 			allocationState: func() *store.AllocationState {
 				store := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(2, 3), false))
+				require.NoError(t, store.Reserve(logger, types.UID(claimUID), map[string]cpuset.CPUSet{"": cpuset.New(2, 3)}, false))
 				return store
 			}(),
 			container: newTestContainer(claimUID, "2-3"),
@@ -235,7 +235,7 @@ func TestCreateContainer(t *testing.T) {
 			}(),
 			allocationState: func() *store.AllocationState {
 				allocation := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), allCPUs, false))
+				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), map[string]cpuset.CPUSet{"": allCPUs}, false))
 				return allocation
 			}(),
 			container:             newTestContainer(claimUID, "0-7"),
@@ -246,7 +246,7 @@ func TestCreateContainer(t *testing.T) {
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
 				allocation := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), allCPUs, false))
+				require.NoError(t, allocation.Reserve(logger, types.UID(claimUID), map[string]cpuset.CPUSet{"": allCPUs}, false))
 				return allocation
 			}(),
 			container: newTestContainer(claimUID, "0-7"),
@@ -283,7 +283,7 @@ func TestCreateContainer(t *testing.T) {
 			podState: store.NewPodState(),
 			allocationState: func() *store.AllocationState {
 				store := store.NewAllocationState(topo, cpuset.New())
-				require.NoError(t, store.Reserve(logger, types.UID(claimUID), cpuset.New(0, 1), false))
+				require.NoError(t, store.Reserve(logger, types.UID(claimUID), map[string]cpuset.CPUSet{"": cpuset.New(0, 1)}, false))
 				return store
 			}(),
 			container: newTestContainer(claimUID, "0-3"),
@@ -352,7 +352,7 @@ func TestStopContainer(t *testing.T) {
 					metrics:         cpumetrics.Noop(),
 				}
 				claimUID := types.UID("claim-uid-1")
-				require.NoError(t, driver.allocationState.Reserve(logger, claimUID, cpuset.New(0, 1), false))
+				require.NoError(t, driver.allocationState.Reserve(logger, claimUID, map[string]cpuset.CPUSet{"": cpuset.New(0, 1)}, false))
 				driver.podState.SetContainerState(types.UID(pod1.Uid), store.NewContainerState(ctr1.Name, types.UID(ctr1.Id), claimUID))
 				driver.podState.SetContainerState(types.UID(pod2.Uid), store.NewContainerState(ctr2.Name, types.UID(ctr2.Id)))
 				return driver
@@ -396,7 +396,7 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 	claimUID := types.UID("claim-restart")
 	claimCPUs := cpuset.New(0, 1)
 	allocState := store.NewAllocationState(topo, cpuset.New())
-	require.NoError(t, allocState.Reserve(logger, claimUID, claimCPUs, false))
+	require.NoError(t, allocState.Reserve(logger, claimUID, map[string]cpuset.CPUSet{"": claimCPUs}, false))
 	driver := &CPUDriver{
 		podState:        store.NewPodState(),
 		allocationState: allocState,
@@ -469,7 +469,7 @@ func TestGuaranteedContainerRestartNotBlockedByEmptySharedPool(t *testing.T) {
 
 	claimUID := types.UID("claim-full")
 	allocState := store.NewAllocationState(topo, cpuset.New())
-	require.NoError(t, allocState.Reserve(logger, claimUID, allCPUs, false))
+	require.NoError(t, allocState.Reserve(logger, claimUID, map[string]cpuset.CPUSet{"": allCPUs}, false))
 	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod", Name: "pod", Namespace: "ns"}
 	_, err = allocState.Bind(logger, types.UID(pod.Uid), "app", map[types.UID]cpuset.CPUSet{claimUID: allCPUs})
 	require.NoError(t, err)
@@ -807,7 +807,7 @@ func TestStopContainerKeepsClaimOutOfSharedPoolUntilUnprepare(t *testing.T) {
 	claimedCPUs := cpuset.New(0, 1)
 
 	allocationState := store.NewAllocationState(topo, cpuset.New())
-	require.NoError(t, allocationState.Reserve(logger, claimUID, claimedCPUs, false))
+	require.NoError(t, allocationState.Reserve(logger, claimUID, map[string]cpuset.CPUSet{"": claimedCPUs}, false))
 
 	driver := &CPUDriver{
 		cdiMgr:          newMockCdiMgr(),
