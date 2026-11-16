@@ -55,6 +55,28 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
     --set driverConfig.reservedCPUs="0-1"
 ```
 
+#### Pinning the driver image by digest
+
+Set `image.repository` and `image.digest` to deploy a specific image digest. When `image.digest`
+is set, it takes precedence over `image.tag`:
+
+```yaml
+image:
+  repository: quay.io/org/dra-driver-cpu
+  digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+For example, from the repository root, pass the digest directly with Helm:
+
+```shell
+helm upgrade --install dra-driver-cpu deployment/helm/dra-driver-cpu \
+    --set image.repository=quay.io/org/dra-driver-cpu \
+    --set-string image.digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+The chart renders the image as `repository@digest`. Leave `image.digest` empty to use the tag,
+which defaults to the chart's application version.
+
 #### driverConfig sub-fields
 
 The config file is a flat YAML map - there are no nested groups. All fields are optional
