@@ -272,6 +272,9 @@
         "publishNodeAllocatableResourceMapping": {
           "type": "boolean"
         },
+        "reconcileSharedOnUnprepare": {
+          "type": "boolean"
+        },
         "reservedCPUs": {
           "type": "string"
         },
