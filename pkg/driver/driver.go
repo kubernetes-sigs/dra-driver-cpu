@@ -141,6 +141,19 @@ type CPUDriver struct {
 	health                  healthTracker
 	kubeletRootDir          string
 	cpuAllocator            CPUAllocator
+
+	// containerUpdater is the NRI stub once Start has created it; nil while
+	// reconcileSharedOnUnprepare is off.
+	containerUpdater containerUpdater
+	// reconcileTrigger is nil while reconcileSharedOnUnprepare is off.
+	reconcileTrigger chan struct{}
+	// pendingSharedUpdate is non-nil while the worker has an update out to the
+	// runtime, and is closed when it returns. Guarded by stateMu.
+	pendingSharedUpdate chan struct{}
+	// prepareWaiters counts Prepares waiting on pendingSharedUpdate; prepareTurn
+	// is closed when the last of them has the lock again. Guarded by stateMu.
+	prepareWaiters int
+	prepareTurn    chan struct{}
 }
 
 // deviceHealthEntry is the last known health of a single device.
@@ -196,6 +209,9 @@ type Config struct {
 	// PublishNodeAllocatableResourceMapping publishes KEP-5517 nodeAllocatableResources mappings in
 	// ResourceSlice devices. Requires the DRANodeAllocatableResources feature gate to be enabled in the cluster.
 	PublishNodeAllocatableResourceMapping bool
+	// ReconcileSharedOnUnprepare pushes released CPUs to running shared containers
+	// right after Unprepare, with an unsolicited NRI UpdateContainers call.
+	ReconcileSharedOnUnprepare bool
 }
 
 func (cfg Config) DevicesPerResourceSlice() int {
@@ -234,6 +250,9 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		metrics:                 metricsRecorder,
 		health:                  newHealthTracker(),
 		kubeletRootDir:          config.KubeletRootDir,
+	}
+	if config.ReconcileSharedOnUnprepare {
+		plugin.reconcileTrigger = make(chan struct{}, 1)
 	}
 	topo, err := providers.EnsureCPUInfo().GetCPUTopology(logger)
 	if err != nil {
@@ -390,6 +409,10 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 		return asyncErr, fmt.Errorf("failed to create plugin stub: %w", err)
 	}
 	cp.nriPlugin = stub
+	if cp.reconcileTrigger != nil {
+		cp.containerUpdater = stub
+		go cp.runReconcileWorker(ctx)
+	}
 
 	go func() {
 		if err := runNRIPluginWithRetry(ctx, cp.nriPlugin, maxAttempts); err != nil && ctx.Err() == nil {

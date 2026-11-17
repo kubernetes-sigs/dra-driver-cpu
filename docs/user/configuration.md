@@ -131,6 +131,24 @@ on - is configured through other Helm values, not through this file.
 - Requires the `DRANodeAllocatableResources` feature gate (alpha, 1.37+). See
   [Workload Configuration Requirements](workload-requirements.md).
 
+`reconcileSharedOnUnprepare` (bool, default: `false`)
+
+- Widen running shared containers onto the CPUs a claim released as soon as the claim is
+  unprepared, instead of leaving them on the narrower cpuset until their next container
+  creation or driver restart. The driver sends the new cpuset with an unsolicited NRI
+  `UpdateContainers` call from a worker goroutine, so neither kubelet's Unprepare nor an
+  NRI hook waits on the runtime.
+- Only enable it on runtimes whose NRI adaptation includes
+  [containerd/nri#301](https://github.com/containerd/nri/pull/301); an unsolicited update
+  deadlocks older adaptations. The NRI handshake reports the runtime version but not its
+  vendored NRI version, so the driver cannot check this and the operator opts in. By
+  source inspection of the release tags, containerd v2.4.2 and CRI-O v1.37.4 include the
+  fix, while containerd v2.3.4 and CRI-O v1.36.0 do not.
+- While an update is in flight, `PrepareResourceClaims` waits for it before reserving
+  CPUs, bounded by kubelet's deadline, so a stale widening can never be applied over a
+  newer exclusive assignment. A failed update is logged and not retried: the containers
+  keep their current cpuset until their next lifecycle event, as without this option.
+
 #### Example
 
 ```yaml

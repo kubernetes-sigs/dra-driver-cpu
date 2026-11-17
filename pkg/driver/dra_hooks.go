@@ -251,7 +251,9 @@ func (cp *CPUDriver) prepareGroupedResourceClaimLocked(logger logr.Logger, claim
 }
 
 func (cp *CPUDriver) prepareResourceClaim(ctx context.Context, logger logr.Logger, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
-	cp.stateMu.Lock()
+	if err := cp.lockStateForPrepare(ctx); err != nil {
+		return kubeletplugin.PrepareResult{Err: err}
+	}
 	defer cp.stateMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return kubeletplugin.PrepareResult{Err: err}
@@ -422,9 +424,10 @@ func (cp *CPUDriver) unprepareResourceClaim(ctx context.Context, logger logr.Log
 	}
 	cp.allocationState.Release(logger, claim.UID)
 	cp.refreshAllocationMetrics()
-	// TODO(#279): Update existing shared containers here once all supported runtimes can
-	// safely process unsolicited NRI UpdateContainers calls. Until then, each container
-	// picks up the expanded cpuset on its next CreateContainer or Synchronize.
+	// Running shared containers still have the narrower cpuset. The worker
+	// widens them; with the option off they get it at their next
+	// CreateContainer or Synchronize.
+	cp.requestReconcile()
 	return nil
 }
 

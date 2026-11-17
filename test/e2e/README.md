@@ -104,6 +104,14 @@ honor these settings, where applicable.
   gate; the stock kind configs enable it (they require a 1.37+ node image, which is the
   Makefile default).
 
+- `DRACPU_E2E_RECONCILE_SHARED_ON_UNPREPARE`: (optional, default `false`): when `true`, *the
+  Makefile* `ci-kind-setup` target deploys the driver with the
+  `driverConfig.reconcileSharedOnUnprepare: true` option. The tests read the option back from
+  the driver ConfigMap and expect running shared pods to be widened when a claim is released
+  instead of keeping their last cpuset. Only use it with a runtime that includes
+  [containerd/nri#301](https://github.com/containerd/nri/pull/301); the stock
+  `kindest/node:v1.37.0` image ships containerd v2.3.4, which does not.
+
 - `DRACPU_E2E_DUMP_RAW_LOGS`: (optional): if set to any value which is true-ish (e.g. `1`, `true`...)
   makes the tests which verify the contextual logging integrity dump the full raw captured logs
   before to run any actual test. Useful for troubleshooting and test fixing/tuning.
