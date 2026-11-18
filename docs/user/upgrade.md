@@ -73,10 +73,20 @@ Move the values to the configuration file before upgrading:
 - `--cpu-device-mode` → `cpuDeviceMode`
 - `--group-by` → `groupBy`
 - `--reserved-cpus` → `reservedCPUs`
-- `--hostname-override` → `hostnameOverride`
+- `--hostname-override` → the `NODE_NAME` environment variable
 - `--sysfs-overlay` → `sysfsOverlay`
 
 See [configuration](configuration.md#command-line-flags) for details.
+
+#### Deprecated `hostnameOverride`
+
+Remove `args.hostnameOverride` and `driverConfig.hostnameOverride` before upgrading;
+the chart now refuses them.
+
+With `--reuse-values`, Helm keeps these keys from the existing release even after
+you remove them from the values file, and the chart refuses the upgrade. The running
+release stays unchanged. Upgrade with `--reset-values` and the full set of values you
+want. See [configuration](configuration.md) for details.
 
 #### API packages reorganization
 
