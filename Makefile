@@ -49,6 +49,12 @@ export GOROOT GO111MODULE CGO_ENABLED KUBECONFIG
 # Example: make manifests OVERRIDE_IMAGE=true
 OVERRIDE_IMAGE ?= false
 
+# Git pathspecs checked for stale release references.
+VERSION_REF_PATHS ?= \
+	:(glob)docs/**/*.md \
+	:(glob)README.md \
+	:(glob)deployment/helm/*/README.md.gotmpl
+
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
 SHELL = /usr/bin/env bash -o pipefail
@@ -71,7 +77,7 @@ clean: ## clean
 	rm -rf "$(OUT_DIR)/"
 
 test-unit: ## run tests
-	CGO_ENABLED=1 GOTOOLCHAIN=${TOOOLCHAIN_MODE} go test -v -race -count 1 -coverprofile=coverage.out ./pkg/... ./internal/... ./cmd/...
+	CGO_ENABLED=1 GOTOOLCHAIN=${TOOOLCHAIN_MODE} go test -v -race -count 1 -coverprofile=coverage.out ./pkg/... ./internal/... ./cmd/... ./tools/...
 
 test-e2e-local: ## run e2e local tests (binary must be pre-built)
 	go test -v -count 1 ./test/e2e_local/...
@@ -298,6 +304,12 @@ helm-schema: driverconfig-schema ## regenerate values.schema.json from values.ya
 helm-schema-check: helm-schema ## verify values.schema.json is up to date; fails if regeneration produces a diff
 	@git diff --exit-code ${HELM_CHART}/values.schema.json || \
 		(echo "ERROR: values.schema.json is out of date. Run 'make helm-schema' to update it." && exit 1)
+
+.PHONY: check-version-refs
+check-version-refs: $(OUT_DIR) ## verify the documentation names the release in VERSION and no older one
+	@go build -o "$(OUT_DIR)/check-version-refs" ./tools/check-version-refs
+	@"$(OUT_DIR)/check-version-refs" $(foreach path,$(VERSION_REF_PATHS),'$(path)')
+
 CHART_REGISTRY?=$(REGISTRY)/$(IMAGE_NAME)/charts
 HELM_VERSION_SHA?=a2369ca71c0ef633bf6e4fccd66d634eb379b371 # v3.20.1
 
