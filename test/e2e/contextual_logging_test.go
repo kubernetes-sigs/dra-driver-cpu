@@ -56,7 +56,7 @@ var _ = ginkgo.ReportAfterSuite("contextual logging", func(report ginkgo.Report)
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
 	ctxlogFxt.Log.Info("using worker node", "nodeName", targetNode.Name)
 
-	dracpuPod, err := e2epod.GetDRACPUPod(ctx, ctxlogFxt.K8SClientset, targetNode.Name)
+	dracpuPod, err := e2epod.GetDRACPUPod(ctx, ctxlogFxt.K8SClientset, targetNode.Name, daemonSetNamespace)
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 	logs, err := e2epod.GetLogs(ctx, ctxlogFxt.K8SClientset, dracpuPod)
