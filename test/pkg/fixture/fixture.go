@@ -18,6 +18,7 @@ package fixture
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -78,8 +79,32 @@ func (fxt *Fixture) Setup(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create namespace %s: %w", ns.Name, err)
 	}
+	// The default ServiceAccount is created asynchronously by the controller
+	// manager; pods created before it exists are rejected. This shows up when
+	// the first spec runs right after the cluster comes up.
+	if err := waitForDefaultServiceAccount(ctx, fxt.K8SClientset, nsCreated.Name); err != nil {
+		// Callers register Teardown only after Setup succeeds, so clean up here.
+		// The wait may have failed because ctx ended; still try to delete.
+		delErr := fxt.K8SClientset.CoreV1().Namespaces().Delete(context.WithoutCancel(ctx), nsCreated.Name, metav1.DeleteOptions{})
+		return errors.Join(err, delErr)
+	}
 	fxt.Namespace = nsCreated
 	fxt.Log.Info("fixture setup", "namespace", fxt.Namespace.Name)
+	return nil
+}
+
+func waitForDefaultServiceAccount(ctx context.Context, cs kubernetes.Interface, nsName string) error {
+	immediate := true
+	err := wait.PollUntilContextTimeout(ctx, nsPollInterval, nsPollTimeout, immediate, func(ctx2 context.Context) (bool, error) {
+		_, err := cs.CoreV1().ServiceAccounts(nsName).Get(ctx2, "default", metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return err == nil, err
+	})
+	if err != nil {
+		return fmt.Errorf("namespace=%s has no default service account: %w", nsName, err)
+	}
 	return nil
 }
 
