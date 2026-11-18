@@ -87,6 +87,13 @@ func affinityScanBoundFromTopology(topo *cpuinfo.CPUTopology) int {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--memory-poc" {
+		if err := runMemoryPOC(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	logger := stdr.New(log.Default())
 	// Read the container's cgroup view, intentionally ignoring HOST_ROOT.
 	containerSysfs := os.DirFS("/sys")

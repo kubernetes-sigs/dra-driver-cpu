@@ -1,0 +1,71 @@
+# Copyright 2026 The Kubernetes Authors.
+# SPDX-License-Identifier: Apache-2.0
+# Run instructions: docs/user/memory-poc.md
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: memory-aligned
+spec:
+  devices:
+    requests:
+    - name: cpu
+      exactly:
+        deviceClassName: dra.cpu
+        count: 1
+        capacity:
+          requests:
+            dra.cpu/cpu: '1'
+    - name: memory
+      exactly:
+        deviceClassName: dra.memory
+        count: 1
+        capacity:
+          requests:
+            dra.cpu/size: 64Mi
+    - name: hp2m
+      exactly:
+        deviceClassName: dra.hugepages-2m
+        count: 1
+        capacity:
+          requests:
+            dra.cpu/size: 2Mi
+    - name: hp1g
+      exactly:
+        deviceClassName: dra.hugepages-1g
+        count: 1
+        capacity:
+          requests:
+            dra.cpu/size: 1Gi
+    constraints:
+    - matchAttribute: resource.kubernetes.io/numaNode
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: memory-aligned
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: dra-cpu-memory-poc-worker
+  containers:
+  - name: probe
+    image: dra-cpu-poc:local
+    imagePullPolicy: Never
+    command:
+    - /dracputester
+    - --memory-poc
+    env:
+    - name: POC_MEMORY_BYTES
+      value: '67108864'
+    - name: POC_HUGE_2M_BYTES
+      value: '2097152'
+    - name: POC_HUGE_1G_BYTES
+      value: '1073741824'
+    - name: POC_CPU_COUNT
+      value: '1'
+    resources:
+      claims:
+      - name: memory-aligned
+  resourceClaims:
+  - name: memory-aligned
+    resourceClaimName: memory-aligned

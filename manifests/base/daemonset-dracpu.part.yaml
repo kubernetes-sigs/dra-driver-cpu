@@ -29,6 +29,7 @@ spec:
         args:
         - /dracpu
         - --v=4
+        - --enable-memory=false
         image: registry.k8s.io/dra-driver-cpu/dra-driver-cpu:v0.2.0
         imagePullPolicy: Always
         livenessProbe:

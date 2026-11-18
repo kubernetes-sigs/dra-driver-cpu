@@ -1,0 +1,17 @@
+# Copyright 2026 The Kubernetes Authors.
+# SPDX-License-Identifier: Apache-2.0
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+featureGates:
+  DRANodeAllocatableResources: true
+  DRAConsumableCapacity: true
+  MemoryQoS: false
+kubeadmConfigPatches:
+- |
+  kind: KubeletConfiguration
+  cpuManagerPolicy: none
+  memoryManagerPolicy: None
+  failSwapOn: true
+nodes:
+- role: control-plane
+- role: worker

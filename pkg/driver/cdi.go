@@ -17,6 +17,8 @@ package driver
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/go-logr/logr"
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
@@ -68,26 +70,20 @@ func (c *CdiManager) getSpecName(deviceName string) string {
 
 // AddDevice writes a dedicated CDI spec file for a single device allocation.
 func (c *CdiManager) AddDevice(logger logr.Logger, deviceName string, envVar string) error {
-	specName := c.getSpecName(deviceName)
+	return c.AddRequestDevices(logger, deviceName, map[string]string{deviceName: envVar})
+}
 
-	spec := &cdiSpec.Spec{
-		Version: cdiSpecVersion,
-		Kind:    c.cdiKind,
-		Devices: []cdiSpec.Device{
-			{
-				Name: deviceName,
-				ContainerEdits: cdiSpec.ContainerEdits{
-					Env: []string{envVar},
-				},
-			},
-		},
+func (c *CdiManager) AddRequestDevices(logger logr.Logger, specDeviceName string, envs map[string]string) error {
+	specName := c.getSpecName(specDeviceName)
+	devices := make([]cdiSpec.Device, 0, len(envs))
+	for _, name := range slices.Sorted(maps.Keys(envs)) {
+		devices = append(devices, cdiSpec.Device{Name: name, ContainerEdits: cdiSpec.ContainerEdits{Env: []string{envs[name]}}})
 	}
-
+	spec := &cdiSpec.Spec{Version: cdiSpecVersion, Kind: c.cdiKind, Devices: devices}
 	if err := c.cache.WriteSpec(spec, specName); err != nil {
-		return fmt.Errorf("failed to write CDI spec %q: %w", specName, err)
+		return fmt.Errorf("failed to write CDI spec %q; check CDI directory permissions: %w", specName, err)
 	}
-
-	logger.V(4).Info("Added CDI device", "deviceName", deviceName, "specName", specName, "env", envVar)
+	logger.V(4).Info("added CDI devices", "specName", specName, "count", len(devices))
 	return nil
 }
 
@@ -119,4 +115,16 @@ func (c *CdiManager) RemoveDevice(logger logr.Logger, deviceName string) error {
 
 	logger.V(4).Info("Removed CDI device", "deviceName", deviceName, "specName", specName)
 	return nil
+}
+
+func (c *CdiManager) GetRequestPeers(deviceName string) ([]string, error) {
+	device := c.cache.GetDevice(cdiparser.QualifiedName(cdiVendor, cdiClass, deviceName))
+	if device == nil {
+		return nil, fmt.Errorf("CDI request device %q is missing; restore its claim spec", deviceName)
+	}
+	var envs []string
+	for _, peer := range device.GetSpec().Devices {
+		envs = append(envs, peer.ContainerEdits.Env...)
+	}
+	return envs, nil
 }

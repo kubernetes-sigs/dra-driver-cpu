@@ -1,0 +1,11 @@
+# Copyright 2026 The Kubernetes Authors.
+# SPDX-License-Identifier: Apache-2.0
+kind: HugePageProvision
+metadata:
+  name: cpu-memory-poc-all-sizes
+spec:
+  pages:
+  - size: "1G"
+    count: 2
+  - size: "2M"
+    count: 64

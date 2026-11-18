@@ -95,8 +95,7 @@ func (cp *CPUDriver) markDevicesHealth(logger logr.Logger, deviceNames []string,
 }
 
 // buildHealthReport snapshots the health of every device this driver
-// manages. All devices are published under a single pool named nodeName
-// (see PublishResources).
+// manages, retaining the CPU pool name and each memory resource pool.
 func (h *healthTracker) buildHealthReport(nodeName string) kubeletplugin.DeviceHealthReport {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -107,8 +106,12 @@ func (h *healthTracker) buildHealthReport(nodeName string) kubeletplugin.DeviceH
 
 	devices := make([]kubeletplugin.DeviceHealth, 0, len(h.devices))
 	for name, entry := range h.devices {
+		pool := entry.pool
+		if pool == "" {
+			pool = nodeName
+		}
 		devices = append(devices, kubeletplugin.DeviceHealth{
-			PoolName:           nodeName,
+			PoolName:           pool,
 			DeviceName:         name,
 			Health:             entry.status,
 			LastUpdated:        time.Now(),

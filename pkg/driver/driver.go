@@ -33,11 +33,13 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuinfo"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/memory"
 	cpumetrics "github.com/kubernetes-sigs/dra-driver-cpu/pkg/metrics"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/sysfs"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	drametadatav1alpha1 "k8s.io/dynamic-resource-allocation/api/metadata/v1alpha1"
@@ -141,10 +143,14 @@ type CPUDriver struct {
 	health                  healthTracker
 	kubeletRootDir          string
 	cpuAllocator            CPUAllocator
+	memoryDevices           map[string]memory.Device
+	memoryEnabled           bool
+	composedClaims          map[types.UID]*composedClaim
 }
 
 // deviceHealthEntry is the last known health of a single device.
 type deviceHealthEntry struct {
+	pool    string
 	status  kubeletplugin.HealthStatus
 	message string
 }
@@ -180,6 +186,7 @@ func (pr Providers) EnsureSysFS() sysfs.FS {
 
 // Config is the configuration for the CPUDriver.
 type Config struct {
+	EnableMemory     bool
 	DriverName       string
 	NodeName         string
 	ReservedCPUs     cpuset.CPUSet
@@ -211,12 +218,18 @@ func (cfg Config) DevicesPerResourceSlice() int {
 // No external listeners or goroutines are started; call Start to begin serving.
 func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, error) {
 	logger = logger.WithValues("driver", config.DriverName)
+	if config.EnableMemory && !config.PublishNodeAllocatableResourceMapping {
+		return nil, fmt.Errorf("memory POC requires publishNodeAllocatableResourceMapping: true and DRANodeAllocatableResources on the cluster; enable both or use --enable-memory=false")
+	}
 
 	metricsRecorder := config.Metrics
 	if metricsRecorder == nil {
 		metricsRecorder = cpumetrics.Noop()
 	}
 	plugin := &CPUDriver{
+		memoryEnabled:   config.EnableMemory,
+		composedClaims:  make(map[types.UID]*composedClaim),
+		memoryDevices:   make(map[string]memory.Device),
 		initialSync:     make(chan struct{}),
 		initialSyncWait: initialSyncWait,
 		driverName:      config.DriverName,
@@ -290,6 +303,16 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		}
 	}
 
+	if config.EnableMemory {
+		inventory, err := memory.Discover(providers.EnsureSysFS())
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range inventory {
+			plugin.memoryDevices[d.Pool(plugin.nodeName)+"/"+d.Name()] = d
+			plugin.health.devices[d.Name()] = &deviceHealthEntry{status: kubeletplugin.HealthStatusHealthy, message: "device initialized", pool: d.Pool(plugin.nodeName)}
+		}
+	}
 	return plugin, nil
 }
 

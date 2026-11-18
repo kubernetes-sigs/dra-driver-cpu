@@ -3,6 +3,16 @@
 This page covers configuring the driver itself, the kubelet prerequisites required to run it,
 and the command-line flags the driver still supports.
 
+## Experimental memory support
+
+`--enable-memory` defaults to `true` in the POC and controls regular memory and
+both hugepage sizes together. Set it to `false` (Helm: `enableMemory: false`) for
+CPU-only behavior. Memory-enabled startup requires
+`publishNodeAllocatableResourceMapping: true` and the cluster
+`DRANodeAllocatableResources` feature gate. Follow the
+[memory POC runbook](memory-poc.md) before enabling it on a node. The switch is
+operational and is not a versioned configuration-file field.
+
 ## Driver configuration
 
 The driver supports two configuration mechanisms:

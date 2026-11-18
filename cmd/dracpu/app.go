@@ -55,8 +55,9 @@ const (
 )
 
 var (
-	driverFlags driverconfig.Config
-	configFile  string
+	driverFlags  driverconfig.Config
+	configFile   string
+	enableMemory bool
 
 	ready atomic.Bool
 )
@@ -65,6 +66,7 @@ func init() {
 	// --config is kept outside Config to avoid a self-referential loop,
 	// following the convention used by kubeadm and similar tools.
 	flag.StringVar(&configFile, "config", "", configFlagHelp)
+	flag.BoolVar(&enableMemory, "enable-memory", true, "Enable the memory and hugepages POC; requires native resource mappings and DRANodeAllocatableResources")
 	driverFlags.AddFlags(flag.CommandLine)
 	flag.CommandLine.Usage = func() {
 		printRootUsage(flag.CommandLine)
@@ -212,6 +214,7 @@ func run(logger logr.Logger, cfg driverconfig.Config) error {
 	defer stop()
 
 	driverConfig := driver.Config{
+		EnableMemory:                          enableMemory,
 		DriverName:                            dracpuapi.DriverName,
 		NodeName:                              nodeName,
 		ReservedCPUs:                          reservedCPUSet,

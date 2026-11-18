@@ -9,8 +9,10 @@ require (
 	github.com/go-logr/stdr v1.2.2
 	github.com/google/go-cmp v0.7.0
 	github.com/google/jsonschema-go v0.4.3
+	github.com/moby/sys/mountinfo v0.7.2
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.40.0
+	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/prometheus/client_golang v1.24.0
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.70.0

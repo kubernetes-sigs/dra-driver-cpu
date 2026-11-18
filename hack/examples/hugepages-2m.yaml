@@ -1,0 +1,42 @@
+# Copyright 2026 The Kubernetes Authors.
+# SPDX-License-Identifier: Apache-2.0
+# Run instructions: docs/user/memory-poc.md
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: hugepages-2m
+spec:
+  devices:
+    requests:
+    - name: hp2m
+      exactly:
+        deviceClassName: dra.hugepages-2m
+        count: 1
+        capacity:
+          requests:
+            dra.cpu/size: 2Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hugepages-2m
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: dra-cpu-memory-poc-worker
+  containers:
+  - name: probe
+    image: dra-cpu-poc:local
+    imagePullPolicy: Never
+    command:
+    - /dracputester
+    - --memory-poc
+    env:
+    - name: POC_HUGE_2M_BYTES
+      value: '2097152'
+    resources:
+      claims:
+      - name: hugepages-2m
+  resourceClaims:
+  - name: hugepages-2m
+    resourceClaimName: hugepages-2m
