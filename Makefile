@@ -122,6 +122,11 @@ endif
 # DRANodeAllocatableResources feature gate enabled.
 DRACPU_E2E_NODE_ALLOCATABLE_MAPPING ?= false
 DRACPU_E2E_ALLOCATOR ?= cpumanager
+# The e2e suite waits on real cluster operations by design, so it needs a larger
+# -timeout than the 10m default of "go test" to report a stuck suite as a clean
+# failure instead of panicking. The suite takes about four minutes on a local
+# kind cluster; 15m leaves headroom for slower clusters.
+DRACPU_E2E_TIMEOUT ?= 15m
 # Extra arguments passed to golangci-lint in the lint target.
 # For example, set GOLANGCI_LINT_EXTRA_ARGS=--fix to auto-fix issues.
 GOLANGCI_LINT_EXTRA_ARGS ?=
@@ -237,7 +242,7 @@ build-test-dracpuinfo: ## build helper to expose hardware info in the internal d
 	go build -v -o "$(OUT_DIR)/dracpuinfo" ./test/image/dracpuinfo
 
 test-e2e: ## run e2e test against an existing configured cluster
-	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) go test -v ./test/e2e/ --ginkgo.v $(GINKGO_LABEL_FILTER_ARG)
+	env DRACPU_E2E_TEST_IMAGE=$(IMAGE_TEST) DRACPU_E2E_RESERVED_CPUS=$(DRACPU_E2E_RESERVED_CPUS) go test -v -timeout $(DRACPU_E2E_TIMEOUT) ./test/e2e/ --ginkgo.v $(GINKGO_LABEL_FILTER_ARG)
 
 test-e2e-kind: ci-kind-setup test-e2e ## run e2e test against a purpose-built kind cluster
 
