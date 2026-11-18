@@ -110,6 +110,10 @@
         "pullPolicy"
       ],
       "properties": {
+        "digest": {
+          "description": "Image digest; when set, takes precedence over the tag",
+          "type": "string"
+        },
         "pullPolicy": {
           "description": "Image pull policy",
           "type": "string",

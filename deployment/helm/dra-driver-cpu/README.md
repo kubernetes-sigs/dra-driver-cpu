@@ -46,6 +46,7 @@ helm install dra-driver-cpu oci://registry.k8s.io/dra-driver-cpu/charts/dra-driv
 | extraVolumes | list | `[]` | Extra volumes for the DaemonSet pod |
 | fullnameOverride | string | `""` | Override the full release name |
 | healthzPort | int | `8080` | Port the HTTP server binds to; used for the container port and probes |
+| image.digest | string | `""` | Image digest; when set, takes precedence over the tag |
 | image.pullPolicy | string | `"IfNotPresent"` | Image pull policy |
 | image.repository | string | `"registry.k8s.io/dra-driver-cpu/dra-driver-cpu"` | Container image repository |
 | image.tag | string | `""` | Image tag; defaults to `.Chart.AppVersion` when empty, which is set to the release tag at package time |
