@@ -54,6 +54,12 @@ const (
 	testDriverName = "dra-driver-cpu.k8s.io"
 )
 
+func fullClaimRequest(cpus cpuset.CPUSet) map[string]cpuset.CPUSet {
+	return map[string]cpuset.CPUSet{
+		"": cpus,
+	}
+}
+
 // testSysFS enables full isolation and full mocking from the host filesystem.
 // It is not strictly speaking needed by the current tests, but it is added for better hygiene.
 func testSysFS(infos []cpuinfo.CPUInfo) fstest.MapFS {
@@ -783,7 +789,7 @@ func TestPrepareResourceClaims(t *testing.T) {
 			setupDriver: func(t *testing.T) *CPUDriver {
 				t.Helper()
 				d := baseCPUDriver(t)
-				require.NoError(t, d.allocationState.Reserve(testr.New(t), noop, store.ClaimIdentifier{UID: "claim0"}, map[string]cpuset.CPUSet{"": cpuset.New(0)}, false))
+				require.NoError(t, d.allocationState.Reserve(testr.New(t), noop, store.ClaimIdentifier{UID: "claim0"}, fullClaimRequest(cpuset.New(0)), false))
 				return d
 			},
 			claims: []*resourceapi.ResourceClaim{
@@ -1069,7 +1075,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			metrics:         cpumetrics.Noop(),
 		}
 		if withExistingAllocation {
-			require.NoError(t, driver.allocationState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, map[string]cpuset.CPUSet{"": existingCPUs}, false))
+			require.NoError(t, driver.allocationState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, fullClaimRequest(existingCPUs), false))
 		}
 		return driver
 	}
@@ -1098,7 +1104,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			cpuAllocator:    cpuallocator.NewCPUManager(testDriverName, topo),
 		}
 		if withExistingAllocation {
-			require.NoError(t, driver.allocationState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, map[string]cpuset.CPUSet{"": existingCPUs}, false))
+			require.NoError(t, driver.allocationState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, fullClaimRequest(existingCPUs), false))
 		}
 		return driver
 	}
@@ -1210,7 +1216,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 		driver, err := New(testr.New(t), prov, &conf)
 		require.NoError(t, err)
 		for claimUID, cpus := range initialAllocations {
-			require.NoError(t, driver.allocationState.Reserve(testr.New(t), noop, store.ClaimIdentifier{UID: claimUID}, map[string]cpuset.CPUSet{"": cpus}, false))
+			require.NoError(t, driver.allocationState.Reserve(testr.New(t), noop, store.ClaimIdentifier{UID: claimUID}, fullClaimRequest(cpus), false))
 		}
 		return driver
 	}
@@ -2019,7 +2025,7 @@ func newDriverWithAllocatedClaim(t *testing.T, logger logr.Logger, claimUID type
 	topo, err := mockProvider.GetCPUTopology(logger)
 	require.NoError(t, err)
 	allocationState := store.NewAllocationState(testNodeName, topo, cpuset.New())
-	require.NoError(t, allocationState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, map[string]cpuset.CPUSet{"": allocatedCPUs}, false))
+	require.NoError(t, allocationState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, fullClaimRequest(allocatedCPUs), false))
 	_, err = allocationState.Bind(logger, noop, "pod", "container", map[types.UID]cpuset.CPUSet{claimUID: allocatedCPUs})
 	require.NoError(t, err)
 
@@ -2514,7 +2520,7 @@ func createCPUDriverExternalAllocForTest(t *testing.T, groupBy string, cpuInfos 
 	driver.podState = store.NewPodState()
 	driver.cpuAllocator = cpuallocator.NewExternal(testDriverName, driver.topology.ManagedCPUs(), reservedCPUs)
 	for claimUID, cpus := range initialAllocations {
-		require.NoError(t, driver.allocationState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, map[string]cpuset.CPUSet{"": cpus}, false))
+		require.NoError(t, driver.allocationState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, fullClaimRequest(cpus), false))
 	}
 
 	topo, err := mockProvider.GetCPUTopology(logger)
