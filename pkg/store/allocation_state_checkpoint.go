@@ -44,14 +44,14 @@ var (
 	ErrNodeChanged          = errors.New("current node differs from checkpointed node")
 )
 
-type ownerIdentCheckpoint struct {
+type ownerIdentifierCheckpoint struct {
 	PodUID        string `cbor:"podUID"`
 	ContainerName string `cbor:"containerName"`
 }
 
 type requestAllocationCheckpoint struct {
-	CPUs   string                 `cbor:"cpus"`
-	Owners []ownerIdentCheckpoint `cbor:"owners"`
+	CPUs   string                      `cbor:"cpus"`
+	Owners []ownerIdentifierCheckpoint `cbor:"owners"`
 }
 
 type namespacedNameCheckpoint struct {
@@ -171,7 +171,7 @@ func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr chec
 			return fmt.Errorf("restoring claim %q: CPUs outside the available set: %s", claimIdent, claimData.CPUs)
 		}
 
-		owners := sets.New[OwnerIdent]()
+		owners := sets.New[OwnerIdentifier]()
 		requests := make(map[string]requestAllocation)
 		for name, alloc := range claimData.Requests {
 			reqCpus, err := cpuset.Parse(alloc.CPUs)
@@ -179,7 +179,7 @@ func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr chec
 				return fmt.Errorf("restoring claim %q request %q: %w", claimIdent, name, err)
 			}
 			for _, reqOwner := range alloc.Owners {
-				owner := OwnerIdent{
+				owner := OwnerIdentifier{
 					PodUID:        types.UID(reqOwner.PodUID),
 					ContainerName: reqOwner.ContainerName,
 				}
@@ -244,15 +244,15 @@ func (s *AllocationState) storeStateLocked(logger logr.Logger, checkpointMgr che
 }
 
 func makeRequestAllocationCheckpoint(req requestAllocation) requestAllocationCheckpoint {
-	owners := make([]ownerIdentCheckpoint, 0, len(req.owners))
+	owners := make([]ownerIdentifierCheckpoint, 0, len(req.owners))
 	for _, owner := range req.owners {
-		owners = append(owners, ownerIdentCheckpoint{
+		owners = append(owners, ownerIdentifierCheckpoint{
 			PodUID:        string(owner.PodUID),
 			ContainerName: owner.ContainerName,
 		})
 	}
 	// ensure stable serialization
-	slices.SortFunc(owners, func(a, b ownerIdentCheckpoint) int {
+	slices.SortFunc(owners, func(a, b ownerIdentifierCheckpoint) int {
 		if n := strings.Compare(a.PodUID, b.PodUID); n != 0 {
 			return n
 		}

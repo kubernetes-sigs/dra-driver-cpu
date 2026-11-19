@@ -39,7 +39,7 @@ var (
 
 type ClaimAlreadyBoundError struct {
 	ClaimUID types.UID
-	Owner    OwnerIdent
+	Owner    OwnerIdentifier
 }
 
 func (err ClaimAlreadyBoundError) Error() string {
@@ -76,24 +76,24 @@ func (err UnknownClaimError) Unwrap() error {
 	return ErrUnknownClaim
 }
 
-type OwnerIdent struct {
+type OwnerIdentifier struct {
 	PodUID        types.UID
 	ContainerName string
 }
 
-func (oi OwnerIdent) String() string {
+func (oi OwnerIdentifier) String() string {
 	return string(oi.PodUID) + "/" + oi.ContainerName
 }
 
-func (oi OwnerIdent) Assigned() bool {
+func (oi OwnerIdentifier) Assigned() bool {
 	return oi.PodUID != types.UID("") && oi.ContainerName != ""
 }
 
-func (oi OwnerIdent) Vacant() bool {
+func (oi OwnerIdentifier) Vacant() bool {
 	return oi.PodUID == types.UID("") && oi.ContainerName == ""
 }
 
-func (oi OwnerIdent) Equal(ident OwnerIdent) bool {
+func (oi OwnerIdentifier) Equal(ident OwnerIdentifier) bool {
 	return oi.PodUID == ident.PodUID && oi.ContainerName == ident.ContainerName
 }
 
@@ -122,7 +122,7 @@ func (ci ClaimIdentifier) String() string {
 
 type requestAllocation struct {
 	cpus   cpuset.CPUSet
-	owners []OwnerIdent
+	owners []OwnerIdentifier
 }
 
 // claimAllocation keeps CPUs and owners per request, so a container can later
@@ -163,7 +163,7 @@ func newClaimAllocation(claim ClaimIdentifier, requests map[string]cpuset.CPUSet
 }
 
 // Acquire returns an owned copy if the allocation has no owner.
-func (ca claimAllocation) Acquire(owner OwnerIdent) (claimAllocation, bool) {
+func (ca claimAllocation) Acquire(owner OwnerIdentifier) (claimAllocation, bool) {
 	allocation := ca.Clone()
 	acquired := false
 	for name, req := range allocation.requests {
@@ -189,8 +189,8 @@ func (ca claimAllocation) Release() claimAllocation {
 }
 
 // AllClaimOwners returns the containers bound to any request of the claim.
-func (ca claimAllocation) AllClaimOwners() []OwnerIdent {
-	var owners []OwnerIdent
+func (ca claimAllocation) AllClaimOwners() []OwnerIdentifier {
+	var owners []OwnerIdentifier
 	for _, req := range ca.requests {
 		for _, owner := range req.owners {
 			if !slices.Contains(owners, owner) {
@@ -319,7 +319,7 @@ func (s *AllocationState) Bind(logger logr.Logger, checkpointMgr checkpoint.Mana
 		return nil, ErrEmptyClaimList
 	}
 	logger = logger.WithValues("podUID", podUID, "containerName", containerName)
-	curIdent := OwnerIdent{
+	curIdent := OwnerIdentifier{
 		PodUID:        podUID,
 		ContainerName: containerName,
 	}
@@ -388,7 +388,7 @@ func (s *AllocationState) Unbind(logger logr.Logger, checkpointMgr checkpoint.Ma
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	candidate := s.cloneLocked()
-	previousOwners := make(map[types.UID]OwnerIdent)
+	previousOwners := make(map[types.UID]OwnerIdentifier)
 	changed := false
 	for _, claimUID := range claimUIDs {
 		if allocation, ok := candidate.resourceClaimAllocations[claimUID]; ok {
@@ -421,7 +421,7 @@ func (s *AllocationState) IsOwner(claimUID types.UID, podUID types.UID, containe
 	if !found {
 		return false
 	}
-	return slices.Contains(info.AllClaimOwners(), OwnerIdent{PodUID: podUID, ContainerName: containerName})
+	return slices.Contains(info.AllClaimOwners(), OwnerIdentifier{PodUID: podUID, ContainerName: containerName})
 }
 
 // GetSharedCPUs returns CPUs available to shared containers.
