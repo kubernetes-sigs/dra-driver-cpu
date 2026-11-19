@@ -28,6 +28,7 @@ The command prints JSON metadata for custom `dra_cpu_*` metrics only. It does no
 | `dra_cpu_nri_create_container_duration_seconds` | Histogram | `result`, `cpu_allocation_mode` | Duration of the NRI `CreateContainer` callback in seconds. `result` is `success` or `error`; `cpu_allocation_mode` is `shared` or `exclusive`. |
 | `dra_cpu_nri_stop_container_duration_seconds`   | Histogram | `result`, `cpu_allocation_mode` | Duration of the NRI `StopContainer` callback in seconds. `result` is `success` or `error`; `cpu_allocation_mode` is `shared` or `exclusive`.   |
 | `dra_cpu_nri_remove_container_duration_seconds` | Histogram | `result`, `cpu_allocation_mode` | Duration of the NRI `RemoveContainer` callback in seconds. `result` is `success` or `error`; `cpu_allocation_mode` is `shared` or `exclusive`. |
+| `dra_cpu_cpuset_partitions`                     | Gauge     | `state`                         | Experimental cgroup v2 cpuset partitions (`experimentalCPUSetPartition`) by `state`: `valid`, `invalid`, or `releasing`. Zero while disabled.  |
 
 Note about `dra_cpu_nri_remove_container_duration_seconds`: due to how the driver is implemented and how it uses the NRI APIs, this metric reports
 cases on which the hook recovered an internal faulty state. The cleanup action should be carried at the `StopContainer` stage and the real work
