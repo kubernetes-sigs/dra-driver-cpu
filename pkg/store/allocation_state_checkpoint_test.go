@@ -224,7 +224,7 @@ func TestAllocationStateUnbindBatchKeepsStateWhenCheckpointWriteFails(t *testing
 			Requests: map[string]requestAllocationCheckpoint{
 				"": {
 					CPUs: "0",
-					Owners: []ownerIdentCheckpoint{
+					Owners: []ownerIdentifierCheckpoint{
 						{
 							PodUID:        "pod",
 							ContainerName: "container",
@@ -238,7 +238,7 @@ func TestAllocationStateUnbindBatchKeepsStateWhenCheckpointWriteFails(t *testing
 			Requests: map[string]requestAllocationCheckpoint{
 				"": {
 					CPUs: "1",
-					Owners: []ownerIdentCheckpoint{
+					Owners: []ownerIdentifierCheckpoint{
 						{
 							PodUID:        "pod",
 							ContainerName: "container",
@@ -252,7 +252,7 @@ func TestAllocationStateUnbindBatchKeepsStateWhenCheckpointWriteFails(t *testing
 			Requests: map[string]requestAllocationCheckpoint{
 				"": {
 					CPUs: "3",
-					Owners: []ownerIdentCheckpoint{
+					Owners: []ownerIdentifierCheckpoint{
 						{
 							PodUID:        "other-pod",
 							ContainerName: "other-app",
@@ -331,7 +331,7 @@ func TestAllocationStateUnbindBatch(t *testing.T) {
 			Requests: map[string]requestAllocationCheckpoint{
 				"": {
 					CPUs:   "0",
-					Owners: []ownerIdentCheckpoint{},
+					Owners: []ownerIdentifierCheckpoint{},
 				},
 			},
 		},
@@ -341,7 +341,7 @@ func TestAllocationStateUnbindBatch(t *testing.T) {
 			Requests: map[string]requestAllocationCheckpoint{
 				"": {
 					CPUs:   "1",
-					Owners: []ownerIdentCheckpoint{},
+					Owners: []ownerIdentifierCheckpoint{},
 				},
 			},
 		},
@@ -351,7 +351,7 @@ func TestAllocationStateUnbindBatch(t *testing.T) {
 			Requests: map[string]requestAllocationCheckpoint{
 				"": {
 					CPUs:   "2",
-					Owners: []ownerIdentCheckpoint{},
+					Owners: []ownerIdentifierCheckpoint{},
 				},
 			},
 		},
@@ -361,7 +361,7 @@ func TestAllocationStateUnbindBatch(t *testing.T) {
 			Requests: map[string]requestAllocationCheckpoint{
 				"": {
 					CPUs: "3",
-					Owners: []ownerIdentCheckpoint{
+					Owners: []ownerIdentifierCheckpoint{
 						{PodUID: "pod", ContainerName: "container"},
 					},
 				},
@@ -422,7 +422,7 @@ func TestAllocationStateReleaseKeepsStateWhenCheckpointWriteFailsAfterBindUnbind
 			Requests: map[string]requestAllocationCheckpoint{
 				"": {
 					CPUs: "0",
-					Owners: []ownerIdentCheckpoint{
+					Owners: []ownerIdentifierCheckpoint{
 						{PodUID: "pod", ContainerName: "container"},
 					},
 				},
@@ -438,7 +438,7 @@ func TestAllocationStateReleaseKeepsStateWhenCheckpointWriteFailsAfterBindUnbind
 			Requests: map[string]requestAllocationCheckpoint{
 				"": {
 					CPUs:   "0",
-					Owners: []ownerIdentCheckpoint{},
+					Owners: []ownerIdentifierCheckpoint{},
 				},
 			},
 		},
@@ -641,7 +641,7 @@ func TestAllocationStatePersistsReserveAndRelease(t *testing.T) {
 					Requests: map[string]requestAllocationCheckpoint{
 						"": {
 							CPUs:   "0-1",
-							Owners: []ownerIdentCheckpoint{},
+							Owners: []ownerIdentifierCheckpoint{},
 						},
 					},
 				},
@@ -650,7 +650,7 @@ func TestAllocationStatePersistsReserveAndRelease(t *testing.T) {
 					Requests: map[string]requestAllocationCheckpoint{
 						"": {
 							CPUs: "3",
-							Owners: []ownerIdentCheckpoint{
+							Owners: []ownerIdentifierCheckpoint{
 								{PodUID: "other-pod", ContainerName: "other-app"},
 							},
 						},
@@ -670,7 +670,7 @@ func TestAllocationStatePersistsReserveAndRelease(t *testing.T) {
 					Requests: map[string]requestAllocationCheckpoint{
 						"": {
 							CPUs: "3",
-							Owners: []ownerIdentCheckpoint{
+							Owners: []ownerIdentifierCheckpoint{
 								{PodUID: "other-pod", ContainerName: "other-app"},
 							},
 						},
@@ -811,7 +811,7 @@ func TestAllocationStateLoadStateDoesNotPartiallyApply(t *testing.T) {
 				Requests: map[string]requestAllocationCheckpoint{
 					"": {
 						CPUs: "3",
-						Owners: []ownerIdentCheckpoint{
+						Owners: []ownerIdentifierCheckpoint{
 							{
 								PodUID:        "original-pod",
 								ContainerName: "original-app",
@@ -841,7 +841,7 @@ func TestAllocationStateLoadStateDoesNotPartiallyApply(t *testing.T) {
 				Requests: map[string]requestAllocationCheckpoint{
 					"": {
 						CPUs: "3",
-						Owners: []ownerIdentCheckpoint{
+						Owners: []ownerIdentifierCheckpoint{
 							{
 								PodUID:        "original-pod",
 								ContainerName: "original-app",
@@ -882,7 +882,7 @@ func TestAllocationStateLoadStateDoesNotPartiallyApply(t *testing.T) {
 				Requests: map[string]requestAllocationCheckpoint{
 					"": {
 						CPUs: tc.injectedCPUs,
-						Owners: []ownerIdentCheckpoint{
+						Owners: []ownerIdentifierCheckpoint{
 							{
 								PodUID:        "other-pod",
 								ContainerName: "other-app",
@@ -1237,7 +1237,7 @@ func TestAllocationStateLoadStateConsistency(t *testing.T) {
 			name: "explicit vacant owner entry",
 			mutate: func(data *allocationStateCheckpointData) {
 				claim := data.Payload.ClaimInfo["owned"]
-				claim.Requests[""].Owners[0] = ownerIdentCheckpoint{}
+				claim.Requests[""].Owners[0] = ownerIdentifierCheckpoint{}
 				data.Payload.ClaimInfo["owned"] = claim
 			},
 			wantErrText: "owner must be assigned",
@@ -1284,7 +1284,7 @@ func TestAllocationStateLoadStateConsistency(t *testing.T) {
 							Requests: map[string]requestAllocationCheckpoint{
 								"": {
 									CPUs:   "0",
-									Owners: []ownerIdentCheckpoint{},
+									Owners: []ownerIdentifierCheckpoint{},
 								},
 							},
 						},
@@ -1297,7 +1297,7 @@ func TestAllocationStateLoadStateConsistency(t *testing.T) {
 							Requests: map[string]requestAllocationCheckpoint{
 								"": {
 									CPUs: "1",
-									Owners: []ownerIdentCheckpoint{
+									Owners: []ownerIdentifierCheckpoint{
 										{
 											PodUID:        "pod",
 											ContainerName: "app",
@@ -1387,7 +1387,7 @@ func TestAllocationStateLoadStateConsistencyClaims(t *testing.T) {
 					Requests: map[string]requestAllocationCheckpoint{
 						"": {
 							CPUs:   "0",
-							Owners: []ownerIdentCheckpoint{},
+							Owners: []ownerIdentifierCheckpoint{},
 						},
 					},
 				},
@@ -1400,7 +1400,7 @@ func TestAllocationStateLoadStateConsistencyClaims(t *testing.T) {
 					Requests: map[string]requestAllocationCheckpoint{
 						"": {
 							CPUs: "1",
-							Owners: []ownerIdentCheckpoint{
+							Owners: []ownerIdentifierCheckpoint{
 								{
 									PodUID:        "pod",
 									ContainerName: "app",
@@ -1453,23 +1453,23 @@ func TestAllocationStateLoadStateConsistencyClaims(t *testing.T) {
 func TestAllocationStateLoadStatePreservesRequestOwners(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
-		firstOwners  []ownerIdentCheckpoint
-		secondOwners []ownerIdentCheckpoint
+		firstOwners  []ownerIdentifierCheckpoint
+		secondOwners []ownerIdentifierCheckpoint
 	}{
 		{
 			name:         "same owner across requests",
-			firstOwners:  []ownerIdentCheckpoint{{PodUID: "pod", ContainerName: "app"}},
-			secondOwners: []ownerIdentCheckpoint{{PodUID: "pod", ContainerName: "app"}},
+			firstOwners:  []ownerIdentifierCheckpoint{{PodUID: "pod", ContainerName: "app"}},
+			secondOwners: []ownerIdentifierCheckpoint{{PodUID: "pod", ContainerName: "app"}},
 		},
 		{
 			name:         "different owners across requests",
-			firstOwners:  []ownerIdentCheckpoint{{PodUID: "pod", ContainerName: "app"}},
-			secondOwners: []ownerIdentCheckpoint{{PodUID: "pod", ContainerName: "sidecar"}},
+			firstOwners:  []ownerIdentifierCheckpoint{{PodUID: "pod", ContainerName: "app"}},
+			secondOwners: []ownerIdentifierCheckpoint{{PodUID: "pod", ContainerName: "sidecar"}},
 		},
 		{
 			name:         "owned and vacant requests",
-			firstOwners:  []ownerIdentCheckpoint{{PodUID: "pod", ContainerName: "app"}},
-			secondOwners: []ownerIdentCheckpoint{},
+			firstOwners:  []ownerIdentifierCheckpoint{{PodUID: "pod", ContainerName: "app"}},
+			secondOwners: []ownerIdentifierCheckpoint{},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1714,14 +1714,14 @@ func TestAllocationStateMutationsPreserveCheckpointMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		mutate     func() error
-		wantOwners []ownerIdentCheckpoint
+		wantOwners []ownerIdentifierCheckpoint
 	}{
 		{
 			name: "reserve",
 			mutate: func() error {
 				return state.Reserve(logger, storage, claim, fullClaimRequest(0), false)
 			},
-			wantOwners: []ownerIdentCheckpoint{},
+			wantOwners: []ownerIdentifierCheckpoint{},
 		},
 		{
 			name: "bind",
@@ -1731,7 +1731,7 @@ func TestAllocationStateMutationsPreserveCheckpointMetadata(t *testing.T) {
 				})
 				return err
 			},
-			wantOwners: []ownerIdentCheckpoint{
+			wantOwners: []ownerIdentifierCheckpoint{
 				{
 					PodUID:        "pod",
 					ContainerName: "app",
@@ -1743,7 +1743,7 @@ func TestAllocationStateMutationsPreserveCheckpointMetadata(t *testing.T) {
 			mutate: func() error {
 				return state.Unbind(logger, storage, "claim")
 			},
-			wantOwners: []ownerIdentCheckpoint{},
+			wantOwners: []ownerIdentifierCheckpoint{},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

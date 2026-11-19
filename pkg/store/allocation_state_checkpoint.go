@@ -46,14 +46,14 @@ var (
 	ErrNodeChanged          = errors.New("current node differs from checkpointed node")
 )
 
-type ownerIdentCheckpoint struct {
+type ownerIdentifierCheckpoint struct {
 	PodUID        string `cbor:"podUID"`
 	ContainerName string `cbor:"containerName"`
 }
 
 type requestAllocationCheckpoint struct {
-	CPUs   string                 `cbor:"cpus"`
-	Owners []ownerIdentCheckpoint `cbor:"owners"`
+	CPUs   string                      `cbor:"cpus"`
+	Owners []ownerIdentifierCheckpoint `cbor:"owners"`
 }
 
 type namespacedNameCheckpoint struct {
@@ -177,13 +177,13 @@ func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr chec
 
 		requests := make(map[string]requestAllocation)
 		for name, alloc := range claimData.Requests {
-			owners := sets.New[OwnerIdent]()
+			owners := sets.New[OwnerIdentifier]()
 			reqCpus, err := cpuset.Parse(alloc.CPUs)
 			if err != nil {
 				return fmt.Errorf("restoring claim %q request %q: %w", claimIdent, name, err)
 			}
 			for _, reqOwner := range alloc.Owners {
-				owner := OwnerIdent{
+				owner := OwnerIdentifier{
 					PodUID:        types.UID(reqOwner.PodUID),
 					ContainerName: reqOwner.ContainerName,
 				}
@@ -197,7 +197,7 @@ func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr chec
 			}
 			ownerList := owners.UnsortedList()
 			// stable sorting to get a stabler serialization
-			slices.SortFunc(ownerList, func(a, b OwnerIdent) int {
+			slices.SortFunc(ownerList, func(a, b OwnerIdentifier) int {
 				if n := strings.Compare(string(a.PodUID), string(b.PodUID)); n != 0 {
 					return n
 				}
@@ -260,15 +260,15 @@ func (s *AllocationState) storeStateLocked(logger logr.Logger, checkpointMgr che
 }
 
 func makeRequestAllocationCheckpoint(req requestAllocation) requestAllocationCheckpoint {
-	owners := make([]ownerIdentCheckpoint, 0, len(req.owners))
+	owners := make([]ownerIdentifierCheckpoint, 0, len(req.owners))
 	for _, owner := range req.owners {
-		owners = append(owners, ownerIdentCheckpoint{
+		owners = append(owners, ownerIdentifierCheckpoint{
 			PodUID:        string(owner.PodUID),
 			ContainerName: owner.ContainerName,
 		})
 	}
 	// ensure stable serialization
-	slices.SortFunc(owners, func(a, b ownerIdentCheckpoint) int {
+	slices.SortFunc(owners, func(a, b ownerIdentifierCheckpoint) int {
 		if n := strings.Compare(a.PodUID, b.PodUID); n != 0 {
 			return n
 		}
