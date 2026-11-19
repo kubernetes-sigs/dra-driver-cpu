@@ -83,7 +83,8 @@ forceImmediateSharedCPUReclaim: true
 	assert.Equal(t, "0-3", result.ReservedCPUs)
 	assert.Equal(t, "/custom/sysfs", result.SysFSOverlay)
 	assert.True(t, result.PublishNodeAllocatableResourceMapping)
-	assert.True(t, result.ForceImmediateSharedCPUReclaim)
+	require.NotNil(t, result.ForceImmediateSharedCPUReclaim)
+	assert.True(t, *result.ForceImmediateSharedCPUReclaim)
 }
 
 // TestResolve_CLIFlagWinsOverFile: an explicitly-passed CLI flag beats the file value.
@@ -393,7 +394,7 @@ func TestDefault(t *testing.T) {
 	assert.Empty(t, d.ReservedCPUs)
 	assert.False(t, d.ExposePCIeRoots)
 	assert.False(t, d.PublishNodeAllocatableResourceMapping)
-	assert.False(t, d.ForceImmediateSharedCPUReclaim)
+	assert.Nil(t, d.ForceImmediateSharedCPUReclaim) // defaults to auto-detect (nil)
 }
 
 // TestResolve_InvalidCPUDeviceModeIsError: an invalid cpuDeviceMode in the file is rejected.

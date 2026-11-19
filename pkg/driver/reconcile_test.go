@@ -281,3 +281,40 @@ func TestRequestReconcileIsInertWhenDisabled(t *testing.T) {
 	_, found := d.allocationState.GetResourceClaimAllocation(claim.UID)
 	require.False(t, found)
 }
+
+func TestAutoDetectForceImmediateSharedCPUReclaim(t *testing.T) {
+	tests := []struct {
+		name           string
+		runtime        string
+		version        string
+		auto           bool
+		wantEnabled    bool
+		wantInDecision string
+	}{
+		{name: "safe containerd", runtime: "containerd", version: "2.4.0", auto: true, wantEnabled: true, wantInDecision: "containerd 2.4.0"},
+		{name: "old containerd", runtime: "containerd", version: "2.3.7", auto: true, wantInDecision: "predates"},
+		{name: "no runtime info", auto: true, wantInDecision: "not available"},
+		{name: "explicit off on safe runtime", runtime: "containerd", version: "2.4.0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
+			d.reconcile = nil
+			d.configWasAuto = tt.auto
+			if tt.runtime != "" {
+				_, err := d.Configure(t.Context(), "", tt.runtime, tt.version)
+				require.NoError(t, err)
+			}
+
+			_, err := d.Synchronize(t.Context(), nil, nil)
+			require.NoError(t, err)
+
+			require.Equal(t, tt.wantEnabled, d.reconcile != nil)
+			if tt.wantInDecision != "" {
+				require.Contains(t, d.autoDetectDecision, tt.wantInDecision)
+			} else {
+				require.Empty(t, d.autoDetectDecision)
+			}
+		})
+	}
+}

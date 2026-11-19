@@ -153,19 +153,28 @@ on - is configured through other Helm values, not through this file.
 - Requires the `DRANodeAllocatableResources` feature gate (alpha, 1.37+). See
   [Workload Configuration Requirements](workload-requirements.md).
 
-`forceImmediateSharedCPUReclaim` (bool, default: `false`)
+`forceImmediateSharedCPUReclaim` (bool or null, default: auto-detect)
 
 When a Pod is deleted and its exclusive CPU claim is released, those CPUs go back to the
 shared pool. With this option disabled, already-running shared containers keep using their
 narrower cpuset until the next container creation. With this option enabled, the driver
 moves them onto the released CPUs right away.
 
-Only enable it on runtimes whose NRI adaptation includes
+This needs a runtime whose NRI adaptation includes
 [containerd/nri#301](https://github.com/containerd/nri/pull/301); older adaptations are
 prone to deadlock on the update this option sends. The NRI handshake reports the runtime
-version but not the NRI version it vendors, so the driver cannot check this for you. By
-source inspection of the release tags, containerd v2.4.2 and CRI-O v1.37.4 include the
-fix, while containerd v2.3.4 and CRI-O v1.36.0 do not.
+name and version but not the NRI version it vendors, so the driver decides from a list of
+known-safe runtime versions:
+
+- **Auto-detect (default)**: when omitted or null, the driver enables it on containerd
+  2.4.0+ and CRI-O 1.37.0+, and leaves it off on older or unknown runtimes (k3s, microk8s,
+  vendor forks). The decision is logged at startup.
+- **Force on (`true`)**: enable regardless of runtime version. Only use this if you know
+  your runtime includes containerd/nri#301.
+- **Force off (`false`)**: disable even on known-safe runtimes.
+
+Upgrade note: before this change, omitting the field meant disabled. To keep the feature
+off on known-safe runtimes, set `forceImmediateSharedCPUReclaim: false` explicitly.
 
 If the update fails, it is logged and the claim is still reported as released: the
 containers keep their current cpuset until their next lifecycle event, exactly as without
