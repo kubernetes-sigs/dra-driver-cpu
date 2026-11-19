@@ -45,7 +45,7 @@ func newTestAllocationState(t *testing.T, logger logr.Logger, allCPUs, reserved 
 
 func requirePreparedAllocation(t testing.TB, logger logr.Logger, store *AllocationState, claimUID types.UID, cpus cpuset.CPUSet) {
 	t.Helper()
-	require.NoError(t, store.Reserve(logger, noop, ClaimIdentifier{UID: claimUID}, map[string]cpuset.CPUSet{"": cpus}, false))
+	require.NoError(t, store.Reserve(logger, noop, ClaimIdentifier{UID: claimUID}, fullClaimRequest(cpus.UnsortedList()...), false))
 }
 
 func TestAllocationStatePreparedLifecycle(t *testing.T) {
@@ -55,9 +55,9 @@ func TestAllocationStatePreparedLifecycle(t *testing.T) {
 	claimCPUs := cpuset.New(0, 1)
 	store := newTestAllocationState(t, logger, allCPUs, cpuset.New())
 
-	require.NoError(t, store.Reserve(logger, noop, ClaimIdentifier{UID: claimUID}, map[string]cpuset.CPUSet{"": claimCPUs}, false))
+	require.NoError(t, store.Reserve(logger, noop, ClaimIdentifier{UID: claimUID}, fullClaimRequest(claimCPUs.UnsortedList()...), false))
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
-	require.Error(t, store.Reserve(logger, noop, ClaimIdentifier{UID: "claim-2"}, map[string]cpuset.CPUSet{"": claimCPUs}, false))
+	require.Error(t, store.Reserve(logger, noop, ClaimIdentifier{UID: "claim-2"}, fullClaimRequest(claimCPUs.UnsortedList()...), false))
 
 	updatedClaims, err := store.Bind(logger, noop, "pod", "app", map[types.UID]cpuset.CPUSet{claimUID: claimCPUs})
 	require.NoError(t, err)
@@ -268,7 +268,7 @@ func TestAllocationStateBind(t *testing.T) {
 				PodUID:        "other-pod",
 				ContainerName: "other-app",
 			}
-			require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: "sentinel"}, map[string]cpuset.CPUSet{"": cpuset.New(4)}, false))
+			require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: "sentinel"}, fullClaimRequest(4), false))
 			_, err := store.Bind(logger, manager, sentinelOwner.PodUID, sentinelOwner.ContainerName, map[types.UID]cpuset.CPUSet{"sentinel": cpuset.New(4)})
 			require.NoError(t, err)
 
@@ -287,7 +287,7 @@ func TestAllocationStateBind(t *testing.T) {
 			}
 
 			for uid, cpus := range allocations {
-				require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: uid}, map[string]cpuset.CPUSet{"": cpus}, false))
+				require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: uid}, fullClaimRequest(cpus.UnsortedList()...), false))
 			}
 			require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: "c"}, map[string]cpuset.CPUSet{"x": cpuset.New(2), "y": cpuset.New(3)}, false))
 			if tc.initial != nil {
@@ -515,7 +515,7 @@ func TestAllocationStateReserveRepeatedCalls(t *testing.T) {
 			claimUID := types.UID("claim-uid-1")
 			manager := newRecordingCheckpointManager(t)
 
-			first := map[string]cpuset.CPUSet{"": tc.firstCPUs}
+			first := fullClaimRequest(tc.firstCPUs.UnsortedList()...)
 			if tc.firstRequests != nil {
 				first = tc.firstRequests
 			}
@@ -525,7 +525,7 @@ func TestAllocationStateReserveRepeatedCalls(t *testing.T) {
 			before := readAllocationCheckpoint(t, manager)
 			writes := manager.createAttempts
 
-			err := store.Reserve(logger, manager, ClaimIdentifier{UID: claimUID}, map[string]cpuset.CPUSet{"": tc.secondCPUs}, false)
+			err := store.Reserve(logger, manager, ClaimIdentifier{UID: claimUID}, fullClaimRequest(tc.secondCPUs.UnsortedList()...), false)
 			if tc.expectError {
 				require.Error(t, err)
 			} else {
@@ -593,14 +593,14 @@ func TestAllocationStateReserveSharedPoolGuard(t *testing.T) {
 			store := newTestAllocationState(t, logger, allCPUs, cpuset.New())
 
 			// add a sentinel which pre-exists and is not mutated by the reserve under tests, so we check no unrelated overwrites
-			require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: "sentinel"}, map[string]cpuset.CPUSet{"": allCPUs.Difference(claimedCPUs)}, false))
+			require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: "sentinel"}, fullClaimRequest(allCPUs.Difference(claimedCPUs).UnsortedList()...), false))
 			stateBefore := readAllocationCheckpoint(t, manager)
 			writesBefore := manager.createAttempts
 
 			// the real reserve under test
 			requests := test.requests
 			if requests == nil {
-				requests = map[string]cpuset.CPUSet{"": test.cpus}
+				requests = fullClaimRequest(test.cpus.UnsortedList()...)
 			}
 			err := store.Reserve(logger, manager, ClaimIdentifier{UID: "claim"}, requests, test.hasSharedContainers)
 			// TODO: verification gets very complex very fast. We should probably split the tests in happy and error path to simplify

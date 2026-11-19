@@ -411,7 +411,7 @@ func TestNewReserveWritesCheckpointToConfiguredDirectory(t *testing.T) {
 	require.NoError(t, err)
 
 	// use completely bogus bug valid data just to trigger a write
-	require.NoError(t, drv.allocationState.Reserve(testr.New(t), drv.checkpointMgr, store.ClaimIdentifier{UID: "claim-1"}, map[string]cpuset.CPUSet{"": cpuset.New(0, 1)}, false))
+	require.NoError(t, drv.allocationState.Reserve(testr.New(t), drv.checkpointMgr, store.ClaimIdentifier{UID: "claim-1"}, fullClaimRequest(cpuset.New(0, 1)), false))
 	// just verify _something_ was written
 	allocState := filepath.Join(drv.checkpointMgr.CheckpointPath(), "allocation_state")
 	require.FileExists(t, allocState)
