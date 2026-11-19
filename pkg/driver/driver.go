@@ -154,6 +154,16 @@ type CPUDriver struct {
 	// is closed when the last of them has the lock again. Guarded by stateMu.
 	prepareWaiters int
 	prepareTurn    chan struct{}
+
+	// Runtime info from NRI Configure, used for auto-detect.
+	runtimeName        string
+	runtimeVersion     string
+	autoDetectDecision string // logs the auto-detect decision once
+	configWasAuto      bool   // true if config.ReconcileSharedOnUnprepare was nil
+
+	// lifecycleCtx is the context passed to Start(), used to launch the reconcile
+	// worker when auto-detect enables it in Synchronize (after Start returns).
+	lifecycleCtx context.Context
 }
 
 // deviceHealthEntry is the last known health of a single device.
@@ -211,7 +221,8 @@ type Config struct {
 	PublishNodeAllocatableResourceMapping bool
 	// ReconcileSharedOnUnprepare pushes released CPUs to running shared containers
 	// right after Unprepare, with an unsolicited NRI UpdateContainers call.
-	ReconcileSharedOnUnprepare bool
+	// nil: auto-detect, true: force on, false: force off.
+	ReconcileSharedOnUnprepare *bool
 }
 
 func (cfg Config) DevicesPerResourceSlice() int {
@@ -251,9 +262,21 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		health:                  newHealthTracker(),
 		kubeletRootDir:          config.KubeletRootDir,
 	}
-	if config.ReconcileSharedOnUnprepare {
-		plugin.reconcileTrigger = make(chan struct{}, 1)
+
+	// Tri-state reconcileSharedOnUnprepare:
+	// nil (auto): defer until we know the runtime version (in Configure/Synchronize)
+	// true: force on
+	// false: force off
+	if config.ReconcileSharedOnUnprepare != nil {
+		if *config.ReconcileSharedOnUnprepare {
+			plugin.reconcileTrigger = make(chan struct{}, 1)
+		}
+		// else: explicit false, stay off
+	} else {
+		// Auto-detect: we'll decide in Synchronize once we have runtime info.
+		plugin.configWasAuto = true
 	}
+
 	topo, err := providers.EnsureCPUInfo().GetCPUTopology(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get CPU topology: %w", err)
@@ -355,6 +378,9 @@ func checkSocketPathFits(kubeletRootDir, driverName string) error {
 // async resource publication. Setup must have been called first.
 func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 	ctx, logger := ctxlog.WithValues(ctx, "driver", cp.driverName)
+
+	// Save lifecycle context for potential reconcile worker start in Synchronize
+	cp.lifecycleCtx = ctx
 
 	asyncErr := make(chan error, 1)
 

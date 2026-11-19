@@ -402,3 +402,81 @@ func TestRequestReconcileIsInertWhenDisabled(t *testing.T) {
 	_, found := d.allocationState.GetResourceClaimAllocation(claim.UID)
 	require.False(t, found)
 }
+
+func TestAutoDetectStartsWorkerOnSafeRuntime(t *testing.T) {
+	// Create driver with auto-detect config (nil).
+	d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
+
+	// Create a fake runtime that implements containerUpdater.
+	runtime := newFakeRuntime()
+
+	// Simulate NRI Configure with a known-safe runtime.
+	_, err := d.Configure(t.Context(), "", "containerd", "2.4.0")
+	require.NoError(t, err)
+
+	// Override lifecycleCtx with test context (Start() normally sets this).
+	d.lifecycleCtx = t.Context()
+
+	// Mark as auto-detect mode.
+	d.configWasAuto = true
+
+	// First Synchronize should detect and enable the feature, starting the worker.
+	// Note: auto-detect will set containerUpdater = nriPlugin, but nriPlugin is nil in tests.
+	_, err = d.Synchronize(t.Context(), nil, nil)
+	require.NoError(t, err)
+
+	// Verify reconcileTrigger was created and decision logged.
+	require.NotNil(t, d.reconcileTrigger, "auto-detect should create reconcileTrigger")
+	require.Contains(t, d.autoDetectDecision, "enabled", "decision should mention enabled")
+	require.Contains(t, d.autoDetectDecision, "containerd 2.4.0", "decision should include detected version")
+
+	// Set containerUpdater after Synchronize so the worker can call UpdateContainers.
+	// This is a test-only workaround since we can't easily mock stub.Stub.
+	d.containerUpdater = runtime
+
+	// Verify the worker goroutine is responsive by triggering a reconcile.
+	// The worker will find no shared containers to update, but it proves the goroutine is running.
+	d.requestReconcile()
+
+	// Wait briefly and verify we can send to the trigger again (worker drained it).
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case d.reconcileTrigger <- struct{}{}:
+		// Successfully sent; worker consumed the first trigger
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("reconcileTrigger still full; worker may not be running")
+	}
+}
+
+func TestAutoDetectDisablesOnUnsafeRuntime(t *testing.T) {
+	d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
+
+	// Simulate NRI Configure with an older runtime.
+	_, err := d.Configure(t.Context(), "", "containerd", "2.3.7")
+	require.NoError(t, err)
+
+	d.configWasAuto = true
+	d.lifecycleCtx = t.Context()
+
+	// First Synchronize should detect and disable the feature.
+	_, err = d.Synchronize(t.Context(), nil, nil)
+	require.NoError(t, err)
+
+	require.Nil(t, d.reconcileTrigger, "auto-detect should NOT create reconcileTrigger on old runtime")
+	require.Contains(t, d.autoDetectDecision, "disabled", "decision should mention disabled")
+	require.Contains(t, d.autoDetectDecision, "predates", "reason should mention version too old")
+}
+
+func TestAutoDetectDisablesOnEmptyRuntimeName(t *testing.T) {
+	d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
+
+	// Configure not called, or called with empty strings (old NRI stub).
+	d.configWasAuto = true
+	d.lifecycleCtx = t.Context()
+
+	_, err := d.Synchronize(t.Context(), nil, nil)
+	require.NoError(t, err)
+
+	require.Nil(t, d.reconcileTrigger, "auto-detect should NOT enable without runtime info")
+	require.Contains(t, d.autoDetectDecision, "not available", "decision should mention unavailable")
+}

@@ -273,7 +273,10 @@
           "type": "boolean"
         },
         "reconcileSharedOnUnprepare": {
-          "type": "boolean"
+          "type": [
+            "null",
+            "boolean"
+          ]
         },
         "reservedCPUs": {
           "type": "string"

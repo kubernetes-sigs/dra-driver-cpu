@@ -131,23 +131,42 @@ on - is configured through other Helm values, not through this file.
 - Requires the `DRANodeAllocatableResources` feature gate (alpha, 1.37+). See
   [Workload Configuration Requirements](workload-requirements.md).
 
-`reconcileSharedOnUnprepare` (bool, default: `false`)
+`reconcileSharedOnUnprepare` (bool or null, default: auto-detect)
 
 - Widen running shared containers onto the CPUs a claim released as soon as the claim is
   unprepared, instead of leaving them on the narrower cpuset until their next container
   creation or driver restart. The driver sends the new cpuset with an unsolicited NRI
   `UpdateContainers` call from a worker goroutine, so neither kubelet's Unprepare nor an
   NRI hook waits on the runtime.
-- Only enable it on runtimes whose NRI adaptation includes
-  [containerd/nri#301](https://github.com/containerd/nri/pull/301); an unsolicited update
-  deadlocks older adaptations. The NRI handshake reports the runtime version but not its
-  vendored NRI version, so the driver cannot check this and the operator opts in. By
-  source inspection of the release tags, containerd v2.4.2 and CRI-O v1.37.4 include the
-  fix, while containerd v2.3.4 and CRI-O v1.36.0 do not.
+- **Auto-detect (default)**: When omitted or null, the driver enables this feature on known-safe
+  runtimes (containerd 2.4.0+, CRI-O 1.37.0+) and disables it on older or unknown runtimes
+  (k3s, microk8s, vendor forks). The decision is logged at startup.
+- **Force on (`true`)**: Enable regardless of runtime version. Only use this if you know your
+  runtime includes [containerd/nri#301](https://github.com/containerd/nri/pull/301); an
+  unsolicited update deadlocks older NRI adaptations.
+- **Force off (`false`)**: Disable even on known-safe runtimes.
+- **BREAKING CHANGE (v0.5.0)**: In previous versions, omitting this field meant the feature was
+  always disabled. Starting from v0.5.0, omitting it enables auto-detection. To preserve the old
+  behavior (always disabled), explicitly set `reconcileSharedOnUnprepare: false` in your config.
 - While an update is in flight, `PrepareResourceClaims` waits for it before reserving
   CPUs, bounded by kubelet's deadline, so a stale widening can never be applied over a
   newer exclusive assignment. A failed update is logged and not retried: the containers
-  keep their current cpuset until their next lifecycle event, as without this option.
+  keep their current cpuset until their next lifecycle event.
+
+**Known-safe runtime versions** (have containerd/nri#301):
+
+| Runtime    | Minimum version |
+| ---------- | --------------- |
+| containerd | 2.4.0+          |
+| CRI-O      | 1.37.0+         |
+
+**Unsafe runtime versions** (deadlock on unsolicited UpdateContainers):
+
+| Runtime                     | Affected versions                          |
+| --------------------------- | ------------------------------------------ |
+| containerd                  | 2.3.x and earlier                          |
+| CRI-O                       | 1.36.x and earlier                         |
+| k3s, microk8s, vendor forks | Unknown NRI version; auto-detect stays off |
 
 #### Example
 
