@@ -24,6 +24,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/cpuallocator"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 )
 
 // schemaExcludedFields maps Config json keys not settable via the config
@@ -38,9 +39,10 @@ var schemaExcludedFields = map[string]string{
 // schemaEnums are the allowed values for fields whose Go type (string) can't
 // express them on its own.
 var schemaEnums = map[string][]any{
-	"cpuDeviceMode": {device.CPU_DEVICE_MODE_GROUPED, device.CPU_DEVICE_MODE_INDIVIDUAL},
-	"groupBy":       {device.GROUP_BY_NUMA_NODE, device.GROUP_BY_SOCKET, device.GROUP_BY_MACHINE},
-	"allocator":     {cpuallocator.ModeCPUManager, cpuallocator.ModeExternal},
+	"cpuDeviceMode":      {device.CPU_DEVICE_MODE_GROUPED, device.CPU_DEVICE_MODE_INDIVIDUAL},
+	"groupBy":            {device.GROUP_BY_NUMA_NODE, device.GROUP_BY_SOCKET, device.GROUP_BY_MACHINE},
+	"allocator":          {cpuallocator.ModeCPUManager, cpuallocator.ModeExternal},
+	"reservedCPUsPolicy": {store.ReservedCPUsPolicyStrict, store.ReservedCPUsPolicyShared},
 }
 
 // driverConfigSchemaComment is the generated schema's top-level "$comment".

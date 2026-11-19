@@ -279,6 +279,13 @@
         "reservedCPUs": {
           "type": "string"
         },
+        "reservedCPUsPolicy": {
+          "type": "string",
+          "enum": [
+            "strict",
+            "shared"
+          ]
+        },
         "sysfsOverlay": {
           "type": "string"
         }
