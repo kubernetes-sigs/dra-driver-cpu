@@ -33,6 +33,23 @@ import (
 	"k8s.io/utils/cpuset"
 )
 
+// Configure is called once when the NRI plugin connects to the runtime.
+// It reports the runtime name and version, which we use for auto-detecting
+// whether unsolicited UpdateContainers calls are safe.
+func (cp *CPUDriver) Configure(ctx context.Context, config, runtime, version string) (api.EventMask, error) {
+	_, logger := ctxlog.WithValues(ctx, "driver", cp.driverName)
+	logger.V(2).Info("NRI Configure", "runtime", runtime, "version", version)
+
+	// Acquire stateMu to serialize with Synchronize, which reads these fields.
+	cp.stateMu.Lock()
+	cp.runtimeName = runtime
+	cp.runtimeVersion = version
+	cp.stateMu.Unlock()
+
+	// Return 0: we implement stub interfaces directly, no event subscription needed.
+	return 0, nil
+}
+
 // Synchronize is called by the NRI to synchronize the state of the driver during bootstrap.
 func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, containers []*api.Container) (rupdates []*api.ContainerUpdate, rerr error) {
 	cp.stateMu.Lock()
@@ -42,6 +59,32 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	}
 	startTime := time.Now()
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen))
+
+	// Auto-detect reconcileSharedOnUnprepare on first Synchronize if config was nil.
+	// This runs once: Configure gave us the runtime version, now we decide.
+	if cp.configWasAuto && cp.autoDetectDecision == "" {
+		// Check if Configure was called and provided runtime info.
+		if cp.runtimeName == "" {
+			cp.autoDetectDecision = "shared CPU reconcile: disabled (runtime version not available from NRI Configure)"
+			logger.Info(cp.autoDetectDecision)
+		} else {
+			supported, reason := runtimeSupportsUnsolicitedUpdate(cp.runtimeName, cp.runtimeVersion)
+			if supported {
+				cp.reconcileTrigger = make(chan struct{}, 1)
+				cp.containerUpdater = cp.nriPlugin
+				cp.autoDetectDecision = fmt.Sprintf("shared CPU reconcile: enabled (%s)", reason)
+				// Launch the reconcile worker now that we've enabled the feature.
+				// Safe to start while holding stateMu: the worker's first action is
+				// to wait on reconcileTrigger, so it won't immediately contend for the lock.
+				// Use lifecycleCtx from Start(), not this request's ctx.
+				go cp.runReconcileWorker(cp.lifecycleCtx)
+			} else {
+				cp.autoDetectDecision = fmt.Sprintf("shared CPU reconcile: disabled (%s)", reason)
+			}
+			logger.Info(cp.autoDetectDecision)
+		}
+	}
+
 	// Recovery runs at startup and on reconnect; always log it.
 	logger.Info("begin: synchronize state with the runtime", "numPods", len(pods), "numContainers", len(containers))
 	defer logger.Info("end: synchronize state with the runtime", "numPods", len(pods), "numContainers", len(containers))

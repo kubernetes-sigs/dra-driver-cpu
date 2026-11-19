@@ -141,6 +141,29 @@ type CPUDriver struct {
 	health                  healthTracker
 	kubeletRootDir          string
 	cpuAllocator            CPUAllocator
+
+	// containerUpdater is the NRI stub once Start has created it; nil while
+	// reconcileSharedOnUnprepare is off.
+	containerUpdater containerUpdater
+	// reconcileTrigger is nil while reconcileSharedOnUnprepare is off.
+	reconcileTrigger chan struct{}
+	// pendingSharedUpdate is non-nil while the worker has an update out to the
+	// runtime, and is closed when it returns. Guarded by stateMu.
+	pendingSharedUpdate chan struct{}
+	// prepareWaiters counts Prepares waiting on pendingSharedUpdate; prepareTurn
+	// is closed when the last of them has the lock again. Guarded by stateMu.
+	prepareWaiters int
+	prepareTurn    chan struct{}
+
+	// Runtime info from NRI Configure, used for auto-detect.
+	runtimeName        string
+	runtimeVersion     string
+	autoDetectDecision string // logs the auto-detect decision once
+	configWasAuto      bool   // true if config.ReconcileSharedOnUnprepare was nil
+
+	// lifecycleCtx is the context passed to Start(), used to launch the reconcile
+	// worker when auto-detect enables it in Synchronize (after Start returns).
+	lifecycleCtx context.Context
 }
 
 // deviceHealthEntry is the last known health of a single device.
@@ -196,6 +219,10 @@ type Config struct {
 	// PublishNodeAllocatableResourceMapping publishes KEP-5517 nodeAllocatableResources mappings in
 	// ResourceSlice devices. Requires the DRANodeAllocatableResources feature gate to be enabled in the cluster.
 	PublishNodeAllocatableResourceMapping bool
+	// ReconcileSharedOnUnprepare pushes released CPUs to running shared containers
+	// right after Unprepare, with an unsolicited NRI UpdateContainers call.
+	// nil: auto-detect, true: force on, false: force off.
+	ReconcileSharedOnUnprepare *bool
 }
 
 func (cfg Config) DevicesPerResourceSlice() int {
@@ -235,6 +262,21 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		health:                  newHealthTracker(),
 		kubeletRootDir:          config.KubeletRootDir,
 	}
+
+	// Tri-state reconcileSharedOnUnprepare:
+	// nil (auto): defer until we know the runtime version (in Configure/Synchronize)
+	// true: force on
+	// false: force off
+	if config.ReconcileSharedOnUnprepare != nil {
+		if *config.ReconcileSharedOnUnprepare {
+			plugin.reconcileTrigger = make(chan struct{}, 1)
+		}
+		// else: explicit false, stay off
+	} else {
+		// Auto-detect: we'll decide in Synchronize once we have runtime info.
+		plugin.configWasAuto = true
+	}
+
 	topo, err := providers.EnsureCPUInfo().GetCPUTopology(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get CPU topology: %w", err)
@@ -337,6 +379,9 @@ func checkSocketPathFits(kubeletRootDir, driverName string) error {
 func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 	ctx, logger := ctxlog.WithValues(ctx, "driver", cp.driverName)
 
+	// Save lifecycle context for potential reconcile worker start in Synchronize
+	cp.lifecycleCtx = ctx
+
 	asyncErr := make(chan error, 1)
 
 	if err := checkSocketPathFits(cp.kubeletRootDir, cp.driverName); err != nil {
@@ -390,6 +435,10 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 		return asyncErr, fmt.Errorf("failed to create plugin stub: %w", err)
 	}
 	cp.nriPlugin = stub
+	if cp.reconcileTrigger != nil {
+		cp.containerUpdater = stub
+		go cp.runReconcileWorker(ctx)
+	}
 
 	go func() {
 		if err := runNRIPluginWithRetry(ctx, cp.nriPlugin, maxAttempts); err != nil && ctx.Err() == nil {

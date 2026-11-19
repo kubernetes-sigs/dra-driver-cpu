@@ -45,10 +45,24 @@ type Config struct {
 	// feature gate in the cluster. Defaults to false.
 	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping,omitempty"`
 	Allocator                             string `json:"allocator,omitempty"`
+	// ReconcileSharedOnUnprepare pushes released CPUs to running shared containers
+	// right after Unprepare, with an unsolicited NRI UpdateContainers call.
+	// nil (default): auto-detect based on runtime version (containerd 2.4.0+, cri-o 1.37+)
+	// true: force on
+	// false: force off
+	ReconcileSharedOnUnprepare *bool `json:"reconcileSharedOnUnprepare,omitempty"`
 }
 
 // LogValues returns key-value pairs for structured logging of the config.
 func (c Config) LogValues() []any {
+	reconcileStr := "auto"
+	if c.ReconcileSharedOnUnprepare != nil {
+		if *c.ReconcileSharedOnUnprepare {
+			reconcileStr = "true"
+		} else {
+			reconcileStr = "false"
+		}
+	}
 	return []any{
 		"kubeconfig", c.Kubeconfig,
 		"bindAddress", c.BindAddress,
@@ -61,6 +75,7 @@ func (c Config) LogValues() []any {
 		"kubeletRootDir", c.KubeletRootDir,
 		"publishNodeAllocatableResourceMapping", c.PublishNodeAllocatableResourceMapping,
 		"allocator", c.Allocator,
+		"reconcileSharedOnUnprepare", reconcileStr,
 	}
 }
 
@@ -78,13 +93,37 @@ type dumpConfig struct {
 	KubeletRootDir                        string `json:"kubeletRootDir"`
 	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping"`
 	Allocator                             string `json:"allocator"`
+	ReconcileSharedOnUnprepare            string `json:"reconcileSharedOnUnprepare"`
 }
 
 // Dump renders the Config as YAML, for logging a human-readable snapshot of
 // the fully loaded configuration. Zero values are included, unlike
 // marshalling Config directly, since they reflect real runtime state.
 func (c Config) Dump() string {
-	out, err := yaml.Marshal(dumpConfig(c))
+	reconcileStr := "auto"
+	if c.ReconcileSharedOnUnprepare != nil {
+		if *c.ReconcileSharedOnUnprepare {
+			reconcileStr = "true"
+		} else {
+			reconcileStr = "false"
+		}
+	}
+
+	dc := dumpConfig{
+		Kubeconfig:                            c.Kubeconfig,
+		HostnameOverride:                      c.HostnameOverride,
+		BindAddress:                           c.BindAddress,
+		ReservedCPUs:                          c.ReservedCPUs,
+		CPUDeviceMode:                         c.CPUDeviceMode,
+		GroupBy:                               c.GroupBy,
+		ExposePCIeRoots:                       c.ExposePCIeRoots,
+		SysFSOverlay:                          c.SysFSOverlay,
+		KubeletRootDir:                        c.KubeletRootDir,
+		PublishNodeAllocatableResourceMapping: c.PublishNodeAllocatableResourceMapping,
+		Allocator:                             c.Allocator,
+		ReconcileSharedOnUnprepare:            reconcileStr,
+	}
+	out, err := yaml.Marshal(dc)
 	if err != nil {
 		return fmt.Sprintf("<!!! FAILED TO MARSHAL Config: %v !!!>", err)
 	}

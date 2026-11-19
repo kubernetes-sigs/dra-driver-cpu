@@ -122,6 +122,10 @@ endif
 # DRANodeAllocatableResources feature gate enabled.
 DRACPU_E2E_NODE_ALLOCATABLE_MAPPING ?= false
 DRACPU_E2E_ALLOCATOR ?= cpumanager
+# Set to "true" to have ci-kind-setup deploy the driver with the
+# reconcileSharedOnUnprepare driverConfig option. Only safe on a runtime whose
+# NRI adaptation includes containerd/nri#301; see docs/user/configuration.md.
+DRACPU_E2E_RECONCILE_SHARED_ON_UNPREPARE ?= false
 # Extra arguments passed to golangci-lint in the lint target.
 # For example, set GOLANGCI_LINT_EXTRA_ARGS=--fix to auto-fix issues.
 GOLANGCI_LINT_EXTRA_ARGS ?=
@@ -220,7 +224,8 @@ endif
 		--set-string args.reservedCPUs=${DRACPU_E2E_RESERVED_CPUS} \
 		--set args.exposePCIeRoots=true \
 		--set driverConfig.publishNodeAllocatableResourceMapping=$(DRACPU_E2E_NODE_ALLOCATABLE_MAPPING) \
-		--set driverConfig.allocator=$(DRACPU_E2E_ALLOCATOR)
+		--set driverConfig.allocator=$(DRACPU_E2E_ALLOCATOR) \
+		--set driverConfig.reconcileSharedOnUnprepare=$(DRACPU_E2E_RECONCILE_SHARED_ON_UNPREPARE)
 	hack/ci/wait-resourcelices.sh
 
 build-test-image: ## build tests image
