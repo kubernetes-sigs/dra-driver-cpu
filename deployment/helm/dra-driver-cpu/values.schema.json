@@ -259,6 +259,9 @@
             "individual"
           ]
         },
+        "forceImmediateSharedCPUReclaim": {
+          "type": "boolean"
+        },
         "groupBy": {
           "type": "string",
           "enum": [
