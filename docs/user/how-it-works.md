@@ -57,4 +57,5 @@ The two components in detail:
   - For containers with **guaranteed CPUs** (those with a DRA ResourceClaim), the plugin reads the environment variable injected via CDI and pins the container to its exclusive CPU set using the cgroup cpuset controller.
   - For all other containers, it confines them to a **shared pool** of CPUs, which consists of all allocatable CPUs not exclusively assigned to any guaranteed container.
   - It dynamically updates the shared pool cpuset for all shared containers whenever guaranteed allocations change (containers are created or removed).
+  - When a claim is unprepared, its CPUs return to the shared pool at once, but running shared containers keep the narrower cpuset until their next container creation or driver restart. With [`forceImmediateSharedCPUReclaim`](configuration.md#driver-configuration) the driver widens them immediately through an unsolicited NRI update.
   - On restart, the NRI plugin can synchronize its state by inspecting existing containers and their environment variables to rebuild the current CPU allocations.

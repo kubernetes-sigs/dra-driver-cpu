@@ -141,6 +141,17 @@ type CPUDriver struct {
 	health                  healthTracker
 	kubeletRootDir          string
 	cpuAllocator            CPUAllocator
+
+	// reconcile holds state for the forceImmediateSharedCPUReclaim feature; nil when disabled.
+	reconcile *reconcileState
+}
+
+// reconcileState groups the fields of the forceImmediateSharedCPUReclaim feature.
+// It is nil while the feature is off, so the hooks need no separate flag.
+type reconcileState struct {
+	// containerUpdater is the NRI stub used to push the wider cpuset; nil until
+	// Start has created it.
+	containerUpdater containerUpdater
 }
 
 // deviceHealthEntry is the last known health of a single device.
@@ -196,6 +207,9 @@ type Config struct {
 	// PublishNodeAllocatableResourceMapping publishes KEP-5517 nodeAllocatableResources mappings in
 	// ResourceSlice devices. Requires the DRANodeAllocatableResources feature gate to be enabled in the cluster.
 	PublishNodeAllocatableResourceMapping bool
+	// ForceImmediateSharedCPUReclaim pushes released CPUs to running shared containers
+	// right after Unprepare, with an unsolicited NRI UpdateContainers call.
+	ForceImmediateSharedCPUReclaim bool
 }
 
 func (cfg Config) DevicesPerResourceSlice() int {
@@ -234,6 +248,9 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		metrics:                 metricsRecorder,
 		health:                  newHealthTracker(),
 		kubeletRootDir:          config.KubeletRootDir,
+	}
+	if config.ForceImmediateSharedCPUReclaim {
+		plugin.reconcile = &reconcileState{}
 	}
 	topo, err := providers.EnsureCPUInfo().GetCPUTopology(logger)
 	if err != nil {
@@ -390,6 +407,9 @@ func (cp *CPUDriver) Start(ctx context.Context) (<-chan error, error) {
 		return asyncErr, fmt.Errorf("failed to create plugin stub: %w", err)
 	}
 	cp.nriPlugin = stub
+	if cp.reconcile != nil {
+		cp.reconcile.containerUpdater = stub
+	}
 
 	go func() {
 		if err := runNRIPluginWithRetry(ctx, cp.nriPlugin, maxAttempts); err != nil && ctx.Err() == nil {
