@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/containerd/nri/pkg/api"
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
@@ -152,6 +153,11 @@ type reconcileState struct {
 	// containerUpdater is the NRI stub used to push the wider cpuset; nil until
 	// Start has created it.
 	containerUpdater containerUpdater
+}
+
+// containerUpdater is the one stub method the driver needs, so tests can fake it.
+type containerUpdater interface {
+	UpdateContainers([]*api.ContainerUpdate) ([]*api.ContainerUpdate, error)
 }
 
 // deviceHealthEntry is the last known health of a single device.
