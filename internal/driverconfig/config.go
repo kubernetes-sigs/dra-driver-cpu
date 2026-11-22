@@ -45,6 +45,11 @@ type Config struct {
 	// feature gate in the cluster. Defaults to false.
 	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping,omitempty"`
 	Allocator                             string `json:"allocator,omitempty"`
+	// ForceImmediateSharedCPUReclaim pushes released CPUs to running shared containers
+	// right after Unprepare, with an unsolicited NRI UpdateContainers call. Needs
+	// a runtime with containerd/nri#301; the driver cannot check that, so the
+	// operator opts in. Defaults to false.
+	ForceImmediateSharedCPUReclaim bool `json:"forceImmediateSharedCPUReclaim,omitempty"`
 }
 
 // LogValues returns key-value pairs for structured logging of the config.
@@ -61,6 +66,7 @@ func (c Config) LogValues() []any {
 		"kubeletRootDir", c.KubeletRootDir,
 		"publishNodeAllocatableResourceMapping", c.PublishNodeAllocatableResourceMapping,
 		"allocator", c.Allocator,
+		"forceImmediateSharedCPUReclaim", c.ForceImmediateSharedCPUReclaim,
 	}
 }
 
@@ -78,6 +84,7 @@ type dumpConfig struct {
 	KubeletRootDir                        string `json:"kubeletRootDir"`
 	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping"`
 	Allocator                             string `json:"allocator"`
+	ForceImmediateSharedCPUReclaim        bool   `json:"forceImmediateSharedCPUReclaim"`
 }
 
 // Dump renders the Config as YAML, for logging a human-readable snapshot of

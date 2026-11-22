@@ -153,6 +153,25 @@ on - is configured through other Helm values, not through this file.
 - Requires the `DRANodeAllocatableResources` feature gate (alpha, 1.37+). See
   [Workload Configuration Requirements](workload-requirements.md).
 
+`forceImmediateSharedCPUReclaim` (bool, default: `false`)
+
+When a Pod is deleted and its exclusive CPU claim is released, those CPUs go back to the
+shared pool. With this option disabled, already-running shared containers keep using their
+narrower cpuset until the next container creation. With this option enabled, the driver
+moves them onto the released CPUs right away.
+
+Only enable it on runtimes whose NRI adaptation includes
+[containerd/nri#301](https://github.com/containerd/nri/pull/301); older adaptations are
+prone to deadlock on the update this option sends. The NRI handshake reports the runtime
+version but not the NRI version it vendors, so the driver cannot check this for you. By
+source inspection of the release tags, containerd v2.4.2 and CRI-O v1.37.4 include the
+fix, while containerd v2.3.4 and CRI-O v1.36.0 do not.
+
+If the update fails, it is logged and the claim is still reported as released: the
+containers keep their current cpuset until their next lifecycle event, exactly as without
+this option. Unprepare does not fail on it, because by then the CPUs are already back in
+the pool and a retry would only re-release a claim that is already gone.
+
 #### Example
 
 ```yaml

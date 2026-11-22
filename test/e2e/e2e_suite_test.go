@@ -345,6 +345,7 @@ type driverConfigValues struct {
 	Allocator                             string `json:"allocator,omitempty"`
 	ReservedCPUs                          string `json:"reservedCPUs,omitempty"`
 	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping,omitempty"`
+	ForceImmediateSharedCPUReclaim        bool   `json:"forceImmediateSharedCPUReclaim,omitempty"`
 }
 
 // getDriverConfigValues reads the ConfigMap if the daemonset uses --config=, else falls back to
