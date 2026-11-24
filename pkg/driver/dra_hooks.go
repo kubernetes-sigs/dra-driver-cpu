@@ -411,7 +411,7 @@ func (cp *CPUDriver) UnprepareResourceClaims(ctx context.Context, claims []kubel
 }
 
 func (cp *CPUDriver) unprepareResourceClaim(ctx context.Context, logger logr.Logger, claim kubeletplugin.NamespacedObject) error {
-	updates, err := cp.releaseClaim(ctx, logger, claim)
+	updates, updater, err := cp.releaseClaim(ctx, logger, claim)
 	if err != nil || len(updates) == 0 {
 		return err
 	}
@@ -420,7 +420,7 @@ func (cp *CPUDriver) unprepareResourceClaim(ctx context.Context, logger logr.Log
 	// made under it, and kubeletplugin serializes Unprepare against Prepare, so
 	// no other claim can be reserved in between.
 	logger.V(2).Info("reconciling shared containers after claim release", "numContainers", len(updates))
-	failed, err := cp.reconcile.containerUpdater.UpdateContainers(updates)
+	failed, err := updater.UpdateContainers(updates)
 	// A failed update is not retried: the containers keep the narrower cpuset
 	// until their next lifecycle event, as without this option. The claim is
 	// already released, so failing Unprepare here would only make kubelet
@@ -435,29 +435,31 @@ func (cp *CPUDriver) unprepareResourceClaim(ctx context.Context, logger logr.Log
 }
 
 // releaseClaim removes the CDI spec and releases the allocation, returning the
-// shared-container updates the caller should send once stateMu is dropped.
-func (cp *CPUDriver) releaseClaim(ctx context.Context, logger logr.Logger, claim kubeletplugin.NamespacedObject) ([]*api.ContainerUpdate, error) {
+// shared-container updates the caller should send once stateMu is dropped, and
+// the updater to send them with: Configure can reset cp.reconcile on reconnect,
+// so the caller must not read it after the lock is gone.
+func (cp *CPUDriver) releaseClaim(ctx context.Context, logger logr.Logger, claim kubeletplugin.NamespacedObject) ([]*api.ContainerUpdate, containerUpdater, error) {
 	cp.stateMu.Lock()
 	defer cp.stateMu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Remove the CDI spec first. If that fails, keep the allocation recorded so
 	// the driver does not make those CPUs available while stale CDI state remains.
 	if err := cp.cdiMgr.RemoveDevice(logger, getCDIDeviceName(claim.UID)); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cp.allocationState.Release(logger, claim.UID)
 	cp.refreshAllocationMetrics()
 	if cp.reconcile == nil || cp.reconcile.containerUpdater == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	updates, err := sharedContainerUpdatesFor(logger, cp.allocationState, cp.podState, types.UID(""))
 	if err != nil {
 		logger.Error(err, "cannot reconcile shared containers")
-		return nil, nil
+		return nil, nil, nil
 	}
-	return updates, nil
+	return updates, cp.reconcile.containerUpdater, nil
 }
 
 // HandleError is called by the kubelet plugin framework when an error occurs in the background,

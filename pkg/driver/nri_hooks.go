@@ -28,25 +28,35 @@ import (
 	"github.com/go-logr/logr"
 	dracpuapi "github.com/kubernetes-sigs/dra-driver-cpu/api"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/runtimecompat"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/cpuset"
 )
 
-// Configure is called once when the NRI plugin connects to the runtime.
-// It reports the runtime name and version, which we use for auto-detecting
-// whether unsolicited UpdateContainers calls are safe.
+// Configure is called each time the NRI plugin connects to the runtime, with
+// the runtime name and version. When forceImmediateSharedCPUReclaim is unset,
+// it decides from them whether the runtime is safe for the unsolicited
+// UpdateContainers call; deciding on every connection means a runtime that was
+// rolled back under a running driver turns the feature off again.
 func (cp *CPUDriver) Configure(ctx context.Context, config, runtime, version string) (api.EventMask, error) {
 	_, logger := ctxlog.WithValues(ctx, "driver", cp.driverName)
 	logger.V(2).Info("NRI Configure", "runtime", runtime, "version", version)
+	if cp.forceImmediateSharedCPUReclaim != nil {
+		return 0, nil
+	}
 
-	// Acquire stateMu to serialize with Synchronize, which reads these fields.
+	supported, reason := runtimecompat.SupportsUnsolicitedUpdate(runtime, version)
 	cp.stateMu.Lock()
-	cp.runtimeName = runtime
-	cp.runtimeVersion = version
+	if supported {
+		cp.reconcile = &reconcileState{containerUpdater: cp.nriPlugin}
+	} else {
+		cp.reconcile = nil
+	}
 	cp.stateMu.Unlock()
+	logger.Info("immediate shared CPU reclaim auto-detected", "enabled", supported, "reason", reason)
 
-	// Return 0: we implement stub interfaces directly, no event subscription needed.
+	// 0 keeps the events the stub derives from the implemented handlers.
 	return 0, nil
 }
 
@@ -59,26 +69,6 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	}
 	startTime := time.Now()
 	_, logger := ctxlog.WithValues(ctx, "opID", generateShortID(opIDLen))
-
-	// Auto-detect forceImmediateSharedCPUReclaim on first Synchronize if config was nil.
-	// This runs once: Configure gave us the runtime version, now we decide.
-	if cp.configWasAuto && cp.autoDetectDecision == "" {
-		// Check if Configure was called and provided runtime info.
-		if cp.runtimeName == "" {
-			cp.autoDetectDecision = "shared CPU reconcile: disabled (runtime version not available from NRI Configure)"
-			logger.Info(cp.autoDetectDecision)
-		} else {
-			supported, reason := runtimeSupportsUnsolicitedUpdate(cp.runtimeName, cp.runtimeVersion)
-			if supported {
-				cp.reconcile = &reconcileState{containerUpdater: cp.nriPlugin}
-				cp.autoDetectDecision = fmt.Sprintf("shared CPU reconcile: enabled (%s)", reason)
-			} else {
-				cp.autoDetectDecision = fmt.Sprintf("shared CPU reconcile: disabled (%s)", reason)
-			}
-			logger.Info(cp.autoDetectDecision)
-		}
-	}
-
 	// Recovery runs at startup and on reconnect; always log it.
 	logger.Info("begin: synchronize state with the runtime", "numPods", len(pods), "numContainers", len(containers))
 	defer logger.Info("end: synchronize state with the runtime", "numPods", len(pods), "numContainers", len(containers))

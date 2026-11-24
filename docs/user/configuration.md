@@ -153,7 +153,7 @@ on - is configured through other Helm values, not through this file.
 - Requires the `DRANodeAllocatableResources` feature gate (alpha, 1.37+). See
   [Workload Configuration Requirements](workload-requirements.md).
 
-`forceImmediateSharedCPUReclaim` (bool or null, default: auto-detect)
+`forceImmediateSharedCPUReclaim` (bool, default: unset)
 
 When a Pod is deleted and its exclusive CPU claim is released, those CPUs go back to the
 shared pool. With this option disabled, already-running shared containers keep using their
@@ -166,15 +166,12 @@ prone to deadlock on the update this option sends. The NRI handshake reports the
 name and version but not the NRI version it vendors, so the driver decides from a list of
 known-safe runtime versions:
 
-- **Auto-detect (default)**: when omitted or null, the driver enables it on containerd
-  2.4.0+ and CRI-O 1.37.0+, and leaves it off on older or unknown runtimes (k3s, microk8s,
-  vendor forks). The decision is logged at startup.
-- **Force on (`true`)**: enable regardless of runtime version. Only use this if you know
-  your runtime includes containerd/nri#301.
-- **Force off (`false`)**: disable even on known-safe runtimes.
-
-Upgrade note: before this change, omitting the field meant disabled. To keep the feature
-off on known-safe runtimes, set `forceImmediateSharedCPUReclaim: false` explicitly.
+- **Unset (default)**: enabled on containerd 2.4.0+ and CRI-O 1.37.0+, disabled on older or
+  unknown runtimes (k3s, microk8s, vendor forks). The driver decides again each time it
+  reconnects to the runtime, and logs the decision.
+- **`true`**: enabled regardless of runtime version. Only use this if you know your runtime
+  includes containerd/nri#301.
+- **`false`**: disabled, even on known-safe runtimes.
 
 If the update fails, it is logged and the claim is still reported as released: the
 containers keep their current cpuset until their next lifecycle event, exactly as without

@@ -282,39 +282,50 @@ func TestRequestReconcileIsInertWhenDisabled(t *testing.T) {
 	require.False(t, found)
 }
 
-func TestAutoDetectForceImmediateSharedCPUReclaim(t *testing.T) {
+func TestConfigureDecidesSharedCPUReclaim(t *testing.T) {
+	on, off := true, false
 	tests := []struct {
-		name           string
-		runtime        string
-		version        string
-		auto           bool
-		wantEnabled    bool
-		wantInDecision string
+		name        string
+		setting     *bool
+		runtime     string
+		version     string
+		wantEnabled bool
 	}{
-		{name: "safe containerd", runtime: "containerd", version: "2.4.0", auto: true, wantEnabled: true, wantInDecision: "containerd 2.4.0"},
-		{name: "old containerd", runtime: "containerd", version: "2.3.7", auto: true, wantInDecision: "predates"},
-		{name: "no runtime info", auto: true, wantInDecision: "not available"},
-		{name: "explicit off on safe runtime", runtime: "containerd", version: "2.4.0"},
+		{name: "unset, safe containerd", runtime: "containerd", version: "2.4.0", wantEnabled: true},
+		{name: "unset, safe cri-o", runtime: "cri-o", version: "1.37.0", wantEnabled: true},
+		{name: "unset, old containerd", runtime: "containerd", version: "2.3.7"},
+		{name: "unset, unknown runtime", runtime: "k3s", version: "1.32.1+k3s1"},
+		{name: "unset, no runtime info"},
+		{name: "forced off, safe runtime", setting: &off, runtime: "containerd", version: "2.4.0"},
+		{name: "forced on, old runtime", setting: &on, runtime: "containerd", version: "2.3.7", wantEnabled: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			d, _ := newMetricsTestDriverWithCPUInfos(t, mockCPUInfos_SingleSocket_4CPUS_HT)
+			d.forceImmediateSharedCPUReclaim = tt.setting
 			d.reconcile = nil
-			d.configWasAuto = tt.auto
-			if tt.runtime != "" {
-				_, err := d.Configure(t.Context(), "", tt.runtime, tt.version)
-				require.NoError(t, err)
+			if ptrBool(tt.setting) {
+				d.reconcile = &reconcileState{}
 			}
 
-			_, err := d.Synchronize(t.Context(), nil, nil)
+			_, err := d.Configure(t.Context(), "", tt.runtime, tt.version)
 			require.NoError(t, err)
-
 			require.Equal(t, tt.wantEnabled, d.reconcile != nil)
-			if tt.wantInDecision != "" {
-				require.Contains(t, d.autoDetectDecision, tt.wantInDecision)
-			} else {
-				require.Empty(t, d.autoDetectDecision)
-			}
 		})
 	}
 }
+
+// A reconnect to an older runtime must turn auto-detected reclaim off again,
+// and an Unprepare after that must not reach for the old updater.
+func TestConfigureReconnectToOldRuntimeDisablesReclaim(t *testing.T) {
+	f := newReconcileFixture(t, newFakeRuntime())
+	_, err := f.d.Configure(t.Context(), "", "containerd", "2.3.7")
+	require.NoError(t, err)
+	require.Nil(t, f.d.reconcile)
+
+	f.unprepare(f.oldClaim)
+	require.Empty(t, f.runtime.allCalls())
+	f.requireSharedCPUs("2-3")
+}
+
+func ptrBool(b *bool) bool { return b != nil && *b }

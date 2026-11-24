@@ -146,11 +146,9 @@ type CPUDriver struct {
 	// reconcile holds state for the forceImmediateSharedCPUReclaim feature; nil when disabled.
 	reconcile *reconcileState
 
-	// Runtime info from NRI Configure, used for auto-detect. Guarded by stateMu.
-	runtimeName        string
-	runtimeVersion     string
-	autoDetectDecision string // set once the auto-detect decision is made
-	configWasAuto      bool   // true if config.ForceImmediateSharedCPUReclaim was nil
+	// forceImmediateSharedCPUReclaim is the configured setting; nil means
+	// Configure decides from the runtime on every NRI connection.
+	forceImmediateSharedCPUReclaim *bool
 }
 
 // reconcileState groups the fields of the forceImmediateSharedCPUReclaim feature.
@@ -221,6 +219,7 @@ type Config struct {
 	PublishNodeAllocatableResourceMapping bool
 	// ForceImmediateSharedCPUReclaim pushes released CPUs to running shared containers
 	// right after Unprepare, with an unsolicited NRI UpdateContainers call.
+	// Unset: decided from the runtime version; true: force on; false: force off.
 	ForceImmediateSharedCPUReclaim *bool
 }
 
@@ -261,11 +260,8 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		health:                  newHealthTracker(),
 		kubeletRootDir:          config.KubeletRootDir,
 	}
-	// nil: auto-detect from the runtime version in Synchronize; true: force on;
-	// false: force off.
-	if config.ForceImmediateSharedCPUReclaim == nil {
-		plugin.configWasAuto = true
-	} else if *config.ForceImmediateSharedCPUReclaim {
+	plugin.forceImmediateSharedCPUReclaim = config.ForceImmediateSharedCPUReclaim
+	if force := config.ForceImmediateSharedCPUReclaim; force != nil && *force {
 		plugin.reconcile = &reconcileState{}
 	}
 

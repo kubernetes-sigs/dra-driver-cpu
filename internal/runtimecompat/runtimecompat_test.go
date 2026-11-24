@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package driver
+package runtimecompat
 
 import (
 	"testing"
@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRuntimeSupportsUnsolicitedUpdate(t *testing.T) {
+func TestSupportsUnsolicitedUpdate(t *testing.T) {
 	tests := []struct {
 		name            string
 		runtimeName     string
@@ -57,21 +57,21 @@ func TestRuntimeSupportsUnsolicitedUpdate(t *testing.T) {
 			runtimeName:     "containerd",
 			runtimeVersion:  "2.3.7",
 			expectSupported: false,
-			expectReason:    "containerd 2.3.7 predates nri v0.12.3 (needs 2.4.0+)",
+			expectReason:    "containerd 2.3.7 predates containerd/nri#301 (needs 2.4.0+)",
 		},
 		{
 			name:            "containerd 2.3.4 - too old",
 			runtimeName:     "containerd",
 			runtimeVersion:  "2.3.4",
 			expectSupported: false,
-			expectReason:    "containerd 2.3.4 predates nri v0.12.3 (needs 2.4.0+)",
+			expectReason:    "containerd 2.3.4 predates containerd/nri#301 (needs 2.4.0+)",
 		},
 		{
 			name:            "containerd 1.7.0 - too old",
 			runtimeName:     "containerd",
 			runtimeVersion:  "1.7.0",
 			expectSupported: false,
-			expectReason:    "containerd 1.7.0 predates nri v0.12.3 (needs 2.4.0+)",
+			expectReason:    "containerd 1.7.0 predates containerd/nri#301 (needs 2.4.0+)",
 		},
 		{
 			name:            "containerd case insensitive",
@@ -108,14 +108,14 @@ func TestRuntimeSupportsUnsolicitedUpdate(t *testing.T) {
 			runtimeName:     "cri-o",
 			runtimeVersion:  "1.36.5",
 			expectSupported: false,
-			expectReason:    "cri-o 1.36.5 predates nri v0.12.3 (needs 1.37.0+)",
+			expectReason:    "cri-o 1.36.5 predates containerd/nri#301 (needs 1.37.0+)",
 		},
 		{
 			name:            "cri-o 1.30.0 - too old",
 			runtimeName:     "cri-o",
 			runtimeVersion:  "1.30.0",
 			expectSupported: false,
-			expectReason:    "cri-o 1.30.0 predates nri v0.12.3 (needs 1.37.0+)",
+			expectReason:    "cri-o 1.30.0 predates containerd/nri#301 (needs 1.37.0+)",
 		},
 		{
 			name:            "cri-o case insensitive",
@@ -160,7 +160,7 @@ func TestRuntimeSupportsUnsolicitedUpdate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			supported, reason := runtimeSupportsUnsolicitedUpdate(tt.runtimeName, tt.runtimeVersion)
+			supported, reason := SupportsUnsolicitedUpdate(tt.runtimeName, tt.runtimeVersion)
 			require.Equal(t, tt.expectSupported, supported, "support mismatch")
 			require.Equal(t, tt.expectReason, reason, "reason mismatch")
 		})
