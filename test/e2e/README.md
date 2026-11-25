@@ -108,7 +108,8 @@ honor these settings, where applicable.
   Makefile* `ci-kind-setup` target deploys the driver with the
   `driverConfig.forceImmediateSharedCPUReclaim: true` option. The tests read the option back from
   the driver ConfigMap and expect running shared pods to be widened when a claim is released
-  instead of keeping their last cpuset. Only use it with a runtime that includes
+  instead of keeping their last cpuset. When the option is unset, the tests apply the
+  driver's runtime allowlist to the node's reported container runtime. Only set `true` with a runtime that includes
   [containerd/nri#301](https://github.com/containerd/nri/pull/301); the stock
   `kindest/node:v1.37.0` image ships containerd v2.3.4, which does not.
 

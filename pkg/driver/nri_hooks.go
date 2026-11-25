@@ -40,7 +40,7 @@ import (
 // UpdateContainers call; deciding on every connection means a runtime that was
 // rolled back under a running driver turns the feature off again.
 func (cp *CPUDriver) Configure(ctx context.Context, config, runtime, version string) (api.EventMask, error) {
-	_, logger := ctxlog.WithValues(ctx, "driver", cp.driverName)
+	logger := ctxlog.FromContext(ctx)
 	logger.V(2).Info("NRI Configure", "runtime", runtime, "version", version)
 	if cp.forceImmediateSharedCPUReclaim != nil {
 		return 0, nil
