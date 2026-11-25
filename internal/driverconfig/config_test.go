@@ -30,6 +30,7 @@ import (
 	"github.com/go-logr/logr/funcr"
 	"github.com/go-logr/logr/testr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/driverconfig"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/device"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,6 +72,7 @@ reservedCPUs: "0-3"
 sysfsOverlay: /custom/sysfs
 publishNodeAllocatableResourceMapping: true
 forceImmediateSharedCPUReclaim: true
+checkpointDir: /custom/checkpoints/
 `)
 
 	result, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
@@ -85,6 +87,32 @@ forceImmediateSharedCPUReclaim: true
 	assert.True(t, result.PublishNodeAllocatableResourceMapping)
 	require.NotNil(t, result.ForceImmediateSharedCPUReclaim)
 	assert.True(t, *result.ForceImmediateSharedCPUReclaim)
+	assert.Equal(t, "/custom/checkpoints", result.CheckpointDir)
+}
+
+func TestResolve_CheckpointDirIsConfigFileOnly(t *testing.T) {
+	var cfg driverconfig.Config
+	fs := newFlagSet(t, &cfg, nil)
+	require.Nil(t, fs.Lookup("checkpoint-dir"))
+
+	result, err := driverconfig.Resolve(testr.New(t), nil)
+	require.NoError(t, err)
+	assert.Equal(t, checkpoint.DefaultDirectory, result.CheckpointDir)
+}
+
+func TestResolve_CleansCheckpointDir(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := writeFile(t, dir, "config.yaml", `
+apiVersion: v1alpha1
+checkpointDir: /custom/checkpoints/../cache
+`)
+
+	result, err := driverconfig.Resolve(testr.New(t), []driverconfig.Source{
+		driverconfig.FromFile(cfgFile),
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "/custom/cache", result.CheckpointDir)
 }
 
 // TestResolve_CLIFlagWinsOverFile: an explicitly-passed CLI flag beats the file value.
@@ -388,6 +416,7 @@ func TestDefault(t *testing.T) {
 	// The kubelet root defaults to the standard location, so behavior is
 	// unchanged unless the kubelet --root-dir is relocated.
 	assert.Equal(t, driverconfig.DefaultKubeletRootDir, d.KubeletRootDir)
+	assert.Equal(t, checkpoint.DefaultDirectory, d.CheckpointDir)
 	// Fields with no built-in default must be zero/empty.
 	assert.Empty(t, d.Kubeconfig)
 	assert.Empty(t, d.HostnameOverride)

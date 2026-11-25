@@ -88,6 +88,9 @@ func TestRunWritesReportToStdout(t *testing.T) {
 	if report.DriverConfig.GroupBy != device.GROUP_BY_SOCKET {
 		t.Fatalf("groupBy = %q, want %q", report.DriverConfig.GroupBy, device.GROUP_BY_SOCKET)
 	}
+	if got := report.DriverConfig.CheckpointDir; got != "/run/dra-driver-cpu" {
+		t.Fatalf("checkpointDir = %q, want /run/dra-driver-cpu", got)
+	}
 }
 
 func TestRunAppliesDriverSysFSOverlay(t *testing.T) {
@@ -193,7 +196,7 @@ func TestRunFailsWhenDriverProcessIsMissing(t *testing.T) {
 func TestRunReadsConfigFile(t *testing.T) {
 	driverRoot := t.TempDir()
 	configPath := "/etc/dra-driver-cpu/driver-config.yaml"
-	writeTestFile(t, filepath.Join(driverRoot, strings.TrimPrefix(configPath, "/")), []byte("reservedCPUs: \"2-3\"\n"))
+	writeTestFile(t, filepath.Join(driverRoot, strings.TrimPrefix(configPath, "/")), []byte("reservedCPUs: \"2-3\"\ncheckpointDir: /custom/checkpoints\n"))
 
 	hostRoot := setupFakeHost(t, []byte("/dracpu\x00--config="+configPath+"\x00"))
 	if err := os.Symlink(driverRoot, filepath.Join(hostRoot, "proc", "42", "root")); err != nil {
@@ -210,6 +213,9 @@ func TestRunReadsConfigFile(t *testing.T) {
 	report := readReport(t, []byte(stdout))
 	if report.DriverConfig.ReservedCPUs != "2-3" {
 		t.Fatalf("reservedCPUs = %q, want 2-3 (from config file)", report.DriverConfig.ReservedCPUs)
+	}
+	if got := report.DriverConfig.CheckpointDir; got != "/custom/checkpoints" {
+		t.Fatalf("checkpointDir = %q, want /custom/checkpoints (from config file)", got)
 	}
 }
 
