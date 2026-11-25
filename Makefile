@@ -126,6 +126,8 @@ DRACPU_E2E_ALLOCATOR ?= cpumanager
 # forceImmediateSharedCPUReclaim driverConfig option. Only safe on a runtime whose
 # NRI adaptation includes containerd/nri#301; see docs/user/configuration.md.
 DRACPU_E2E_FORCE_IMMEDIATE_SHARED_CPU_RECLAIM ?= false
+# "shared" requires a non-empty DRACPU_E2E_RESERVED_CPUS.
+DRACPU_E2E_RESERVED_CPUS_POLICY ?= strict
 # Extra arguments passed to golangci-lint in the lint target.
 # For example, set GOLANGCI_LINT_EXTRA_ARGS=--fix to auto-fix issues.
 GOLANGCI_LINT_EXTRA_ARGS ?=
@@ -225,7 +227,8 @@ endif
 		--set args.exposePCIeRoots=true \
 		--set driverConfig.publishNodeAllocatableResourceMapping=$(DRACPU_E2E_NODE_ALLOCATABLE_MAPPING) \
 		--set driverConfig.allocator=$(DRACPU_E2E_ALLOCATOR) \
-		--set driverConfig.forceImmediateSharedCPUReclaim=$(DRACPU_E2E_FORCE_IMMEDIATE_SHARED_CPU_RECLAIM)
+		--set driverConfig.forceImmediateSharedCPUReclaim=$(DRACPU_E2E_FORCE_IMMEDIATE_SHARED_CPU_RECLAIM) \
+		--set driverConfig.reservedCPUsPolicy=$(DRACPU_E2E_RESERVED_CPUS_POLICY)
 	hack/ci/wait-resourcelices.sh
 
 build-test-image: ## build tests image
