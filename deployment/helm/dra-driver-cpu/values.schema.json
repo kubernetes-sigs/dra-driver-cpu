@@ -260,7 +260,10 @@
           ]
         },
         "forceImmediateSharedCPUReclaim": {
-          "type": "boolean"
+          "type": [
+            "null",
+            "boolean"
+          ]
         },
         "groupBy": {
           "type": "string",

@@ -114,12 +114,13 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 		driverConfig := getDriverConfig(ctx, rootFxt.K8SClientset)
 		publishNodeAllocatableMapping = driverConfig.PublishNodeAllocatableResourceMapping
 		rootFxt.Log.Info("driver node allocatable mapping", "enabled", publishNodeAllocatableMapping)
-		forceImmediateSharedCPUReclaim = driverConfig.ForceImmediateSharedCPUReclaim
-		rootFxt.Log.Info("driver force immediate shared CPU reclaim", "enabled", forceImmediateSharedCPUReclaim)
 
 		targetNode, err = e2enode.PickWorker(ctx, rootFxt.K8SClientset, 5*time.Second, 1*time.Minute, rootFxt.Log)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		rootFxt.Log.Info("using worker node", "nodeName", targetNode.Name)
+		forceImmediateSharedCPUReclaim = sharedCPUReclaimEnabled(driverConfig.ForceImmediateSharedCPUReclaim, targetNode)
+		rootFxt.Log.Info("driver force immediate shared CPU reclaim", "enabled", forceImmediateSharedCPUReclaim,
+			"configured", driverConfig.ForceImmediateSharedCPUReclaim, "runtime", targetNode.Status.NodeInfo.ContainerRuntimeVersion)
 
 		infoPod := discovery.MakePod(infraFxt.Namespace.Name, dracpuTesterImage)
 		infoPod = e2epod.PinToNode(infoPod, targetNode.Name)

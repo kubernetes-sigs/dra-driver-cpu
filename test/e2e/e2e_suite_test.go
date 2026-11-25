@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/kubernetes-sigs/dra-driver-cpu/api/allocation/v1alpha1"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/runtimecompat"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/discovery"
 	"github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/fixture"
 	podmatchers "github.com/kubernetes-sigs/dra-driver-cpu/test/pkg/matchers/pod"
@@ -345,7 +346,7 @@ type driverConfigValues struct {
 	Allocator                             string `json:"allocator,omitempty"`
 	ReservedCPUs                          string `json:"reservedCPUs,omitempty"`
 	PublishNodeAllocatableResourceMapping bool   `json:"publishNodeAllocatableResourceMapping,omitempty"`
-	ForceImmediateSharedCPUReclaim        bool   `json:"forceImmediateSharedCPUReclaim,omitempty"`
+	ForceImmediateSharedCPUReclaim        *bool  `json:"forceImmediateSharedCPUReclaim,omitempty"`
 }
 
 // getDriverConfigValues reads the ConfigMap if the daemonset uses --config=, else falls back to
@@ -501,4 +502,16 @@ func countRequestedCPUs(claims []*resourcev1.ResourceClaim) int64 {
 	}
 	gomega.Expect(total).To(gomega.BeNumerically(">", 0), "CPU claims request no CPUs")
 	return total
+}
+
+// sharedCPUReclaimEnabled mirrors the driver's decision: an explicit setting
+// wins, and when unset the driver checks the runtime NRI reports, which is the
+// one the kubelet reports as "<name>://<version>".
+func sharedCPUReclaimEnabled(configured *bool, node *v1.Node) bool {
+	if configured != nil {
+		return *configured
+	}
+	name, version, _ := strings.Cut(node.Status.NodeInfo.ContainerRuntimeVersion, "://")
+	supported, _ := runtimecompat.SupportsUnsolicitedUpdate(name, version)
+	return supported
 }

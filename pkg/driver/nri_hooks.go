@@ -28,10 +28,37 @@ import (
 	"github.com/go-logr/logr"
 	dracpuapi "github.com/kubernetes-sigs/dra-driver-cpu/api"
 	"github.com/kubernetes-sigs/dra-driver-cpu/internal/ctxlog"
+	"github.com/kubernetes-sigs/dra-driver-cpu/internal/runtimecompat"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/cpuset"
 )
+
+// Configure is called each time the NRI plugin connects to the runtime, with
+// the runtime name and version. When forceImmediateSharedCPUReclaim is unset,
+// it decides from them whether the runtime is safe for the unsolicited
+// UpdateContainers call; deciding on every connection means a runtime that was
+// rolled back under a running driver turns the feature off again.
+func (cp *CPUDriver) Configure(ctx context.Context, config, runtime, version string) (api.EventMask, error) {
+	logger := ctxlog.FromContext(ctx)
+	logger.V(2).Info("NRI Configure", "runtime", runtime, "version", version)
+	if cp.forceImmediateSharedCPUReclaim != nil {
+		return 0, nil
+	}
+
+	supported, reason := runtimecompat.SupportsUnsolicitedUpdate(runtime, version)
+	cp.stateMu.Lock()
+	if supported {
+		cp.reconcile = &reconcileState{containerUpdater: cp.nriPlugin}
+	} else {
+		cp.reconcile = nil
+	}
+	cp.stateMu.Unlock()
+	logger.Info("immediate shared CPU reclaim auto-detected", "enabled", supported, "reason", reason)
+
+	// 0 keeps the events the stub derives from the implemented handlers.
+	return 0, nil
+}
 
 // Synchronize is called by the NRI to synchronize the state of the driver during bootstrap.
 func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, containers []*api.Container) (rupdates []*api.ContainerUpdate, rerr error) {
