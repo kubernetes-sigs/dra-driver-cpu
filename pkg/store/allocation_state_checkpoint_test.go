@@ -553,7 +553,8 @@ func TestAllocationStateDetectsAndFailsWithNilManager(t *testing.T) {
 		{
 			name: "load",
 			mutate: func(l logr.Logger, s *AllocationState) error {
-				return s.LoadState(l, nil)
+				_, err := s.LoadState(l, nil)
+				return err
 			},
 		},
 		{
@@ -930,7 +931,7 @@ func TestAllocationStateLoadStateDoesNotPartiallyApply(t *testing.T) {
 				wantShared = "0-2,5-7"
 			}
 
-			err = target.LoadState(logger, storage)
+			_, err = target.LoadState(logger, storage)
 			require.ErrorContains(t, err, tc.wantError)
 			require.Equal(t, wantSnapshot, target.Snapshot())
 			require.Equal(t, wantPrepared, target.GetPreparedCPUs().String())
@@ -992,7 +993,9 @@ func TestAllocationStateLoadStateReplacesExistingClaim(t *testing.T) {
 	_, err = target.Bind(logger, noop, "original-pod", "original-app", map[types.UID]cpuset.CPUSet{"sentinel": cpuset.New(3)})
 	require.NoError(t, err)
 
-	require.NoError(t, target.LoadState(logger, storage))
+	restored, err := target.LoadState(logger, storage)
+	require.NoError(t, err)
+	require.True(t, restored)
 
 	require.Equal(t, AllocationSnapshot{
 		AllocatedCPUs:        3,
@@ -1323,7 +1326,7 @@ func TestAllocationStateLoadStateConsistency(t *testing.T) {
 			reservedCPUs := cpuset.New(3)
 			sharedCPUs := cpuset.New(0, 1, 2)
 			target := NewAllocationState("test-node-load-state", topology, reservedCPUs)
-			err = target.LoadState(logger, storage)
+			_, err = target.LoadState(logger, storage)
 
 			switch {
 			case tc.wantErr != nil: // precise sentinel error
@@ -1421,7 +1424,7 @@ func TestAllocationStateLoadStateConsistencyClaims(t *testing.T) {
 	storage.removeAttempts = 0
 	target := NewAllocationState("test-node-load-claims", topology, cpuset.New(3))
 
-	err = target.LoadState(logger, storage)
+	_, err = target.LoadState(logger, storage)
 
 	require.NoError(t, err)
 	require.Zero(t, storage.createAttempts)
@@ -1496,7 +1499,9 @@ func TestAllocationStateLoadStatePreservesRequestOwners(t *testing.T) {
 
 			// fresh state and load/store roundtrip to check the roundtrip didn't introduce unexpected mutations
 			target := NewAllocationState("test-node", topology, cpuset.New(3))
-			require.NoError(t, target.LoadState(logger, storage))
+			loaded, err := target.LoadState(logger, storage)
+			require.NoError(t, err)
+			require.True(t, loaded)
 			require.NoError(t, target.StoreState(logger, storage))
 			restored := readAllocationCheckpoint(t, storage)
 			require.Equal(t, wantRequests, restored.Payload.ClaimInfo["claim"].Requests)
@@ -1532,7 +1537,9 @@ func TestAllocationStateLoadStateMissing(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 	target, verifyPristine := newAllocationStateForLoadStateTest("test-node-load-missing", topology, cpuset.New(3))
 
-	require.NoError(t, target.LoadState(logger, storage))
+	restored, err := target.LoadState(logger, storage)
+	require.NoError(t, err)
+	require.False(t, restored)
 	require.Zero(t, storage.createAttempts)
 	require.Zero(t, storage.removeAttempts)
 
@@ -1572,7 +1579,7 @@ func TestAllocationStateLoadStateReadFailure(t *testing.T) {
 	}
 	target, verifyPristine := newAllocationStateForLoadStateTest("read-fail", topology, cpuset.New(3))
 
-	err = target.LoadState(logger, storage)
+	_, err = target.LoadState(logger, storage)
 	require.ErrorIs(t, err, readErr)
 
 	// LoadState must do no filesystem changes (read-only)
@@ -1598,7 +1605,7 @@ func TestAllocationStateLoadStateDataCorruption(t *testing.T) {
 	require.NoError(t, os.WriteFile(chkPath, garbage, 0600))
 	target, verifyPristine := newAllocationStateForLoadStateTest("test-node-load-corrupt", topology, cpuset.New(3))
 
-	err := target.LoadState(logger, storage)
+	_, err := target.LoadState(logger, storage)
 	require.ErrorContains(t, err, "failed to deserialize allocation state checkpoint:")
 
 	// LoadState must do no filesystem changes (read-only)
@@ -1631,7 +1638,7 @@ func TestAllocationStateLoadStateGarbageContent(t *testing.T) {
 	require.NoError(t, os.WriteFile(chkPath, chkBefore, 0600))
 	target, verifyPristine := newAllocationStateForLoadStateTest("test-node-load-corrupt-encoded", topology, cpuset.New(3))
 
-	err = target.LoadState(logger, storage)
+	_, err = target.LoadState(logger, storage)
 	require.ErrorContains(t, err, "failed to deserialize allocation state checkpoint data:")
 
 	// LoadState must do no filesystem changes (read-only)
@@ -1676,7 +1683,7 @@ func TestAllocationStateLoadStateChecksum(t *testing.T) {
 	require.NoError(t, os.WriteFile(chkPath, before, 0600))
 
 	target, verifyPristine := newAllocationStateForLoadStateTest("load-node", topology, cpuset.New(3))
-	err = target.LoadState(logger, storage)
+	_, err = target.LoadState(logger, storage)
 	var corruptErr *checkpoint.CorruptCheckpointError
 	require.ErrorAs(t, err, &corruptErr)
 
@@ -1825,7 +1832,7 @@ func TestAllocationStateLoadStateReservedCPUsChanged(t *testing.T) {
 			target := NewAllocationState("node", topology, tc.current)
 			snapshotBefore := target.Snapshot()
 			sharedBefore := target.GetSharedCPUs().String()
-			err = target.LoadState(logger, manager)
+			_, err = target.LoadState(logger, manager)
 			if tc.wantErr {
 				require.ErrorContains(t, err, "CPUs outside the available set")
 				require.Equal(t, snapshotBefore, target.Snapshot())
@@ -1865,7 +1872,8 @@ func TestAllocationStateLoadRejectsUnavailableBootID(t *testing.T) {
 	state := newTestAllocationState(t, logger, cpuset.New(0, 1, 2, 3), cpuset.New())
 	before := state.Snapshot()
 
-	require.ErrorIs(t, state.LoadState(logger, manager), ErrBootIDUnavailable)
+	_, err := state.LoadState(logger, manager)
+	require.ErrorIs(t, err, ErrBootIDUnavailable)
 	require.Equal(t, before, state.Snapshot())
 }
 
@@ -1906,7 +1914,9 @@ func TestAllocationStateLoadStateSameBootID(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, initialBootID, reader.GetBootID())
 	target := NewAllocationState("boot-test", topology, cpuset.New(3))
-	require.NoError(t, target.LoadState(logger, reader))
+	restored, err := target.LoadState(logger, reader)
+	require.NoError(t, err)
+	require.True(t, restored)
 	cpus, found := target.GetResourceClaimAllocation("claim")
 	require.True(t, found)
 	require.Equal(t, "0-1", cpus.String())
@@ -1940,7 +1950,9 @@ func TestAllocationStateLoadStateDifferentBootID(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, currentBootID, reader.GetBootID())
 	target, verifyPristine := newAllocationStateForLoadStateTest("boot-test", topology, cpuset.New(3))
-	require.NoError(t, target.LoadState(logger, reader))
+	restored, err := target.LoadState(logger, reader)
+	require.NoError(t, err)
+	require.False(t, restored)
 	_, found := target.GetResourceClaimAllocation("claim")
 	require.False(t, found)
 	verifyPristine(t, target)
