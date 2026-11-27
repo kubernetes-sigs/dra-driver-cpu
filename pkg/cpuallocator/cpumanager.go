@@ -36,6 +36,7 @@ type CPUManager struct {
 	topo       *topology.CPUTopology
 }
 
+// NewCPUManager requires a topology with node-unique core IDs
 func NewCPUManager(driverName string, topo *topology.CPUTopology) *CPUManager {
 	return &CPUManager{
 		driverName: driverName,

@@ -17,6 +17,7 @@ limitations under the License.
 package cpuallocator
 
 import (
+	"maps"
 	"testing"
 
 	"github.com/go-logr/logr/testr"
@@ -43,8 +44,8 @@ func TestCPUManagerGetPreferredCPUs(t *testing.T) {
 		},
 	}
 
-	allocator := NewCPUManager(testDriverName, &topo)
 	logger := testr.New(t)
+	allocator := NewCPUManager(testDriverName, cpuinfo.DisambiguateTopology(logger, &topo))
 
 	testCases := []struct {
 		name       string
@@ -142,6 +143,77 @@ func TestCPUManagerGetPreferredCPUs(t *testing.T) {
 				return
 			}
 			require.ErrorIs(t, err, tc.wantErr)
+		})
+	}
+}
+
+func TestCPUManagerAllocateWholeCores(t *testing.T) {
+	socketTopology := cpuinfo.CPUTopology{
+		NumCPUs: 16, NumCores: 8, NumSockets: 2, NumNUMANodes: 2,
+		NumUncoreCache: 2, SMTEnabled: true,
+		CPUDetails: cpuinfo.CPUDetails{
+			0:  {CoreID: 0, SocketID: 0, ClusterID: -1, NUMANodeID: 0, UncoreCacheID: 0},
+			1:  {CoreID: 1, SocketID: 0, ClusterID: -1, NUMANodeID: 0, UncoreCacheID: 0},
+			2:  {CoreID: 2, SocketID: 0, ClusterID: -1, NUMANodeID: 0, UncoreCacheID: 0},
+			3:  {CoreID: 3, SocketID: 0, ClusterID: -1, NUMANodeID: 0, UncoreCacheID: 0},
+			4:  {CoreID: 0, SocketID: 1, ClusterID: -1, NUMANodeID: 1, UncoreCacheID: 1},
+			5:  {CoreID: 1, SocketID: 1, ClusterID: -1, NUMANodeID: 1, UncoreCacheID: 1},
+			6:  {CoreID: 2, SocketID: 1, ClusterID: -1, NUMANodeID: 1, UncoreCacheID: 1},
+			7:  {CoreID: 3, SocketID: 1, ClusterID: -1, NUMANodeID: 1, UncoreCacheID: 1},
+			8:  {CoreID: 0, SocketID: 0, ClusterID: -1, NUMANodeID: 0, UncoreCacheID: 0},
+			9:  {CoreID: 1, SocketID: 0, ClusterID: -1, NUMANodeID: 0, UncoreCacheID: 0},
+			10: {CoreID: 2, SocketID: 0, ClusterID: -1, NUMANodeID: 0, UncoreCacheID: 0},
+			11: {CoreID: 3, SocketID: 0, ClusterID: -1, NUMANodeID: 0, UncoreCacheID: 0},
+			12: {CoreID: 0, SocketID: 1, ClusterID: -1, NUMANodeID: 1, UncoreCacheID: 1},
+			13: {CoreID: 1, SocketID: 1, ClusterID: -1, NUMANodeID: 1, UncoreCacheID: 1},
+			14: {CoreID: 2, SocketID: 1, ClusterID: -1, NUMANodeID: 1, UncoreCacheID: 1},
+			15: {CoreID: 3, SocketID: 1, ClusterID: -1, NUMANodeID: 1, UncoreCacheID: 1},
+		},
+	}
+	clusterTopology := socketTopology
+	clusterTopology.NumSockets = 1
+	clusterTopology.CPUDetails = maps.Clone(socketTopology.CPUDetails)
+	for cpu, info := range clusterTopology.CPUDetails {
+		info.ClusterID = info.SocketID
+		info.SocketID = 0
+		clusterTopology.CPUDetails[cpu] = info
+	}
+
+	testCases := []struct {
+		name      string
+		topology  cpuinfo.CPUTopology
+		available cpuset.CPUSet
+		want      cpuset.CPUSet
+	}{
+		{
+			name:      "repeated core IDs across sockets, first NUMA node",
+			topology:  socketTopology,
+			available: cpuset.New(1, 2, 3, 8, 9, 10, 11),
+			want:      cpuset.New(1, 9),
+		},
+		{
+			name:      "repeated core IDs across sockets, second NUMA node",
+			topology:  socketTopology,
+			available: cpuset.New(5, 6, 7, 12, 13, 14, 15),
+			want:      cpuset.New(5, 13),
+		},
+		{
+			name:      "repeated core IDs across clusters",
+			topology:  clusterTopology,
+			available: cpuset.New(1, 2, 3, 8, 9, 10, 11),
+			want:      cpuset.New(1, 9),
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			original := tc.topology
+			original.CPUDetails = maps.Clone(tc.topology.CPUDetails)
+			logger := testr.New(t)
+			allocator := NewCPUManager(testDriverName, cpuinfo.DisambiguateTopology(logger, &tc.topology))
+			got, err := allocator.Allocate(logger, tc.available, cpuset.New(), 2)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+			require.Equal(t, original, tc.topology, "allocator must preserve the discovered topology")
 		})
 	}
 }

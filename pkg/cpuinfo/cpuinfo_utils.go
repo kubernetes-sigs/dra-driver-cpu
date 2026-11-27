@@ -67,6 +67,7 @@ func (d CPUDetails) CPUsInNUMANodes(ids ...int) cpuset.CPUSet {
 // core IDs in this CPUDetails.
 // TODO: CoreID is only unique within a socket. On multi-socket systems where CoreIDs repeat
 // across sockets, this method may return CPUs from multiple sockets for the same CoreID.
+// CPUManager avoids this ambiguity with allocator-private, node-unique core IDs.
 // Consider refactoring core-level methods to use CoreKey{SocketID, CoreID} for correct
 // disambiguation, similar to CPUTopology.CPUsByCore.
 func (d CPUDetails) CPUsInCores(ids ...int) cpuset.CPUSet {
