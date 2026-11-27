@@ -103,46 +103,49 @@ func newAllocationStateCheckpoint() *AllocationStateCheckpoint {
 	}
 }
 
-func (s *AllocationState) LoadState(logger logr.Logger, checkpointMgr checkpoint.Manager) error {
+// LoadState replaces the state with the checkpointed one. It returns false
+// when there is no usable checkpoint (missing, or from a previous boot); the
+// state is left untouched in that case.
+func (s *AllocationState) LoadState(logger logr.Logger, checkpointMgr checkpoint.Manager) (bool, error) {
 	if checkpointMgr == nil {
-		return ErrNilCheckpointManager
+		return false, ErrNilCheckpointManager
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.loadStateLocked(logger, checkpointMgr)
 }
 
-func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr checkpoint.Manager) error {
+func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr checkpoint.Manager) (bool, error) {
 	bootID := checkpointMgr.GetBootID()
 	if bootID == "" {
-		return ErrBootIDUnavailable
+		return false, ErrBootIDUnavailable
 	}
 
 	cp := newAllocationStateCheckpoint()
 	if err := checkpointMgr.GetCheckpoint(allocationCheckpointName, cp); err != nil {
 		if errors.Is(err, checkpoint.ErrCheckpointNotFound) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
 
 	if cp.checkpointData.Meta.BootID != bootID {
 		logger.Info("ignoring checkpoint because boot IDs differ", "current", bootID, "checkpointed", cp.checkpointData.Meta.BootID)
-		return nil
+		return false, nil
 	}
 
 	// GetCheckpoint validated the checkpoint transport integrity. Now we need to validate
 	// the checkpoint semantic validity
 	if cp.checkpointData.Meta.TopologyFingerprint != s.topologyFingerprint {
-		return ErrTopologyChanged
+		return false, ErrTopologyChanged
 	}
 	if cp.checkpointData.Meta.NodeName != s.nodeName {
-		return ErrNodeChanged
+		return false, ErrNodeChanged
 	}
 
 	checkpointedCPUs, err := cpuset.Parse(cp.checkpointData.Meta.ReservedCPUs)
 	if err != nil {
-		return fmt.Errorf("cannot recover checkpointed reserved cpus: %w", err)
+		return false, fmt.Errorf("cannot recover checkpointed reserved cpus: %w", err)
 	}
 	if !checkpointedCPUs.Equals(s.reservedCPUs) {
 		logger.V(2).Info("reserved CPUs changed since checkpoint",
@@ -154,25 +157,25 @@ func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr chec
 	candidate := s.cloneEmptyLocked()
 	for claimIdent, claimData := range cp.checkpointData.Payload.ClaimInfo {
 		if claimIdent == "" {
-			return errors.New("restoring claim: missing ident")
+			return false, errors.New("restoring claim: missing ident")
 		}
 		// claimData.Claim may be missing, and it's tolerable
 
 		// fast checks first
 		if claimData.CPUs == "" {
-			return fmt.Errorf("restoring claim %q: malformed claim data cpus=%s", claimIdent, claimData.CPUs)
+			return false, fmt.Errorf("restoring claim %q: malformed claim data cpus=%s", claimIdent, claimData.CPUs)
 		}
 		cpus, err := cpuset.Parse(claimData.CPUs)
 		if err != nil {
-			return fmt.Errorf("restoring claim %q: %w", claimIdent, err)
+			return false, fmt.Errorf("restoring claim %q: %w", claimIdent, err)
 		}
 		if cpus.IsEmpty() {
-			return fmt.Errorf("restoring claim %q: CPUs are empty", claimIdent)
+			return false, fmt.Errorf("restoring claim %q: CPUs are empty", claimIdent)
 		}
 		// reserved CPU can change across driver restarts. We intentionally allow this change, logging only.
 		// Therefore, we can "just" validate is that all the claims are against CPUs in the available (all - reserved) set.
 		if !cpus.IsSubsetOf(s.availableCPUs) {
-			return fmt.Errorf("restoring claim %q: CPUs outside the available set: %s", claimIdent, claimData.CPUs)
+			return false, fmt.Errorf("restoring claim %q: CPUs outside the available set: %s", claimIdent, claimData.CPUs)
 		}
 
 		requests := make(map[string]requestAllocation)
@@ -180,7 +183,7 @@ func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr chec
 			owners := sets.New[OwnerIdentifier]()
 			reqCpus, err := cpuset.Parse(alloc.CPUs)
 			if err != nil {
-				return fmt.Errorf("restoring claim %q request %q: %w", claimIdent, name, err)
+				return false, fmt.Errorf("restoring claim %q request %q: %w", claimIdent, name, err)
 			}
 			for _, reqOwner := range alloc.Owners {
 				owner := OwnerIdentifier{
@@ -188,10 +191,10 @@ func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr chec
 					ContainerName: reqOwner.ContainerName,
 				}
 				if !owner.Assigned() {
-					return fmt.Errorf("restoring claim %q request %q: owner must be assigned", claimIdent, name)
+					return false, fmt.Errorf("restoring claim %q request %q: owner must be assigned", claimIdent, name)
 				}
 				if owners.Has(owner) {
-					return fmt.Errorf("restoring claim %q request %q: duplicate owner %q", claimIdent, name, owner.String())
+					return false, fmt.Errorf("restoring claim %q request %q: duplicate owner %q", claimIdent, name, owner.String())
 				}
 				owners.Insert(owner)
 			}
@@ -216,14 +219,14 @@ func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr chec
 			},
 		}
 		if err := fillClaimAllocationFromRequests(&ca, maps.All(requests), len(requests)); err != nil {
-			return fmt.Errorf("restoring claim %q cpus: %w", claimIdent, err)
+			return false, fmt.Errorf("restoring claim %q cpus: %w", claimIdent, err)
 		}
 		if !ca.cpus.Equals(cpus) {
-			return fmt.Errorf("restoring claim %q: request CPUs %q differ from claim CPUs %q", claimIdent, ca.cpus.String(), cpus.String())
+			return false, fmt.Errorf("restoring claim %q: request CPUs %q differ from claim CPUs %q", claimIdent, ca.cpus.String(), cpus.String())
 		}
 		overlap := candidate.preparedCPUs.Intersection(cpus)
 		if !overlap.IsEmpty() {
-			return fmt.Errorf("restoring claim %q cpus: overlap with already prepared CPUs %s", claimIdent, overlap.String())
+			return false, fmt.Errorf("restoring claim %q cpus: overlap with already prepared CPUs %s", claimIdent, overlap.String())
 		}
 		candidate.resourceClaimAllocations[types.UID(claimIdent)] = ca
 		candidate.preparedCPUs = candidate.preparedCPUs.Union(cpus)
@@ -232,7 +235,7 @@ func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr chec
 
 	s.applyLocked(candidate)
 	logger.V(4).Info("load state", "allocationCount", loaded, "preparedCPUs", candidate.preparedCPUs.String())
-	return nil
+	return true, nil
 }
 
 func (s *AllocationState) StoreState(logger logr.Logger, checkpointMgr checkpoint.Manager) error {

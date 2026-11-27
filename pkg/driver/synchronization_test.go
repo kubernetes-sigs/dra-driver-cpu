@@ -101,7 +101,9 @@ func TestSynchronizeRetainsPreparedClaimAndOwner(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestWarmSynchronizeRejectsConflictingClaims(t *testing.T) {
+// A container whose runtime state disagrees with a prepared claim is skipped:
+// the prepared allocation and owner win, and the rest of the node still recovers.
+func TestWarmSynchronizeSkipsConflictingClaims(t *testing.T) {
 	testCases := []struct {
 		name   string
 		mutate func(*mockCdiMgr, *api.Container)
@@ -141,12 +143,16 @@ func TestWarmSynchronizeRejectsConflictingClaims(t *testing.T) {
 			app := &api.Container{Id: "app", Name: "app", PodSandboxId: pod.Id, Env: []string{"DRA_CPUSET_a=0"}}
 			testCase.mutate(cdi, app)
 
-			oldCPU, oldPods := d.allocationState, d.podState
-			_, err = d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{app})
-			require.Error(t, err)
-			require.Same(t, oldCPU, d.allocationState)
-			require.Same(t, oldPods, d.podState)
+			sidecar := &api.Container{Id: "sidecar", Name: "sidecar", PodSandboxId: pod.Id}
+			_, err = d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{app, sidecar})
+			require.NoError(t, err)
 			require.Equal(t, "0", d.allocationState.GetPreparedCPUs().String())
+			require.True(t, d.allocationState.IsOwner("a", "pod", "app"))
+			for _, name := range []string{app.Name, sidecar.Name} {
+				state := d.podState.GetContainerState("pod", name)
+				require.NotNil(t, state, "container %q was not recovered", name)
+				require.False(t, state.HasExclusiveCPUAllocation(), "container %q must not be exclusive", name)
+			}
 		})
 	}
 }

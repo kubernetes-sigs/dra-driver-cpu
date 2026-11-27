@@ -86,6 +86,10 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	// Only Unprepare releases these records while this process survives.
 	allocationState := cp.allocationState.Clone()
 	podState := store.NewPodState()
+	// The prepared claims are known either from a previous Synchronize in this
+	// process or from the checkpoint loaded at startup. Without either (first
+	// start, or upgrade from a release without checkpoints) recover from the runtime env.
+	trustPrepared := cp.hasSynchronized || cp.checkpointRestored
 	var containerUpdates []*api.ContainerUpdate
 	cdiCacheRefreshAttempted := false
 
@@ -120,7 +124,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			validatedClaimAllocations := make(map[types.UID]cpuset.CPUSet)
 			for uid, cpus := range claimAllocations {
 				var prepared, owned bool
-				if cp.hasSynchronized {
+				if trustPrepared {
 					_, prepared = cp.allocationState.GetResourceClaimAllocation(uid)
 					owned = cp.allocationState.IsOwner(uid, types.UID(pod.Uid), container.Name)
 				}
@@ -135,26 +139,20 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 
 				deviceName := getCDIDeviceName(uid)
 				envs, err := cp.cdiMgr.GetDeviceEnv(deviceName)
+				// Inconsistent claims are skipped, not fatal, so one container cannot
+				// block recovery for every other container on the node.
 				if err != nil {
-					if cp.hasSynchronized && prepared && owned {
-						return nil, fmt.Errorf("CDI state missing for prepared claim %q: %w", uid, err)
-					}
-					caLogger.Error(err, "ignoring claim not prepared by this driver during synchronize")
+					caLogger.Error(err, "ignoring claim without CDI state during synchronize", "prepared", prepared, "owned", owned)
 					continue
 				}
 				err = validateSynchronizedClaimAllocation(caLogger, uid, cpus, envs)
 				if err != nil {
-					if cp.hasSynchronized && prepared && owned {
-						return nil, fmt.Errorf("failed to validate claim allocation for container %q during synchronize: %w", container.Name, err)
-					}
-					caLogger.Error(err, "ignoring invalid claim allocation during synchronize")
+					caLogger.Error(err, "ignoring invalid claim allocation during synchronize", "prepared", prepared, "owned", owned)
 					continue
 				}
-				if cp.hasSynchronized && !prepared {
-					// Unprepare is authoritative while this process survives, so stale
-					// runtime or CDI state cannot resurrect the claim. Skip it instead of
-					// failing, so one inconsistent container cannot block recovery for
-					// every other container on the node.
+				if trustPrepared && !prepared {
+					// Unprepare is authoritative (the checkpoint carries it across restarts), so stale
+					// runtime or CDI state cannot resurrect the claim.
 					caLogger.Error(fmt.Errorf("runtime references claim %q without a prepared allocation", uid), "ignoring unprepared claim during synchronize")
 					continue
 				}
@@ -163,20 +161,33 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				// TODO: split CDI env per request; until then "" represents the entire claim.
 				// See: https://github.com/kubernetes-sigs/dra-driver-cpu/issues/389
 				if err := allocationState.Reserve(caLogger, checkpointMgr, store.ClaimIdentifier{UID: uid}, map[string]cpuset.CPUSet{"": cpus}, false); err != nil {
-					return nil, err
+					if !trustPrepared {
+						return nil, err
+					}
+					// The runtime disagrees with the prepared allocation, which wins.
+					caLogger.Error(err, "ignoring claim allocation that differs from the prepared one during synchronize")
+					continue
 				}
 
 				allGuaranteedCPUs = allGuaranteedCPUs.Union(cpus)
 				validatedClaimAllocations[uid] = cpus
 			}
 
+			if len(validatedClaimAllocations) > 0 {
+				if _, err := allocationState.Bind(cLogger, checkpointMgr, types.UID(pod.Uid), container.Name, validatedClaimAllocations); err != nil {
+					if !trustPrepared {
+						return nil, err
+					}
+					// Bind is atomic, so the prepared owners are untouched; this container
+					// is tracked as shared until the inconsistency is resolved.
+					cLogger.Error(err, "ignoring claims bound to another container during synchronize")
+					clear(validatedClaimAllocations)
+				}
+			}
 			var state *store.ContainerState
 			if len(validatedClaimAllocations) == 0 {
 				state = store.NewContainerState(container.GetName(), containerUID)
 			} else {
-				if _, err := allocationState.Bind(cLogger, checkpointMgr, types.UID(pod.Uid), container.Name, validatedClaimAllocations); err != nil {
-					return nil, err
-				}
 				cLogger.V(2).Info("found guaranteed CPUs", "cpus", allGuaranteedCPUs.String())
 				state = store.NewContainerState(container.GetName(), containerUID, slices.Collect(maps.Keys(validatedClaimAllocations))...)
 

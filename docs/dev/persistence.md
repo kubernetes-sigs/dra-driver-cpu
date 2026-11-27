@@ -4,7 +4,6 @@ The driver persist the state it can't easily or conveniently recover on a file o
 The state file is meant to allow safe and fast recovery of the driver allocation state across _driver_ restart.
 Recovering across _node_ restarts is not supported; to enforce this, the driver stores the kernel-provided
 boot identifier (bootID) in its state file. The loader implementation ignores checkpoints from a different boot.
-**NOTE**: Checkpoint restoration is not yet wired into driver startup.
 
 ## persisted state
 
@@ -29,8 +28,6 @@ update. The recovery (state reload) mechanism holds this key assumptions and can
 arise from violation of this assumption. Neither the persistence nor the recovery validate _all_ the state transition
 were successfully checkpointed.
 
-**NOTE**: Checkpoint restoration is not yet wired into driver startup.
-
 The state reload is attempted on driver startup, once. Therefore the driver internal state is assumed empty,
 and the reload process, if successful, overwrites it completely. The atomic overwrite is also important to prevent
 partial loading, which is not supported: the checkpoint is always either loaded completely or not at all.
@@ -39,6 +36,15 @@ The main reason for the reload process completely overwrite the internal state i
 NRI synchronize, which may happen repeatedly while the driver process is running, there are currently no known events
 (except bugs, see above) that can cause the internal state to "lose sync" with the durable state; therefore
 a single reload on startup seem sufficient and adequately robust.
+
+A checkpoint that fails to load makes the driver fail to start: the driver can't tell which CPUs are in use,
+and guessing from the runtime state could hand exclusive CPUs to another claim.
+When the checkpoint is restored, the first NRI synchronize treats it as the source of truth for prepared claims,
+exactly like a later synchronize does: runtime containers referencing a claim missing from the checkpoint are not
+allowed to re-prepare it, and prepared claims without a running container stay reserved until unprepare.
+When there is no usable checkpoint (first start, upgrade from a version without checkpoints, or a checkpoint from
+a previous boot), the first synchronize rebuilds the prepared claims from the container environment and CDI specs,
+as before.
 
 For the sake of completeness, it's worth mentioning that failing to checkpoint an internal state update is
 currently only detectable with code inspection and code review.

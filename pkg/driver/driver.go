@@ -125,6 +125,9 @@ type CPUDriver struct {
 	// initialSync is closed when hasSynchronized first becomes true.
 	initialSync     chan struct{}
 	initialSyncWait time.Duration
+	// checkpointRestored is true when the allocation state was loaded from the
+	// checkpoint at startup, so the first Synchronize can trust it like a warm one.
+	checkpointRestored bool
 
 	driverName              string
 	nodeName                string
@@ -296,6 +299,13 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 	}
 
 	plugin.allocationState = store.NewAllocationState(config.NodeName, topo, config.ReservedCPUs)
+	// Fail closed: a checkpoint we cannot trust must not be replaced by guesses from the runtime env.
+	restored, err := plugin.allocationState.LoadState(logger, manager)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load allocation state checkpoint: %w", err)
+	}
+	plugin.checkpointRestored = restored
+	logger.Info("allocation state checkpoint", "restored", restored, "path", manager.CheckpointPath())
 	plugin.refreshAllocationMetrics()
 	plugin.podState = store.NewPodState()
 
