@@ -17,7 +17,10 @@ Instead of manually creating branches and tags, the release is triggered by a pu
 - In this PR:
   - Update the `VERSION` file at the repository root to the release semantic version (e.g., `v0.4.0-dev` → `v0.4.0` on `main`, or `v0.3.0` → `v0.3.1` on `release-v0.3`).
   - Update any documentation, examples, or manifests as needed for the release.
+  - Run `make check-version-refs`, or review the non-blocking `Check Version Refs` PR check, and update every stale version reference or add a justified exemption.
 - Ensure all tests are passing.
+- The `Check Version Refs` PR check runs automatically when the PR changes `VERSION`; it is informational and does not block merging.
+- The check is skipped while `VERSION` has a `-dev` marker. It applies when the PR prepares a full release version.
 - Once the PR is merged, the Release Automation GitHub Action will trigger.
 
 Between releases, `VERSION` on `main` holds the next minor or major development marker (e.g., `v0.4.0-dev`).
@@ -25,10 +28,13 @@ Between releases, `VERSION` on `main` holds the next minor or major development 
 The automation will:
 
 - Validate the version format (`vX.Y.Z` for releases, or `vX.Y.Z-dev` for development markers; other pre-release or build tags are rejected).
+- For a full release version, verify that the documentation names the release in `VERSION` and no older release.
 - When `VERSION` is a full release version (`vX.Y.Z`), create and push a git tag `vX.Y.Z` at the merged commit.
 - If it is a minor or major release (e.g. `v0.4.0`), automatically branch off `release-vX.Y` and push it to the repository.
 
 After a minor or major release branches `release-vX.Y`, open a follow-up PR against `main` to bump `VERSION` to the next development marker (e.g., `v0.5.0-dev`). The workflow validates `-dev` versions and skips tag and branch creation.
+
+If the version-reference check reports stale references after the release PR is merged, the warning is recorded and the tag is still created. Fix the documentation in a follow-up PR so the published release and the repository documentation stay aligned.
 
 ## 3. Promote the Images
 
