@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -154,6 +155,12 @@ type CPUTopology struct {
 	NumNUMANodes   int
 	SMTEnabled     bool
 	CPUDetails     CPUDetails
+}
+
+func (ct CPUTopology) Clone() CPUTopology {
+	ret := ct
+	ret.CPUDetails = maps.Clone(ct.CPUDetails)
+	return ret
 }
 
 // SystemCPUInfo provides information about the CPUs on the system.

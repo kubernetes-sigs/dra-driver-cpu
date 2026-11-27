@@ -1101,7 +1101,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			checkpointMgr:   noop,
 			podState:        store.NewPodState(),
 			metrics:         cpumetrics.Noop(),
-			cpuAllocator:    cpuallocator.NewCPUManager(testDriverName, topo),
+			cpuAllocator:    cpuallocator.NewCPUManager(testDriverName, cpuinfo.DisambiguateTopology(logger, topo)),
 		}
 		if withExistingAllocation {
 			require.NoError(t, driver.allocationState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, fullClaimRequest(existingCPUs), false))
@@ -1803,7 +1803,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			},
 			allocationState: cpuStore,
 			checkpointMgr:   noop,
-			cpuAllocator:    cpuallocator.NewCPUManager(testDriverName, topo),
+			cpuAllocator:    cpuallocator.NewCPUManager(testDriverName, cpuinfo.DisambiguateTopology(logger, topo)),
 			cdiMgr:          cdiMgr,
 			podState:        store.NewPodState(),
 			metrics:         cpumetrics.Noop(),
@@ -1829,7 +1829,7 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			},
 			allocationState: cpuStore,
 			checkpointMgr:   noop,
-			cpuAllocator:    cpuallocator.NewCPUManager(testDriverName, topo),
+			cpuAllocator:    cpuallocator.NewCPUManager(testDriverName, cpuinfo.DisambiguateTopology(logger, topo)),
 			cdiMgr:          cdiMgr,
 			podState:        store.NewPodState(),
 			metrics:         cpumetrics.Noop(),

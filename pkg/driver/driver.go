@@ -316,7 +316,7 @@ func New(logger logr.Logger, providers Providers, config *Config) (*CPUDriver, e
 		plugin.cpuAllocator = cpuallocator.NewExternal(config.DriverName, managedCPUs, config.ReservedCPUs)
 		exposeExtAttrs = true
 	default:
-		plugin.cpuAllocator = cpuallocator.NewCPUManager(config.DriverName, topo)
+		plugin.cpuAllocator = cpuallocator.NewCPUManager(config.DriverName, cpuinfo.DisambiguateTopology(logger, topo))
 	}
 
 	result, err := device.Build(device.BuildInput{
