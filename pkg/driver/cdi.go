@@ -17,10 +17,12 @@ package driver
 
 import (
 	"fmt"
+	"maps"
+	"path/filepath"
+	"slices"
 
 	"github.com/go-logr/logr"
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
-	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
 	cdiSpec "tags.cncf.io/container-device-interface/specs-go"
 )
 
@@ -61,33 +63,37 @@ func NewCdiManager(logger logr.Logger, driverName string, cdiDir string) (*CdiMa
 	return c, nil
 }
 
-// getSpecName generates a unique, sanitized filename for a specific device allocation.
-func (c *CdiManager) getSpecName(deviceName string) string {
-	return cdiapi.GenerateTransientSpecName(cdiVendor, cdiClass, deviceName) + ".json"
+// getSpecName generates a unique, sanitized filename for a claim's CDI spec.
+func (c *CdiManager) getSpecName(specKey string) string {
+	return cdiapi.GenerateTransientSpecName(cdiVendor, cdiClass, specKey) + ".json"
 }
 
-// AddDevice writes a dedicated CDI spec file for a single device allocation.
-func (c *CdiManager) AddDevice(logger logr.Logger, deviceName string, envVar string) error {
-	specName := c.getSpecName(deviceName)
+// AddDevice writes a single CDI spec file for specKey containing one device per
+// entry in deviceEnvs (deviceName -> envVar).
+func (c *CdiManager) AddDevice(logger logr.Logger, specKey string, deviceEnvs map[string]string) error {
+	specName := c.getSpecName(specKey)
+
+	devices := make([]cdiSpec.Device, 0, len(deviceEnvs))
+	for _, deviceName := range slices.Sorted(maps.Keys(deviceEnvs)) {
+		devices = append(devices, cdiSpec.Device{
+			Name: deviceName,
+			ContainerEdits: cdiSpec.ContainerEdits{
+				Env: []string{deviceEnvs[deviceName]},
+			},
+		})
+	}
 
 	spec := &cdiSpec.Spec{
 		Version: cdiSpecVersion,
 		Kind:    c.cdiKind,
-		Devices: []cdiSpec.Device{
-			{
-				Name: deviceName,
-				ContainerEdits: cdiSpec.ContainerEdits{
-					Env: []string{envVar},
-				},
-			},
-		},
+		Devices: devices,
 	}
 
 	if err := c.cache.WriteSpec(spec, specName); err != nil {
 		return fmt.Errorf("failed to write CDI spec %q: %w", specName, err)
 	}
 
-	logger.V(4).Info("Added CDI device", "deviceName", deviceName, "specName", specName, "env", envVar)
+	logger.V(4).Info("Added CDI devices", "specKey", specKey, "specName", specName, "devices", deviceEnvs)
 	return nil
 }
 
@@ -99,24 +105,30 @@ func (c *CdiManager) Refresh() error {
 	return nil
 }
 
-// GetDeviceEnv returns the environment edits for a specific CDI device allocation
-// from the current cache. Call Refresh before lookup to load the latest on-disk specs.
-func (c *CdiManager) GetDeviceEnv(deviceName string) ([]string, error) {
-	device := c.cache.GetDevice(cdiparser.QualifiedName(cdiVendor, cdiClass, deviceName))
-	if device == nil {
-		return nil, fmt.Errorf("failed to find CDI device %q", deviceName)
+// GetDeviceEnv returns all environment edits from the CDI spec file for specKey
+// in the current cache. Call Refresh before lookup to load the latest on-disk specs.
+func (c *CdiManager) GetDeviceEnv(specKey string) ([]string, error) {
+	targetSpecName := c.getSpecName(specKey)
+	for _, spec := range c.cache.GetVendorSpecs(cdiVendor) {
+		if spec.GetClass() == cdiClass && filepath.Base(spec.GetPath()) == targetSpecName {
+			var envs []string
+			for _, dev := range spec.Devices {
+				envs = append(envs, dev.ContainerEdits.Env...)
+			}
+			return envs, nil
+		}
 	}
-	return append([]string{}, device.ContainerEdits.Env...), nil
+	return nil, fmt.Errorf("failed to find CDI spec %q", targetSpecName)
 }
 
-// RemoveDevice deletes the dedicated CDI spec file for a single device allocation.
-func (c *CdiManager) RemoveDevice(logger logr.Logger, deviceName string) error {
-	specName := c.getSpecName(deviceName)
+// RemoveDevice deletes the CDI spec file for specKey.
+func (c *CdiManager) RemoveDevice(logger logr.Logger, specKey string) error {
+	specName := c.getSpecName(specKey)
 
 	if err := c.cache.RemoveSpec(specName); err != nil {
 		return fmt.Errorf("failed to remove CDI spec %q: %w", specName, err)
 	}
 
-	logger.V(4).Info("Removed CDI device", "deviceName", deviceName, "specName", specName)
+	logger.V(4).Info("Removed CDI spec", "specKey", specKey, "specName", specName)
 	return nil
 }

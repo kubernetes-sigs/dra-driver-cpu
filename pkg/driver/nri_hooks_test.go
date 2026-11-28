@@ -832,7 +832,8 @@ func TestStopContainerKeepsClaimOutOfSharedPoolUntilUnprepare(t *testing.T) {
 		topology:        deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
 		metrics:         cpumetrics.Noop(),
 	}
-	driver.cdiMgr.(*mockCdiMgr).devices[getCDIDeviceName(claimUID)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, claimedCPUs.String())
+	deviceName := getCDIDeviceName(claimUID)
+	driver.cdiMgr.(*mockCdiMgr).specs[deviceName] = map[string]string{deviceName: fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, claimedCPUs.String())}
 	_, err := driver.allocationState.Bind(logger, noop, types.UID(guaranteedPod.Uid), guaranteedCtr.Name, map[store.ClaimRequest]cpuset.CPUSet{{ClaimUID: claimUID}: claimedCPUs})
 	require.NoError(t, err)
 	driver.podState.SetContainerState(types.UID(guaranteedPod.Uid),

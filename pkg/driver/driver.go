@@ -73,10 +73,10 @@ type KubeletPlugin interface {
 }
 
 type cdiManager interface {
-	AddDevice(logger logr.Logger, deviceName string, envVar string) error
+	AddDevice(logger logr.Logger, specKey string, deviceEnvs map[string]string) error
 	Refresh() error
-	GetDeviceEnv(deviceName string) ([]string, error)
-	RemoveDevice(logger logr.Logger, deviceName string) error
+	GetDeviceEnv(specKey string) ([]string, error)
+	RemoveDevice(logger logr.Logger, specKey string) error
 }
 
 // CPUInfoProvider is an interface for getting CPU information.
