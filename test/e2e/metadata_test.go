@@ -203,6 +203,45 @@ var _ = ginkgo.Describe("Device Metadata", ginkgo.Ordered, func() {
 				}
 			}
 		})
+
+		ginkgo.It("should scope KEP-5304 metadata files per request in a multi-request claim", func(ctx context.Context) {
+			isConsumable := cpuDeviceMode != device.CPU_DEVICE_MODE_INDIVIDUAL
+
+			requestNames := []string{"request-a", "request-b"}
+			claim := &resourcev1.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: fxt.Namespace.Name,
+					Name:      "metadata-multi-req-claim",
+				},
+				Spec: makeResourceClaimSpec(1, isConsumable, requestNames...),
+			}
+			createdClaim, err := fxt.K8SClientset.ResourceV1().ResourceClaims(fxt.Namespace.Name).Create(ctx, claim, metav1.CreateOptions{})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			pod := makeTesterPodWithRequestsInContainer(fxt.Namespace.Name, dracpuTesterImage, targetNode.Name, nodeAllocMapping, createdClaim.Name, requestNames...)
+			pod, err = e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			for i, wantRequest := range requestNames {
+				containerName := pod.Spec.Containers[i].Name
+				stdout, stderr, execErr := e2epod.ExecForContainer(ctx, restConfig, fxt.K8SClientset, pod.Namespace, pod.Name, containerName, "/dracpumetadata")
+				gomega.Expect(execErr).ToNot(gomega.HaveOccurred(), "dracpumetadata failed for %s; stdout: %s; stderr: %s", containerName, stdout, stderr)
+
+				var entries []metadataEntry
+				gomega.Expect(json.Unmarshal([]byte(stdout), &entries)).To(gomega.Succeed())
+				gomega.Expect(entries).To(gomega.HaveLen(1), "container %s should receive only its request metadata file", containerName)
+				gomega.Expect(entries[0].Content).To(gomega.HaveLen(2))
+
+				var metadata metadataFile
+				gomega.Expect(json.Unmarshal(entries[0].Content[0], &metadata)).To(gomega.Succeed())
+				gomega.Expect(metadata.Requests).To(gomega.HaveLen(1))
+				gomega.Expect(metadata.Requests[0].Name).To(gomega.Equal(wantRequest))
+				gomega.Expect(metadata.Requests[0].Devices).ToNot(gomega.BeEmpty())
+				if isConsumable {
+					expectAllocatedNumCPUs(metadata.Requests[0].Devices[0].Attributes, 1)
+				}
+			}
+		})
 	})
 })
 
