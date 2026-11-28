@@ -112,7 +112,7 @@ type prepareOutcome struct {
 
 func TestStartupWindowFailedSynchronizeKeepsGateClosed(t *testing.T) {
 	driver, pod, containers, claim := startupWindowFixture(t)
-	conflictDevice := getCDIDeviceName("conflict")
+	conflictDevice := getCDISpecKey("conflict")
 	driver.cdiMgr.(*mockCdiMgr).specs[conflictDevice] = map[string]string{conflictDevice: fmt.Sprintf("%s_conflict=0,2", cdiEnvVarPrefix)}
 	bad := append([]*api.Container{}, containers...)
 	bad = append(bad, &api.Container{Id: "conflict-container", Name: "other", PodSandboxId: pod.Id, State: api.ContainerState_CONTAINER_RUNNING, Env: []string{fmt.Sprintf("%s_conflict=0,2", cdiEnvVarPrefix)}})

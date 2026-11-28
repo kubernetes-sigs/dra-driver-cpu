@@ -111,7 +111,7 @@ func TestWarmSynchronizeSkipsConflictingClaims(t *testing.T) {
 		{
 			name: "missing CDI",
 			mutate: func(cdi *mockCdiMgr, _ *api.Container) {
-				delete(cdi.specs, getCDIDeviceName("a"))
+				delete(cdi.specs, getCDISpecKey("a"))
 			},
 		},
 		{
@@ -165,7 +165,7 @@ func TestWarmSynchronizeSkipsUnknownAuthenticatedClaim(t *testing.T) {
 	_, err := d.Synchronize(t.Context(), nil, nil)
 	require.NoError(t, err)
 	cdi := newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
-	cdi.specs[getCDIDeviceName("b")] = map[string]string{getCDIDeviceName("b"): "DRA_CPUSET_b=1"}
+	cdi.specs[getCDISpecKey("b")] = map[string]string{getCDISpecKey("b"): "DRA_CPUSET_b=1"}
 	d.cdiMgr = cdi
 	logger := testr.New(t)
 	require.NoError(t, d.allocationState.Reserve(logger, noop, store.ClaimIdentifier{UID: "a"}, fullClaimRequest(cpuset.New(0)), false))
@@ -207,7 +207,7 @@ func TestWarmSynchronizeDoesNotResurrectUnpreparedClaim(t *testing.T) {
 	require.False(t, d.allocationState.IsOwner(types.UID(pod.Uid), ctr.Name, store.ClaimRequest{ClaimUID: claim.UID}))
 	// Even stale CDI cannot override an authoritative in-process release, and the
 	// stale claim must not block recovery of the other containers on the node.
-	d.cdiMgr.(*mockCdiMgr).specs[getCDIDeviceName("a")] = map[string]string{getCDIDeviceName("a"): "DRA_CPUSET_a=0"}
+	d.cdiMgr.(*mockCdiMgr).specs[getCDISpecKey("a")] = map[string]string{getCDISpecKey("a"): "DRA_CPUSET_a=0"}
 	other := &api.Container{Id: "other", Name: "other", PodSandboxId: pod.Id}
 	_, err = d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{ctr, other})
 	require.NoError(t, err)
@@ -278,7 +278,7 @@ func TestSynchronizeSerializesPrepare(t *testing.T) {
 	cpus, found := d.allocationState.GetResourceClaimAllocation(claim.UID)
 	require.True(t, found)
 	require.Equal(t, "0", cpus.String())
-	require.Equal(t, map[string]string{getCDIDeviceName(claim.UID): "DRA_CPUSET_pending=0"}, cdi.specs[getCDIDeviceName(claim.UID)])
+	require.Equal(t, map[string]string{getCDISpecKey(claim.UID): "DRA_CPUSET_pending=0"}, cdi.specs[getCDISpecKey(claim.UID)])
 }
 
 func TestSynchronizeSerializesUnprepare(t *testing.T) {
@@ -324,7 +324,7 @@ func TestSynchronizeSerializesUnprepare(t *testing.T) {
 
 	_, found := d.allocationState.GetResourceClaimAllocation(claim.UID)
 	require.False(t, found)
-	require.NotContains(t, cdi.specs, getCDIDeviceName(claim.UID))
+	require.NotContains(t, cdi.specs, getCDISpecKey(claim.UID))
 }
 
 func TestSynchronizeSerializesCancelledPrepare(t *testing.T) {
@@ -402,7 +402,7 @@ func TestWarmSynchronizeIgnoresInvalidEnvFromNonOwner(t *testing.T) {
 			_, err = d.allocationState.Bind(testr.New(t), noop, "real-pod", "app", map[store.ClaimRequest]cpuset.CPUSet{{ClaimUID: claim.UID}: cpuset.New(0)})
 			require.NoError(t, err)
 			if missingCDI {
-				delete(d.cdiMgr.(*mockCdiMgr).specs, getCDIDeviceName(claim.UID))
+				delete(d.cdiMgr.(*mockCdiMgr).specs, getCDISpecKey(claim.UID))
 			}
 			pod := &api.PodSandbox{Id: "sandbox", Uid: "other-pod"}
 			updates, err := d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{{Id: "other", Name: "app", PodSandboxId: pod.Id, Env: []string{"DRA_CPUSET_a=1"}}})
