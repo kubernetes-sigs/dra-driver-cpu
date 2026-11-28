@@ -19,18 +19,15 @@ limitations under the License.
 package store
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/cpuset"
 )
 
@@ -46,14 +43,9 @@ var (
 	ErrNodeChanged          = errors.New("current node differs from checkpointed node")
 )
 
-type ownerIdentifierCheckpoint struct {
-	PodUID        string `cbor:"podUID"`
-	ContainerName string `cbor:"containerName"`
-}
-
 type requestAllocationCheckpoint struct {
-	CPUs   string                      `cbor:"cpus"`
-	Owners []ownerIdentifierCheckpoint `cbor:"owners"`
+	CPUs       string   `cbor:"cpus"`
+	Containers []string `cbor:"containers"`
 }
 
 type namespacedNameCheckpoint struct {
@@ -63,6 +55,7 @@ type namespacedNameCheckpoint struct {
 
 type claimAllocationCheckpoint struct {
 	Claim    namespacedNameCheckpoint               `cbor:"claim"`
+	OwnerPod string                                 `cbor:"ownerPod"`
 	CPUs     string                                 `cbor:"cpus"`
 	Requests map[string]requestAllocationCheckpoint `cbor:"requests"`
 }
@@ -178,51 +171,48 @@ func (s *AllocationState) loadStateLocked(logger logr.Logger, checkpointMgr chec
 			return false, fmt.Errorf("restoring claim %q: CPUs outside the available set: %s", claimIdent, claimData.CPUs)
 		}
 
-		requests := make(map[string]requestAllocation)
+		requests := make(map[string]requestAllocation, len(claimData.Requests))
 		for name, alloc := range claimData.Requests {
-			owners := sets.New[OwnerIdentifier]()
 			reqCpus, err := cpuset.Parse(alloc.CPUs)
 			if err != nil {
 				return false, fmt.Errorf("restoring claim %q request %q: %w", claimIdent, name, err)
 			}
-			for _, reqOwner := range alloc.Owners {
-				owner := OwnerIdentifier{
-					PodUID:        types.UID(reqOwner.PodUID),
-					ContainerName: reqOwner.ContainerName,
+			var containerList []string
+			for _, containerName := range alloc.Containers {
+				if containerName == "" {
+					return false, fmt.Errorf("restoring claim %q request %q: container name must not be empty", claimIdent, name)
 				}
-				if !owner.Assigned() {
-					return false, fmt.Errorf("restoring claim %q request %q: owner must be assigned", claimIdent, name)
+				if slices.Contains(containerList, containerName) {
+					return false, fmt.Errorf("restoring claim %q request %q: duplicate container %q", claimIdent, name, containerName)
 				}
-				if owners.Has(owner) {
-					return false, fmt.Errorf("restoring claim %q request %q: duplicate owner %q", claimIdent, name, owner.String())
-				}
-				owners.Insert(owner)
+				containerList = append(containerList, containerName)
 			}
-			ownerList := owners.UnsortedList()
 			// stable sorting to get a stabler serialization
-			slices.SortFunc(ownerList, func(a, b OwnerIdentifier) int {
-				if n := strings.Compare(string(a.PodUID), string(b.PodUID)); n != 0 {
-					return n
-				}
-				return cmp.Compare(a.ContainerName, b.ContainerName)
-			})
+			slices.Sort(containerList)
 			requests[name] = requestAllocation{
-				cpus:   reqCpus,
-				owners: ownerList,
+				cpus:       reqCpus,
+				containers: containerList,
 			}
 		}
-
 		ca := claimAllocation{
 			claim: types.NamespacedName{
 				Namespace: claimData.Claim.Namespace,
 				Name:      claimData.Claim.Name,
 			},
+			ownerPod: types.UID(claimData.OwnerPod),
 		}
 		if err := fillClaimAllocationFromRequests(&ca, maps.All(requests), len(requests)); err != nil {
 			return false, fmt.Errorf("restoring claim %q cpus: %w", claimIdent, err)
 		}
 		if !ca.cpus.Equals(cpus) {
 			return false, fmt.Errorf("restoring claim %q: request CPUs %q differ from claim CPUs %q", claimIdent, ca.cpus.String(), cpus.String())
+		}
+		hasContainers := len(ca.boundContainers()) > 0
+		if hasContainers && claimData.OwnerPod == "" {
+			return false, fmt.Errorf("restoring claim %q: bound containers require an owner pod", claimIdent)
+		}
+		if !hasContainers && claimData.OwnerPod != "" {
+			return false, fmt.Errorf("restoring claim %q: owner pod %q has no bound containers", claimIdent, claimData.OwnerPod)
 		}
 		overlap := candidate.preparedCPUs.Intersection(cpus)
 		if !overlap.IsEmpty() {
@@ -263,23 +253,15 @@ func (s *AllocationState) storeStateLocked(logger logr.Logger, checkpointMgr che
 }
 
 func makeRequestAllocationCheckpoint(req requestAllocation) requestAllocationCheckpoint {
-	owners := make([]ownerIdentifierCheckpoint, 0, len(req.owners))
-	for _, owner := range req.owners {
-		owners = append(owners, ownerIdentifierCheckpoint{
-			PodUID:        string(owner.PodUID),
-			ContainerName: owner.ContainerName,
-		})
+	containers := slices.Clone(req.containers)
+	if containers == nil {
+		containers = []string{}
 	}
 	// ensure stable serialization
-	slices.SortFunc(owners, func(a, b ownerIdentifierCheckpoint) int {
-		if n := strings.Compare(a.PodUID, b.PodUID); n != 0 {
-			return n
-		}
-		return strings.Compare(a.ContainerName, b.ContainerName)
-	})
+	slices.Sort(containers)
 	return requestAllocationCheckpoint{
-		CPUs:   req.cpus.String(),
-		Owners: owners,
+		CPUs:       req.cpus.String(),
+		Containers: containers,
 	}
 }
 
@@ -296,6 +278,7 @@ func (s *AllocationState) checkpointLocked(bootID string) *AllocationStateCheckp
 				Namespace: allocation.claim.Namespace,
 				Name:      allocation.claim.Name,
 			},
+			OwnerPod: string(allocation.ownerPod),
 			CPUs:     allocation.cpus.String(),
 			Requests: reqs,
 		}

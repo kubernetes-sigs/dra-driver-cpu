@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"slices"
 	"sync"
 
@@ -32,19 +33,20 @@ import (
 )
 
 var (
-	ErrClaimAlreadyBound = errors.New("claim is already bound to another container")
+	ErrClaimAlreadyBound = errors.New("claim is already bound")
 	ErrClaimCPUMismatch  = errors.New("claim cpuset does not match the prepared allocation")
 	ErrUnknownClaim      = errors.New("claim is not prepared by this driver")
 	ErrEmptyClaimList    = errors.New("claim list is empty")
 )
 
+// ClaimAlreadyBoundError reports that a claim is already bound to a pod.
 type ClaimAlreadyBoundError struct {
 	ClaimUID types.UID
-	Owner    OwnerIdentifier
+	PodUID   types.UID
 }
 
 func (err ClaimAlreadyBoundError) Error() string {
-	return fmt.Sprintf("claimUID %q is already bound to pod %q container %q", err.ClaimUID, err.Owner.PodUID, err.Owner.ContainerName)
+	return fmt.Sprintf("claimUID %q is already bound to pod %q", err.ClaimUID, err.PodUID)
 }
 
 func (err ClaimAlreadyBoundError) Unwrap() error {
@@ -77,25 +79,12 @@ func (err UnknownClaimError) Unwrap() error {
 	return ErrUnknownClaim
 }
 
-type OwnerIdentifier struct {
-	PodUID        types.UID
-	ContainerName string
-}
-
-func (oi OwnerIdentifier) String() string {
-	return string(oi.PodUID) + "/" + oi.ContainerName
-}
-
-func (oi OwnerIdentifier) Assigned() bool {
-	return oi.PodUID != types.UID("") && oi.ContainerName != ""
-}
-
-func (oi OwnerIdentifier) Vacant() bool {
-	return oi.PodUID == types.UID("") && oi.ContainerName == ""
-}
-
-func (oi OwnerIdentifier) Equal(ident OwnerIdentifier) bool {
-	return oi.PodUID == ident.PodUID && oi.ContainerName == ident.ContainerName
+// ClaimRequest identifies a single request within a ResourceClaim.
+// An empty Request targets all requests of the claim - used when restoring
+// existing containers created before per-request tracking.
+type ClaimRequest struct {
+	ClaimUID types.UID
+	Request  string
 }
 
 type ClaimIdentifier struct {
@@ -121,19 +110,22 @@ func (ci ClaimIdentifier) String() string {
 	return fmt.Sprintf("<UID=%q %q>", ci.UID, ci.Claim.String())
 }
 
+// requestAllocation holds the CPUs allocated to one request in a claim and the
+// container names within the claim's owning pod bound to that request.
 type requestAllocation struct {
-	cpus   cpuset.CPUSet
-	owners []OwnerIdentifier
+	cpus       cpuset.CPUSet
+	containers []string
 }
 
-// claimAllocation keeps CPUs and owners per request, so a container can later
-// bind only the requests it uses. An empty request name ("") represents the
-// entire claim when per-request names are not available, for example when
-// restoring from an env var in NRI.
-// TODO: bind and validate CPUs per request once CDI is split per request.
-// See: https://github.com/kubernetes-sigs/dra-driver-cpu/issues/389
+// claimAllocation holds a prepared ResourceClaim's CPUs, the single pod that
+// owns it once bound, and its per-request allocations. ownerPod is non-empty
+// if and only if at least one request has a bound container. requests is keyed
+// by ResourceClaim request name, or "" when restoring existing containers
+// created before per-request tracking
+// (https://github.com/kubernetes-sigs/dra-driver-cpu/issues/389).
 type claimAllocation struct {
 	claim    types.NamespacedName
+	ownerPod types.UID
 	cpus     cpuset.CPUSet // union of all requests
 	requests map[string]requestAllocation
 }
@@ -175,64 +167,133 @@ func fillClaimAllocationFromRequests(ca *claimAllocation, requests iter.Seq2[str
 	if len(ca.requests) == 0 {
 		return errors.New("allocation has no requests")
 	}
+	if _, hasLegacy := ca.requests[""]; hasLegacy && len(ca.requests) > 1 {
+		return errors.New("cannot mix whole-claim and named requests")
+	}
 	return nil
 }
 
-// Acquire returns an owned copy if the allocation has no owner.
-func (ca claimAllocation) Acquire(owner OwnerIdentifier) (claimAllocation, bool) {
-	allocation := ca.Clone()
-	acquired := false
-	for name, req := range allocation.requests {
-		if slices.Contains(req.owners, owner) {
+// bind validates expectedCPUs and ownership for claimReq (all requests when
+// claimReq.Request is empty), then attaches containerName in podUID. It returns
+// the request names actually mutated. Callers must operate on a cloned AllocationState.
+func (ca *claimAllocation) bind(claimReq ClaimRequest, podUID types.UID, containerName string, expectedCPUs cpuset.CPUSet) ([]string, error) {
+	var targetCPUs cpuset.CPUSet
+	var existingContainers []string
+	if claimReq.Request == "" {
+		targetCPUs = ca.cpus
+		existingContainers = ca.boundContainers()
+	} else {
+		req, ok := ca.requests[claimReq.Request]
+		if !ok {
+			return nil, UnknownClaimError{ClaimUID: claimReq.ClaimUID}
+		}
+		targetCPUs = req.cpus
+		existingContainers = req.containers
+	}
+	if !targetCPUs.Equals(expectedCPUs) {
+		return nil, ClaimCPUMismatchError{
+			ClaimUID: claimReq.ClaimUID,
+			Expected: targetCPUs,
+			Got:      expectedCPUs,
+		}
+	}
+	// A claim is owned by at most one pod; cross-pod sharing is not allowed
+	// even across different requests of the same claim.
+	if ca.ownerPod != "" && ca.ownerPod != podUID {
+		return nil, ClaimAlreadyBoundError{ClaimUID: claimReq.ClaimUID, PodUID: ca.ownerPod}
+	}
+	// Requests are not shareable within a pod yet.
+	for _, c := range existingContainers {
+		if c != containerName {
+			return nil, ClaimAlreadyBoundError{ClaimUID: claimReq.ClaimUID, PodUID: ca.ownerPod}
+		}
+	}
+
+	var changed []string
+	for name, req := range ca.requests {
+		if claimReq.Request != "" && name != claimReq.Request {
 			continue
 		}
-		req.owners = append(req.owners, owner)
-		allocation.requests[name] = req
-		acquired = true
+		if slices.Contains(req.containers, containerName) {
+			continue
+		}
+		req.containers = append(req.containers, containerName)
+		ca.requests[name] = req
+		changed = append(changed, name)
 	}
-	return allocation, acquired
+	if len(changed) > 0 {
+		ca.ownerPod = podUID
+		slices.Sort(changed)
+	}
+	return changed, nil
 }
 
-// Release returns a copy without owners, retaining its CPUs.
-func (ca claimAllocation) Release() claimAllocation {
-	allocation := ca.Clone()
-	for name, req := range allocation.requests {
-		// intentional empty owner
-		req.owners = nil
-		allocation.requests[name] = req
+// unbind removes containerName from request (or all requests when request is
+// empty), retaining its CPUs and other bound containers, and reports whether
+// any request changed. If no bound containers remain on any request, ownerPod
+// is cleared. Callers must operate on a cloned AllocationState.
+func (ca *claimAllocation) unbind(request string, podUID types.UID, containerName string) bool {
+	if ca.ownerPod != podUID {
+		return false
 	}
-	return allocation
+	removed := false
+	for name, req := range ca.requests {
+		if request != "" && name != request {
+			continue
+		}
+		before := len(req.containers)
+		req.containers = slices.DeleteFunc(req.containers, func(c string) bool {
+			return c == containerName
+		})
+		if len(req.containers) == before {
+			continue
+		}
+		if len(req.containers) == 0 {
+			req.containers = nil
+		}
+		ca.requests[name] = req
+		removed = true
+	}
+	if removed && len(ca.boundContainers()) == 0 {
+		ca.ownerPod = ""
+	}
+	return removed
 }
 
-// AllClaimOwners returns the containers bound to any request of the claim.
-func (ca claimAllocation) AllClaimOwners() []OwnerIdentifier {
-	var owners []OwnerIdentifier
+// boundContainers returns the unique container names bound to any request of the claim.
+func (ca claimAllocation) boundContainers() []string {
+	var containers []string
 	for _, req := range ca.requests {
-		for _, owner := range req.owners {
-			if !slices.Contains(owners, owner) {
-				owners = append(owners, owner)
+		for _, c := range req.containers {
+			if !slices.Contains(containers, c) {
+				containers = append(containers, c)
 			}
 		}
 	}
-	return owners
+	return containers
 }
 
-func (ca claimAllocation) Clone() claimAllocation {
+func (ca claimAllocation) clone() claimAllocation {
 	requests := make(map[string]requestAllocation, len(ca.requests))
 	for name, req := range ca.requests {
 		requests[name] = requestAllocation{
-			cpus:   req.cpus.Clone(),
-			owners: slices.Clone(req.owners),
+			cpus:       req.cpus.Clone(),
+			containers: slices.Clone(req.containers),
 		}
 	}
 	return claimAllocation{
 		claim:    ca.claim,
+		ownerPod: ca.ownerPod,
 		cpus:     ca.cpus.Clone(),
 		requests: requests,
 	}
 }
 
-// AllocationState is the single source of truth for CPU allocations.
+// AllocationState is the single source of truth for CPU allocations on a node.
+// It tracks two lifecycles:
+//   - DRA (claim-level): Reserve and Release add and remove prepared claim CPUs.
+//   - NRI (container-level): Bind, Unbind, and IsOwner attach containers within
+//     a claim's owning pod to individual requests of that claim.
 type AllocationState struct {
 	mu                       sync.RWMutex
 	nodeName                 string
@@ -289,10 +350,16 @@ func (s *AllocationState) Reserve(logger logr.Logger, checkpointMgr checkpoint.M
 		return fmt.Errorf("claim %q has no CPUs", claim.UID)
 	}
 	if allocation, ok := s.resourceClaimAllocations[claim.UID]; ok {
-		if allocation.cpus.Equals(cpus) {
-			return nil
+		if !allocation.cpus.Equals(cpus) {
+			return fmt.Errorf("claim %q is already prepared with CPUs %q (requested %q)", claim.UID, allocation.cpus.String(), cpus.String())
 		}
-		return fmt.Errorf("claim %q is already prepared with CPUs %q (requested %q)", claim.UID, allocation.cpus.String(), cpus.String())
+		// Equal union CPUs can still have different per-request splits.
+		if !maps.EqualFunc(allocation.requests, requests, func(existing requestAllocation, want cpuset.CPUSet) bool {
+			return existing.cpus.Equals(want)
+		}) {
+			return fmt.Errorf("claim %q is already prepared with different per-request CPU allocations", claim.UID)
+		}
+		return nil
 	}
 	sharedCPUs := s.availableCPUs.Difference(s.preparedCPUs)
 	if !cpus.IsSubsetOf(sharedCPUs) {
@@ -328,95 +395,76 @@ func (s *AllocationState) Release(logger logr.Logger, checkpointMgr checkpoint.M
 	return nil
 }
 
-// Bind validates prepared allocations and atomically binds them to a container.
-// It returns only newly bound claims so callers can roll back their ownership.
-func (s *AllocationState) Bind(logger logr.Logger, checkpointMgr checkpoint.Manager, podUID types.UID, containerName string, expected map[types.UID]cpuset.CPUSet) ([]types.UID, error) {
+// Bind validates prepared allocations and atomically binds containerName in
+// podUID to every entry in expected. Each claim can be owned by at most one
+// pod, and each request can be bound to at most one container within that pod.
+// It returns only newly bound entries so callers can roll back on failure.
+func (s *AllocationState) Bind(logger logr.Logger, checkpointMgr checkpoint.Manager, podUID types.UID, containerName string, expected map[ClaimRequest]cpuset.CPUSet) ([]ClaimRequest, error) {
 	if len(expected) == 0 {
 		return nil, ErrEmptyClaimList
 	}
+	if podUID == "" || containerName == "" {
+		return nil, fmt.Errorf("invalid container identity podUID=%q containerName=%q: provide both a pod UID and container name", podUID, containerName)
+	}
 	logger = logger.WithValues("podUID", podUID, "containerName", containerName)
-	curIdent := OwnerIdentifier{
-		PodUID:        podUID,
-		ContainerName: containerName,
-	}
-	// An empty owner would be stored as a real entry in the owner list.
-	if !curIdent.Assigned() {
-		return nil, fmt.Errorf("invalid claim owner podUID=%q containerName=%q: provide both a pod UID and container name", podUID, containerName)
-	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for claimUID, cpus := range expected {
-		allocation, ok := s.resourceClaimAllocations[claimUID]
-		if !ok {
-			return nil, UnknownClaimError{
-				ClaimUID: claimUID,
-			}
-		}
-		if !allocation.cpus.Equals(cpus) {
-			return nil, ClaimCPUMismatchError{
-				ClaimUID: claimUID,
-				Expected: allocation.cpus,
-				Got:      cpus,
-			}
-		}
-		// Claims are not shareable yet, so any other owner is a conflict.
-		for _, owner := range allocation.AllClaimOwners() {
-			if !owner.Equal(curIdent) {
-				return nil, ClaimAlreadyBoundError{
-					ClaimUID: claimUID,
-					Owner:    owner,
-				}
-			}
-		}
-	}
-
 	candidate := s.cloneLocked()
-	updatedClaims := []types.UID{}
-	for claimUID := range expected {
-		allocation := candidate.resourceClaimAllocations[claimUID]
-		allocInfo, acquired := allocation.Acquire(curIdent)
-		if !acquired {
-			logger.V(2).Info("claim bound again to the same owner", "claimUID", claimUID)
+	var updated []ClaimRequest
+	for claimReq, cpus := range expected {
+		allocation, ok := candidate.resourceClaimAllocations[claimReq.ClaimUID]
+		if !ok {
+			return nil, UnknownClaimError{ClaimUID: claimReq.ClaimUID}
+		}
+		changedRequests, err := allocation.bind(claimReq, podUID, containerName, cpus)
+		if err != nil {
+			return nil, err
+		}
+		if len(changedRequests) == 0 {
+			logger.V(2).Info("claim bound again to the same container", "claimUID", claimReq.ClaimUID, "request", claimReq.Request)
 			continue
 		}
-		candidate.resourceClaimAllocations[claimUID] = allocInfo
-		updatedClaims = append(updatedClaims, claimUID)
+		candidate.resourceClaimAllocations[claimReq.ClaimUID] = allocation
+		for _, name := range changedRequests {
+			updated = append(updated, ClaimRequest{ClaimUID: claimReq.ClaimUID, Request: name})
+		}
 	}
-	if len(updatedClaims) == 0 {
-		return updatedClaims, nil
+	if len(updated) == 0 {
+		return nil, nil
 	}
 	if err := s.commitLocked(logger, checkpointMgr, candidate); err != nil {
 		return nil, err
 	}
-	for _, claimUID := range updatedClaims {
-		logger.V(4).Info("claim bound", "claimUID", claimUID)
+	for _, claimReq := range updated {
+		logger.V(4).Info("claim bound", "claimUID", claimReq.ClaimUID, "request", claimReq.Request)
 	}
-	return updatedClaims, nil
+	return updated, nil
 }
 
-// Unbind detaches a claim from the container it was bound to, but doesn't release the prepared claim.
-func (s *AllocationState) Unbind(logger logr.Logger, checkpointMgr checkpoint.Manager, claimUIDs ...types.UID) error {
-	if len(claimUIDs) == 0 {
+// Unbind detaches containerName in podUID from the given claim requests without
+// releasing the prepared claims. If no bound containers remain on a claim, its
+// owning pod is cleared.
+func (s *AllocationState) Unbind(logger logr.Logger, checkpointMgr checkpoint.Manager, podUID types.UID, containerName string, requests ...ClaimRequest) error {
+	if len(requests) == 0 || podUID == "" || containerName == "" {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	candidate := s.cloneLocked()
 	changed := 0
-	for _, claimUID := range claimUIDs {
-		allocation, ok := candidate.resourceClaimAllocations[claimUID]
+	for _, claimReq := range requests {
+		allocation, ok := candidate.resourceClaimAllocations[claimReq.ClaimUID]
 		if !ok {
-			logger.V(2).Info("claim was not reserved, ignored", "claimUID", claimUID)
+			logger.V(2).Info("claim was not reserved, ignored", "claimUID", claimReq.ClaimUID)
 			continue
 		}
-		allOwners := allocation.AllClaimOwners()
-		if len(allOwners) == 0 {
+		if !allocation.unbind(claimReq.Request, podUID, containerName) {
 			continue
 		}
-		candidate.resourceClaimAllocations[claimUID] = allocation.Release()
-		logger.V(4).Info("unbinding claims", "claimUID", claimUID, "previousOwners", allOwners)
+		candidate.resourceClaimAllocations[claimReq.ClaimUID] = allocation
+		logger.V(4).Info("unbinding claim", "claimUID", claimReq.ClaimUID, "request", claimReq.Request, "podUID", podUID, "containerName", containerName)
 		changed++
 	}
 	if changed == 0 {
@@ -425,19 +473,30 @@ func (s *AllocationState) Unbind(logger logr.Logger, checkpointMgr checkpoint.Ma
 	if err := s.commitLocked(logger, checkpointMgr, candidate); err != nil {
 		return err
 	}
-	logger.V(4).Info("claim unbind completed", "claimUIDs", claimUIDs, "unbound", changed, "requested", len(claimUIDs))
+	logger.V(4).Info("claim unbind completed", "requests", requests, "unbound", changed, "requested", len(requests))
 	return nil
 }
 
-// IsOwner checks if a claim, identified by its UID, is owned by the given container
-func (s *AllocationState) IsOwner(claimUID types.UID, podUID types.UID, containerName string) bool {
+// IsOwner reports whether containerName in podUID is bound to req.
+// When req.Request is empty, containerName must be bound to every request
+// of the claim.
+func (s *AllocationState) IsOwner(podUID types.UID, containerName string, req ClaimRequest) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	info, found := s.resourceClaimAllocations[claimUID]
-	if !found {
+	info, found := s.resourceClaimAllocations[req.ClaimUID]
+	if !found || info.ownerPod == "" || info.ownerPod != podUID {
 		return false
 	}
-	return slices.Contains(info.AllClaimOwners(), OwnerIdentifier{PodUID: podUID, ContainerName: containerName})
+	if req.Request != "" {
+		r, ok := info.requests[req.Request]
+		return ok && slices.Contains(r.containers, containerName)
+	}
+	for _, r := range info.requests {
+		if !slices.Contains(r.containers, containerName) {
+			return false
+		}
+	}
+	return len(info.requests) > 0
 }
 
 // GetSharedCPUs returns CPUs available to shared containers.
@@ -453,6 +512,21 @@ func (s *AllocationState) GetResourceClaimAllocation(claimUID types.UID) (cpuset
 	defer s.mu.RUnlock()
 	allocation, ok := s.resourceClaimAllocations[claimUID]
 	return allocation.cpus, ok
+}
+
+// GetResourceClaimRequests returns a copy of the per-request CPU allocations for a claim.
+func (s *AllocationState) GetResourceClaimRequests(claimUID types.UID) (map[string]cpuset.CPUSet, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	allocation, ok := s.resourceClaimAllocations[claimUID]
+	if !ok {
+		return nil, false
+	}
+	requests := make(map[string]cpuset.CPUSet, len(allocation.requests))
+	for name, req := range allocation.requests {
+		requests[name] = req.cpus.Clone()
+	}
+	return requests, true
 }
 
 // GetReservedCPUs returns the set of reserved CPUs.
@@ -502,7 +576,7 @@ func (s *AllocationState) cloneEmptyLocked() *AllocationState {
 func (s *AllocationState) cloneLocked() *AllocationState {
 	allocations := make(map[types.UID]claimAllocation, len(s.resourceClaimAllocations))
 	for uid, info := range s.resourceClaimAllocations {
-		allocations[uid] = info.Clone()
+		allocations[uid] = info.clone()
 	}
 
 	return &AllocationState{

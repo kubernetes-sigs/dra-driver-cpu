@@ -64,7 +64,7 @@ func TestFirstSynchronizeAfterRestartUsesCheckpoint(t *testing.T) {
 	require.False(t, before.checkpointRestored, "no checkpoint exists on the first start")
 	// "a" is bound to a running container, "pending" is prepared but its container is not running.
 	require.NoError(t, before.allocationState.Reserve(logger, before.checkpointMgr, store.ClaimIdentifier{UID: "a"}, fullClaimRequest(cpuset.New(0)), false))
-	_, err = before.allocationState.Bind(logger, before.checkpointMgr, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
+	_, err = before.allocationState.Bind(logger, before.checkpointMgr, "pod", "app", map[store.ClaimRequest]cpuset.CPUSet{{ClaimUID: "a"}: cpuset.New(0)})
 	require.NoError(t, err)
 	require.NoError(t, before.allocationState.Reserve(logger, before.checkpointMgr, store.ClaimIdentifier{UID: "pending"}, fullClaimRequest(cpuset.New(2)), false))
 
@@ -88,7 +88,7 @@ func TestFirstSynchronizeAfterRestartUsesCheckpoint(t *testing.T) {
 	require.Equal(t, "0,2", after.allocationState.GetPreparedCPUs().String())
 	_, prepared := after.allocationState.GetResourceClaimAllocation("b")
 	require.False(t, prepared)
-	require.True(t, after.allocationState.IsOwner("a", "pod", "app"))
+	require.True(t, after.allocationState.IsOwner("pod", "app", store.ClaimRequest{ClaimUID: "a"}))
 	_, prepared = after.allocationState.GetResourceClaimAllocation("pending")
 	require.True(t, prepared, "a prepared claim without a running container must stay reserved")
 
@@ -115,14 +115,14 @@ func TestFirstSynchronizeWithoutCheckpointRebuildsFromRuntime(t *testing.T) {
 	_, err = d.Synchronize(t.Context(), []*api.PodSandbox{pod}, []*api.Container{app})
 	require.NoError(t, err)
 	require.Equal(t, "0", d.allocationState.GetPreparedCPUs().String())
-	require.True(t, d.allocationState.IsOwner("a", "pod", "app"))
+	require.True(t, d.allocationState.IsOwner("pod", "app", store.ClaimRequest{ClaimUID: "a"}))
 
 	// Synchronize wrote the rebuilt state, so the next start restores it.
 	next, err := newRestartTestDriver(t, dir)
 	require.NoError(t, err)
 	require.True(t, next.checkpointRestored)
 	require.Equal(t, "0", next.allocationState.GetPreparedCPUs().String())
-	require.True(t, next.allocationState.IsOwner("a", "pod", "app"))
+	require.True(t, next.allocationState.IsOwner("pod", "app", store.ClaimRequest{ClaimUID: "a"}))
 }
 
 // The runtime data (env and CDI) agree with each other but not with the
@@ -153,7 +153,7 @@ func TestFirstSynchronizeAfterRestartSkipsRuntimeDisagreeingWithCheckpoint(t *te
 			before, err := newRestartTestDriver(t, dir)
 			require.NoError(t, err)
 			require.NoError(t, before.allocationState.Reserve(logger, before.checkpointMgr, store.ClaimIdentifier{UID: "a"}, fullClaimRequest(cpuset.New(0)), false))
-			_, err = before.allocationState.Bind(logger, before.checkpointMgr, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
+			_, err = before.allocationState.Bind(logger, before.checkpointMgr, "pod", "app", map[store.ClaimRequest]cpuset.CPUSet{{ClaimUID: "a"}: cpuset.New(0)})
 			require.NoError(t, err)
 
 			after, err := newRestartTestDriver(t, dir)
@@ -169,7 +169,7 @@ func TestFirstSynchronizeAfterRestartSkipsRuntimeDisagreeingWithCheckpoint(t *te
 			cpus, found := after.allocationState.GetResourceClaimAllocation("a")
 			require.True(t, found)
 			require.Equal(t, "0", cpus.String())
-			require.True(t, after.allocationState.IsOwner("a", "pod", "app"))
+			require.True(t, after.allocationState.IsOwner("pod", "app", store.ClaimRequest{ClaimUID: "a"}))
 			for _, name := range []string{tc.container.Name, sidecar.Name} {
 				state := after.podState.GetContainerState("pod", name)
 				require.NotNil(t, state, "container %q was not recovered", name)

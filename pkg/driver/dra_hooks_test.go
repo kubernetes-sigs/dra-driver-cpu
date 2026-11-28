@@ -1993,7 +1993,7 @@ func TestUnprepareResourceClaimsKeepsAllocationWhenCDIRemoveFails(t *testing.T) 
 	require.True(t, ok)
 	require.True(t, allocatedCPUs.Equals(gotCPUs), "claim cpus: got %s, want %s", gotCPUs, allocatedCPUs)
 	require.True(t, cpuset.New(1, 3).Equals(cp.allocationState.GetSharedCPUs()), "shared cpus: got %s", cp.allocationState.GetSharedCPUs())
-	require.True(t, cp.allocationState.IsOwner(claimUID, "pod", "container"))
+	require.True(t, cp.allocationState.IsOwner("pod", "container", store.ClaimRequest{ClaimUID: claimUID}))
 	require.Contains(t, mockCdiMgr.devices, cdiDeviceName)
 }
 
@@ -2012,7 +2012,7 @@ func TestUnprepareResourceClaimsRemovesAllocationAfterCDIRemoveSucceeds(t *testi
 	_, ok := cp.allocationState.GetResourceClaimAllocation(claimUID)
 	require.False(t, ok)
 	require.True(t, cpuset.New(0, 1, 2, 3).Equals(cp.allocationState.GetSharedCPUs()), "shared cpus: got %s", cp.allocationState.GetSharedCPUs())
-	require.False(t, cp.allocationState.IsOwner(claimUID, "pod", "container"))
+	require.False(t, cp.allocationState.IsOwner("pod", "container", store.ClaimRequest{ClaimUID: claimUID}))
 	require.NotContains(t, mockCdiMgr.devices, cdiDeviceName)
 }
 
@@ -2026,7 +2026,7 @@ func newDriverWithAllocatedClaim(t *testing.T, logger logr.Logger, claimUID type
 	require.NoError(t, err)
 	allocationState := store.NewAllocationState(testNodeName, topo, cpuset.New())
 	require.NoError(t, allocationState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, fullClaimRequest(allocatedCPUs), false))
-	_, err = allocationState.Bind(logger, noop, "pod", "container", map[types.UID]cpuset.CPUSet{claimUID: allocatedCPUs})
+	_, err = allocationState.Bind(logger, noop, "pod", "container", map[store.ClaimRequest]cpuset.CPUSet{{ClaimUID: claimUID}: allocatedCPUs})
 	require.NoError(t, err)
 
 	return &CPUDriver{

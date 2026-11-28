@@ -20,8 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 	"time"
 
@@ -121,12 +119,16 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			}
 			containerUID := types.UID(container.GetId())
 			allGuaranteedCPUs := cpuset.New()
-			validatedClaimAllocations := make(map[types.UID]cpuset.CPUSet)
+			validatedClaimAllocations := make(map[store.ClaimRequest]cpuset.CPUSet)
+			validatedClaimUIDs := []types.UID{}
 			for uid, cpus := range claimAllocations {
+				// TODO: populate Request once CDI env vars are split per request.
+				// See: https://github.com/kubernetes-sigs/dra-driver-cpu/issues/389
+				claimReq := store.ClaimRequest{ClaimUID: uid, Request: ""}
 				var prepared, owned bool
 				if trustPrepared {
 					_, prepared = cp.allocationState.GetResourceClaimAllocation(uid)
-					owned = cp.allocationState.IsOwner(uid, types.UID(pod.Uid), container.Name)
+					owned = cp.allocationState.IsOwner(types.UID(pod.Uid), container.Name, claimReq)
 				}
 				caLogger := cLogger.WithValues("claimUID", uid)
 				if !cdiCacheRefreshAttempted {
@@ -170,7 +172,8 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				}
 
 				allGuaranteedCPUs = allGuaranteedCPUs.Union(cpus)
-				validatedClaimAllocations[uid] = cpus
+				validatedClaimAllocations[claimReq] = cpus
+				validatedClaimUIDs = append(validatedClaimUIDs, uid)
 			}
 
 			if len(validatedClaimAllocations) > 0 {
@@ -189,7 +192,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				state = store.NewContainerState(container.GetName(), containerUID)
 			} else {
 				cLogger.V(2).Info("found guaranteed CPUs", "cpus", allGuaranteedCPUs.String())
-				state = store.NewContainerState(container.GetName(), containerUID, slices.Collect(maps.Keys(validatedClaimAllocations))...)
+				state = store.NewContainerState(container.GetName(), containerUID, validatedClaimUIDs...)
 
 				// Reconcile guaranteed container CPU mask.
 				guaranteedUpdate := &api.ContainerUpdate{
@@ -357,11 +360,14 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		// entries that match a claim prepared by this driver.
 		guaranteedCPUs := cpuset.New()
 		claimUIDs := []types.UID{}
+		claimRequests := make(map[store.ClaimRequest]cpuset.CPUSet, len(claimAllocations))
 		for uid, cpus := range claimAllocations {
 			guaranteedCPUs = guaranteedCPUs.Union(cpus)
 			claimUIDs = append(claimUIDs, uid)
+			// TODO: populate Request once CDI env vars are split per request.
+			claimRequests[store.ClaimRequest{ClaimUID: uid, Request: ""}] = cpus
 		}
-		updatedClaims, err := cp.allocationState.Bind(logger, cp.checkpointMgr, podUID, ctr.Name, claimAllocations)
+		updatedClaims, err := cp.allocationState.Bind(logger, cp.checkpointMgr, podUID, ctr.Name, claimRequests)
 		if err != nil {
 			return nil, nil, fmt.Errorf("cannot bind claim to container %q in pod %q: %w", ctr.Name, pod.Uid, err)
 		}
@@ -376,7 +382,7 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		if len(updatedClaims) > 0 {
 			updates, err = sharedContainerUpdatesFor(logger, cp.allocationState, cp.podState, containerId)
 			if err != nil {
-				if unbindErr := cp.allocationState.Unbind(logger, cp.checkpointMgr, updatedClaims...); unbindErr != nil {
+				if unbindErr := cp.allocationState.Unbind(logger, cp.checkpointMgr, podUID, ctr.Name, updatedClaims...); unbindErr != nil {
 					return nil, nil, errors.Join(
 						fmt.Errorf("cannot update shared CPU pool after creating container %q in pod %q: %w", ctr.Name, pod.Uid, err),
 						fmt.Errorf("cannot roll back claim bindings: %w", unbindErr),

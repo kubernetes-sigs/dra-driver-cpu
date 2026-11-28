@@ -312,7 +312,7 @@ func TestCreateContainer(t *testing.T) {
 				require.Nil(t, adjust)
 				require.Nil(t, updates)
 				require.Equal(t, before, tc.allocationState.Snapshot(), "failed CreateContainer must retain prepared allocations")
-				require.False(t, tc.allocationState.IsOwner(types.UID(claimUID), types.UID(pod.Uid), tc.container.Name), "failed CreateContainer must not retain claim owners")
+				require.False(t, tc.allocationState.IsOwner(types.UID(pod.Uid), tc.container.Name, store.ClaimRequest{ClaimUID: claimUID}), "failed CreateContainer must not retain claim owners")
 				require.Nil(t, tc.podState.GetContainerState(types.UID(pod.Uid), tc.container.Name), "failed CreateContainer must not retain container state")
 				return
 			}
@@ -433,7 +433,7 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, preparedCPUs.Equals(claimCPUs))
 	require.True(t, allocState.GetSharedCPUs().Equals(cpuset.New(2, 3)))
-	require.True(t, driver.allocationState.IsOwner(claimUID, types.UID(pod.Uid), "app"))
+	require.True(t, driver.allocationState.IsOwner(types.UID(pod.Uid), "app", store.ClaimRequest{ClaimUID: claimUID}))
 
 	restarted := container("container-2")
 	adjustment, updates, err = driver.CreateContainer(context.Background(), pod, restarted)
@@ -441,7 +441,7 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 	require.Equal(t, claimCPUs.String(), adjustment.Linux.Resources.Cpu.Cpus)
 	require.Empty(t, updates)
 	require.True(t, allocState.GetSharedCPUs().Equals(cpuset.New(2, 3)))
-	require.True(t, driver.allocationState.IsOwner(claimUID, types.UID(pod.Uid), "app"))
+	require.True(t, driver.allocationState.IsOwner(types.UID(pod.Uid), "app", store.ClaimRequest{ClaimUID: claimUID}))
 
 	// Delayed events for the old runtime ID must not remove or release the replacement.
 	require.NoError(t, driver.RemoveContainer(context.Background(), pod, first))
@@ -475,7 +475,7 @@ func TestGuaranteedContainerRestartNotBlockedByEmptySharedPool(t *testing.T) {
 	allocState := store.NewAllocationState(testNodeName, topo, cpuset.New())
 	require.NoError(t, allocState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, fullClaimRequest(allCPUs), false))
 	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod", Name: "pod", Namespace: "ns"}
-	_, err = allocState.Bind(logger, noop, types.UID(pod.Uid), "app", map[types.UID]cpuset.CPUSet{claimUID: allCPUs})
+	_, err = allocState.Bind(logger, noop, types.UID(pod.Uid), "app", map[store.ClaimRequest]cpuset.CPUSet{{ClaimUID: claimUID}: allCPUs})
 	require.NoError(t, err)
 
 	driver := &CPUDriver{
@@ -500,7 +500,7 @@ func TestGuaranteedContainerRestartNotBlockedByEmptySharedPool(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, adjustment)
 	require.Empty(t, updates)
-	require.True(t, allocState.IsOwner(claimUID, types.UID(pod.Uid), "app"), "an existing owner must not be removed on restart rejection")
+	require.True(t, allocState.IsOwner(types.UID(pod.Uid), "app", store.ClaimRequest{ClaimUID: claimUID}), "an existing owner must not be removed on restart rejection")
 }
 
 func TestNRISynchronize(t *testing.T) {
@@ -833,7 +833,7 @@ func TestStopContainerKeepsClaimOutOfSharedPoolUntilUnprepare(t *testing.T) {
 		metrics:         cpumetrics.Noop(),
 	}
 	driver.cdiMgr.(*mockCdiMgr).devices[getCDIDeviceName(claimUID)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, claimedCPUs.String())
-	_, err := driver.allocationState.Bind(logger, noop, types.UID(guaranteedPod.Uid), guaranteedCtr.Name, map[types.UID]cpuset.CPUSet{claimUID: claimedCPUs})
+	_, err := driver.allocationState.Bind(logger, noop, types.UID(guaranteedPod.Uid), guaranteedCtr.Name, map[store.ClaimRequest]cpuset.CPUSet{{ClaimUID: claimUID}: claimedCPUs})
 	require.NoError(t, err)
 	driver.podState.SetContainerState(types.UID(guaranteedPod.Uid),
 		store.NewContainerState(guaranteedCtr.Name, types.UID(guaranteedCtr.Id), claimUID))
