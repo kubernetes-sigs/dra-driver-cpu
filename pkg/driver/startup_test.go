@@ -55,13 +55,13 @@ func startupWindowFixture(t *testing.T) (*CPUDriver, *api.PodSandbox, []*api.Con
 
 func TestStartupWindowPrepareMustWaitForRecovery(t *testing.T) {
 	driver, pod, containers, claim := startupWindowFixture(t)
-	before := len(driver.cdiMgr.(*mockCdiMgr).devices)
+	before := len(driver.cdiMgr.(*mockCdiMgr).specs)
 	results, err := driver.PrepareResourceClaims(t.Context(), []*resourceapi.ResourceClaim{claim})
 	require.NoError(t, err)
 	require.ErrorContains(t, results[claim.UID].Err, "initial NRI synchronization", "Prepare must reject a request before the first successful Synchronize")
 	_, ok := driver.allocationState.GetResourceClaimAllocation(claim.UID)
 	require.False(t, ok)
-	require.Len(t, driver.cdiMgr.(*mockCdiMgr).devices, before, "rejection must not write CDI")
+	require.Len(t, driver.cdiMgr.(*mockCdiMgr).specs, before, "rejection must not write CDI")
 	_, err = driver.Synchronize(t.Context(), []*api.PodSandbox{pod}, containers)
 	require.NoError(t, err)
 	require.True(t, driver.hasSynchronized)
@@ -112,7 +112,8 @@ type prepareOutcome struct {
 
 func TestStartupWindowFailedSynchronizeKeepsGateClosed(t *testing.T) {
 	driver, pod, containers, claim := startupWindowFixture(t)
-	driver.cdiMgr.(*mockCdiMgr).devices[getCDIDeviceName("conflict")] = fmt.Sprintf("%s_conflict=0,2", cdiEnvVarPrefix)
+	conflictDevice := getCDISpecKey("conflict")
+	driver.cdiMgr.(*mockCdiMgr).specs[conflictDevice] = map[string]string{conflictDevice: fmt.Sprintf("%s_conflict=0,2", cdiEnvVarPrefix)}
 	bad := append([]*api.Container{}, containers...)
 	bad = append(bad, &api.Container{Id: "conflict-container", Name: "other", PodSandboxId: pod.Id, State: api.ContainerState_CONTAINER_RUNNING, Env: []string{fmt.Sprintf("%s_conflict=0,2", cdiEnvVarPrefix)}})
 	_, err := driver.Synchronize(t.Context(), []*api.PodSandbox{pod}, bad)

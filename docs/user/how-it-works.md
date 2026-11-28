@@ -47,8 +47,8 @@ The two components in detail:
 
 - **CDI (Container Device Interface)**: The driver uses CDI to communicate the allocated CPU set to the container runtime.
 
-  - A CDI JSON spec file is created or updated for the allocated claim.
-  - This spec instructs the runtime to inject an environment variable (e.g., `DRA_CPUSET_<claimUID>=<cpuset>`) into the container.
+  - A CDI JSON spec file is created or updated for the allocated claim, with one CDI device per request.
+  - Each CDI device injects an environment variable (`DRA_CPUSET_<claimUID>_<request>=<cpuset>`) into containers that reference that request.
   - The `DRA_CPUSET_*` environment variable prefix is reserved for the driver. Containers with malformed `DRA_CPUSET_*` values are rejected during creation.
   - The driver includes mechanisms for thread-safe and atomic updates to the CDI spec files.
 

@@ -27,6 +27,7 @@ import (
 	"github.com/containerd/nri/pkg/net/multiplex"
 	"github.com/containerd/nri/pkg/stub"
 	"github.com/containerd/ttrpc"
+	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"github.com/stretchr/testify/require"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -160,7 +161,7 @@ func TestNRIRuntimeReconnectRetainsPreparedClaim(t *testing.T) {
 	gotCPUs, found := d.allocationState.GetResourceClaimAllocation(claim.UID)
 	require.True(t, found, "reconnect discarded the prepared allocation")
 	require.True(t, cpuset.New(0).Equals(gotCPUs))
-	require.True(t, d.allocationState.IsOwner(claim.UID, types.UID(pod.Uid), container.Name), "reconnect discarded claim ownership")
+	require.True(t, d.allocationState.IsOwner(types.UID(pod.Uid), container.Name, store.ClaimRequest{ClaimUID: claim.UID}), "reconnect discarded claim ownership")
 
 	otherPod := &api.PodSandbox{Id: "other-sandbox", Uid: "other-pod"}
 	_, _, err = d.CreateContainer(ctx, otherPod, &api.Container{

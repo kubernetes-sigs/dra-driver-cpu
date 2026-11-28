@@ -193,9 +193,14 @@ func unmarshalLatestReport(data string, v any) error {
 
 func getTesterPodCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod *v1.Pod) CPUAllocation {
 	ginkgo.GinkgoHelper()
+	return getTesterContainerCPUAllocation(cs, ctx, pod, pod.Spec.Containers[0].Name)
+}
 
-	data, err := e2epod.GetLogs(ctx, cs, pod)
-	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs for %s/%s/%s", pod.Namespace, pod.Name, pod.Spec.Containers[0].Name)
+func getTesterContainerCPUAllocation(cs kubernetes.Interface, ctx context.Context, pod *v1.Pod, containerName string) CPUAllocation {
+	ginkgo.GinkgoHelper()
+
+	data, err := e2epod.GetLogsForContainer(ctx, cs, pod.Namespace, pod.Name, containerName)
+	gomega.Expect(err).ToNot(gomega.HaveOccurred(), "cannot get logs for %s/%s/%s", pod.Namespace, pod.Name, containerName)
 
 	testerInfo := discovery.DRACPUTester{}
 	gomega.Expect(unmarshalLatestReport(data, &testerInfo)).To(gomega.Succeed(), "cannot unmarshal tester report from logs")
@@ -407,17 +412,64 @@ func makeTesterPodWithNamedClaim(ns, image, nodeName string, nodeAllocatableMapp
 	return e2epod.PinToNode(pod, nodeName)
 }
 
-func makeResourceClaimSpec(cpus int, isConsumable bool) resourcev1.ResourceClaimSpec {
-	if !isConsumable {
-		return resourcev1.ResourceClaimSpec{
-			Devices: resourcev1.DeviceClaim{
-				Requests: []resourcev1.DeviceRequest{
-					{
-						Name: "request-cpus",
-						Exactly: &resourcev1.ExactDeviceRequest{
-							DeviceClassName: driverName,
-							Count:           int64(cpus),
-						},
+func makeTesterPodWithRequestsInContainer(ns, image, nodeName string, nodeAllocatableMapping bool, claimName string, requestNames ...string) *v1.Pod {
+	ginkgo.GinkgoHelper()
+	containers := make([]v1.Container, len(requestNames))
+	for i, reqName := range requestNames {
+		requests, limits := claimContainerResources(1, nodeAllocatableMapping)
+		containers[i] = v1.Container{
+			Name:    fmt.Sprintf("tester-container-%d", i),
+			Image:   image,
+			Command: []string{"/dracputester"},
+			Resources: v1.ResourceRequirements{
+				Requests: requests,
+				Limits:   limits,
+				Claims:   []v1.ResourceClaim{{Name: "cpu-claim", Request: reqName}},
+			},
+		}
+	}
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "tester-pod-per-request-",
+			Namespace:    ns,
+		},
+		Spec: v1.PodSpec{
+			Containers: containers,
+			ResourceClaims: []v1.PodResourceClaim{
+				{
+					Name:              "cpu-claim",
+					ResourceClaimName: &claimName,
+				},
+			},
+			RestartPolicy: v1.RestartPolicyAlways,
+		},
+	}
+	return e2epod.PinToNode(pod, nodeName)
+}
+
+func makeResourceClaimSpec(cpus int, isConsumable bool, requestNames ...string) resourcev1.ResourceClaimSpec {
+	if len(requestNames) == 0 {
+		requestNames = []string{"request-cpus"}
+	}
+	requests := make([]resourcev1.DeviceRequest, len(requestNames))
+	for i, name := range requestNames {
+		if !isConsumable {
+			requests[i] = resourcev1.DeviceRequest{
+				Name: name,
+				Exactly: &resourcev1.ExactDeviceRequest{
+					DeviceClassName: driverName,
+					Count:           int64(cpus),
+				},
+			}
+			continue
+		}
+		requests[i] = resourcev1.DeviceRequest{
+			Name: name,
+			Exactly: &resourcev1.ExactDeviceRequest{
+				DeviceClassName: driverName,
+				Capacity: &resourcev1.CapacityRequirements{
+					Requests: map[resourcev1.QualifiedName]resource.Quantity{
+						"dra.cpu/cpu": *resource.NewQuantity(int64(cpus), resource.DecimalSI),
 					},
 				},
 			},
@@ -425,19 +477,7 @@ func makeResourceClaimSpec(cpus int, isConsumable bool) resourcev1.ResourceClaim
 	}
 	return resourcev1.ResourceClaimSpec{
 		Devices: resourcev1.DeviceClaim{
-			Requests: []resourcev1.DeviceRequest{
-				{
-					Name: "request-cpus",
-					Exactly: &resourcev1.ExactDeviceRequest{
-						DeviceClassName: driverName,
-						Capacity: &resourcev1.CapacityRequirements{
-							Requests: map[resourcev1.QualifiedName]resource.Quantity{
-								"dra.cpu/cpu": *resource.NewQuantity(int64(cpus), resource.DecimalSI),
-							},
-						},
-					},
-				},
-			},
+			Requests: requests,
 		},
 	}
 }

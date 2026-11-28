@@ -20,8 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 	"time"
 
@@ -33,6 +31,7 @@ import (
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/checkpoint"
 	"github.com/kubernetes-sigs/dra-driver-cpu/pkg/store"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/cpuset"
 )
 
@@ -121,14 +120,16 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 			}
 			containerUID := types.UID(container.GetId())
 			allGuaranteedCPUs := cpuset.New()
-			validatedClaimAllocations := make(map[types.UID]cpuset.CPUSet)
-			for uid, cpus := range claimAllocations {
+			validatedClaimAllocations := make(map[store.ClaimRequest]cpuset.CPUSet)
+			validatedClaimUIDs := sets.New[types.UID]()
+			for claimReq, cpus := range claimAllocations {
+				uid := claimReq.ClaimUID
 				var prepared, owned bool
 				if trustPrepared {
 					_, prepared = cp.allocationState.GetResourceClaimAllocation(uid)
-					owned = cp.allocationState.IsOwner(uid, types.UID(pod.Uid), container.Name)
+					owned = cp.allocationState.IsOwner(types.UID(pod.Uid), container.Name, claimReq)
 				}
-				caLogger := cLogger.WithValues("claimUID", uid)
+				caLogger := cLogger.WithValues("claimUID", uid, "request", claimReq.Request)
 				if !cdiCacheRefreshAttempted {
 					err = cp.cdiMgr.Refresh()
 					cdiCacheRefreshAttempted = true
@@ -137,15 +138,14 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 					}
 				}
 
-				deviceName := getCDIDeviceName(uid)
-				envs, err := cp.cdiMgr.GetDeviceEnv(deviceName)
+				envs, err := cp.cdiMgr.GetDeviceEnv(getCDISpecKey(uid))
 				// Inconsistent claims are skipped, not fatal, so one container cannot
 				// block recovery for every other container on the node.
 				if err != nil {
 					caLogger.Error(err, "ignoring claim without CDI state during synchronize", "prepared", prepared, "owned", owned)
 					continue
 				}
-				err = validateSynchronizedClaimAllocation(caLogger, uid, cpus, envs)
+				claimRequests, err := validateSynchronizedClaimAllocation(caLogger, claimReq, cpus, envs)
 				if err != nil {
 					caLogger.Error(err, "ignoring invalid claim allocation during synchronize", "prepared", prepared, "owned", owned)
 					continue
@@ -157,10 +157,10 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 					continue
 				}
 				// Synchronize restores an allocation that already exists in the runtime;
-				// the shared-pool guard applies only to new reservations.
-				// TODO: split CDI env per request; until then "" represents the entire claim.
-				// See: https://github.com/kubernetes-sigs/dra-driver-cpu/issues/389
-				if err := allocationState.Reserve(caLogger, checkpointMgr, store.ClaimIdentifier{UID: uid}, map[string]cpuset.CPUSet{"": cpus}, false); err != nil {
+				// the shared-pool guard applies only to new reservations. Reserve the
+				// full per-request split from the claim's CDI spec so sibling requests
+				// of a multi-request claim stay reserved across containers.
+				if err := allocationState.Reserve(caLogger, checkpointMgr, store.ClaimIdentifier{UID: uid}, claimRequests, false); err != nil {
 					if !trustPrepared {
 						return nil, err
 					}
@@ -170,7 +170,8 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				}
 
 				allGuaranteedCPUs = allGuaranteedCPUs.Union(cpus)
-				validatedClaimAllocations[uid] = cpus
+				validatedClaimAllocations[claimReq] = cpus
+				validatedClaimUIDs.Insert(uid)
 			}
 
 			if len(validatedClaimAllocations) > 0 {
@@ -182,6 +183,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 					// is tracked as shared until the inconsistency is resolved.
 					cLogger.Error(err, "ignoring claims bound to another container during synchronize")
 					clear(validatedClaimAllocations)
+					clear(validatedClaimUIDs)
 				}
 			}
 			var state *store.ContainerState
@@ -189,7 +191,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				state = store.NewContainerState(container.GetName(), containerUID)
 			} else {
 				cLogger.V(2).Info("found guaranteed CPUs", "cpus", allGuaranteedCPUs.String())
-				state = store.NewContainerState(container.GetName(), containerUID, slices.Collect(maps.Keys(validatedClaimAllocations))...)
+				state = store.NewContainerState(container.GetName(), containerUID, validatedClaimUIDs.UnsortedList()...)
 
 				// Reconcile guaranteed container CPU mask.
 				guaranteedUpdate := &api.ContainerUpdate{
@@ -199,7 +201,7 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 				containerUpdates = append(containerUpdates, guaranteedUpdate)
 			}
 			podState.SetContainerState(types.UID(pod.GetUid()), state)
-			cLogger.V(6).Info("set container state", "claims", len(validatedClaimAllocations))
+			cLogger.V(6).Info("set container state", "claims", validatedClaimUIDs.Len())
 		}
 	}
 
@@ -228,55 +230,78 @@ func (cp *CPUDriver) Synchronize(ctx context.Context, pods []*api.PodSandbox, co
 	return containerUpdates, nil
 }
 
-func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[types.UID]cpuset.CPUSet, error) {
-	allocations := make(map[types.UID]cpuset.CPUSet)
+// parseDRAEnvToClaimAllocations parses driver-injected DRA_CPUSET_<claimUID>[_<request>]=<cpuset>
+// environment entries into per-request CPU allocations.
+func parseDRAEnvToClaimAllocations(logger logr.Logger, envs []string) (map[store.ClaimRequest]cpuset.CPUSet, error) {
+	const prefix = cdiEnvVarPrefix + "_"
+	allocations := make(map[store.ClaimRequest]cpuset.CPUSet)
 	for _, env := range envs {
-		key, value, hasValue := strings.Cut(env, "=")
-		// We won't have a conflict by constructions with the vars we inject from DRA side
-		// and consume from NRI side, but still we add a defensive check.
-		// So this is the explicit skip for well-known public environment variable.
-		if key == dracpuapi.EnvVarExclusiveAssignedCPUSet {
+		if !strings.HasPrefix(env, prefix) {
 			continue
 		}
-		if !strings.HasPrefix(key, cdiEnvVarPrefix) {
+		key, value, hasValue := strings.Cut(env, "=")
+		if key == dracpuapi.EnvVarExclusiveAssignedCPUSet {
 			continue
 		}
 		logger.V(4).Info("parsing DRA env entry", "env", env)
 		if !hasValue {
 			return nil, fmt.Errorf("malformed DRA env entry %q", env)
 		}
-		var claimUID types.UID
-		if after, ok := strings.CutPrefix(key, cdiEnvVarPrefix+"_"); ok {
-			uidStr := after
-			claimUID = types.UID(uidStr)
-		} else {
-			continue
+
+		// Key format: DRA_CPUSET_<claimUID> (legacy) or DRA_CPUSET_<claimUID>_<request>.
+		claimUID, req, hasReq := strings.Cut(strings.TrimPrefix(key, prefix), "_")
+		if claimUID == "" || (hasReq && req == "") || strings.Contains(req, "_") {
+			return nil, fmt.Errorf("malformed DRA env key %q", key)
 		}
 
 		parsedSet, err := cpuset.Parse(value)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse cpuset value %q from env %q: %w", value, env, err)
 		}
-		allocations[claimUID] = parsedSet
+		if parsedSet.IsEmpty() {
+			return nil, fmt.Errorf("empty cpuset value in env %q", env)
+		}
+
+		claimReq := store.ClaimRequest{ClaimUID: types.UID(claimUID), Request: req}
+		if existing, exists := allocations[claimReq]; exists && !existing.Equals(parsedSet) {
+			return nil, fmt.Errorf("conflicting DRA env entries for claim %q request %q: %q vs %q", claimReq.ClaimUID, claimReq.Request, existing.String(), parsedSet.String())
+		}
+		allocations[claimReq] = parsedSet
+	}
+
+	for claimReq := range allocations {
+		if claimReq.Request != "" {
+			if _, hasLegacy := allocations[store.ClaimRequest{ClaimUID: claimReq.ClaimUID, Request: ""}]; hasLegacy {
+				return nil, fmt.Errorf("conflicting legacy and per-request DRA env entries for claim %q", claimReq.ClaimUID)
+			}
+		}
 	}
 
 	return allocations, nil
 }
 
-func validateSynchronizedClaimAllocation(logger logr.Logger, uid types.UID, cpus cpuset.CPUSet, envs []string) error {
+func validateSynchronizedClaimAllocation(logger logr.Logger, claimReq store.ClaimRequest, cpus cpuset.CPUSet, envs []string) (map[string]cpuset.CPUSet, error) {
 	allocations, err := parseDRAEnvToClaimAllocations(logger, envs)
 	if err != nil {
-		return fmt.Errorf("failed to parse CDI env for claim %q: %w", uid, err)
+		return nil, fmt.Errorf("failed to parse CDI env for claim %q: %w", claimReq.ClaimUID, err)
 	}
 
-	preparedCPUs, ok := allocations[uid]
+	preparedCPUs, ok := allocations[claimReq]
 	if !ok {
-		return fmt.Errorf("validation failed for claim %q: driver-owned CDI spec %q does not contain a matching DRA allocation", uid, getCDIDeviceName(uid))
+		return nil, fmt.Errorf("validation failed for claim %q request %q: driver-owned CDI spec %q does not contain a matching DRA allocation", claimReq.ClaimUID, claimReq.Request, getCDISpecKey(claimReq.ClaimUID))
 	}
 	if !preparedCPUs.Equals(cpus) {
-		return fmt.Errorf("validation failed for claim %q during synchronize: cpuset mismatch (expected %q from CDI, got %q from runtime)", uid, preparedCPUs.String(), cpus.String())
+		return nil, fmt.Errorf("validation failed for claim %q request %q during synchronize: cpuset mismatch (expected %q from CDI, got %q from runtime)", claimReq.ClaimUID, claimReq.Request, preparedCPUs.String(), cpus.String())
 	}
-	return nil
+
+	claimRequests := make(map[string]cpuset.CPUSet, len(allocations))
+	for req, reqCPUs := range allocations {
+		if req.ClaimUID != claimReq.ClaimUID {
+			return nil, fmt.Errorf("validation failed for claim %q: driver-owned CDI spec %q contains unexpected claim %q", claimReq.ClaimUID, getCDISpecKey(claimReq.ClaimUID), req.ClaimUID)
+		}
+		claimRequests[req.Request] = reqCPUs
+	}
+	return claimRequests, nil
 }
 
 // sharedContainerUpdatesFor computes updates from the supplied stores. Callers
@@ -335,7 +360,6 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		return nil, nil, fmt.Errorf("failed to parse DRA environment for container %q in pod %q: %w", ctr.Name, pod.Uid, err)
 	}
 	claimCount = len(claimAllocations)
-
 	containerId := types.UID(ctr.GetId())
 	podUID := types.UID(pod.GetUid())
 
@@ -356,27 +380,28 @@ func (cp *CPUDriver) CreateContainer(ctx context.Context, pod *api.PodSandbox, c
 		// NRI invokes CreateContainer for all containers. Only trust DRA env
 		// entries that match a claim prepared by this driver.
 		guaranteedCPUs := cpuset.New()
-		claimUIDs := []types.UID{}
-		for uid, cpus := range claimAllocations {
+		claimUIDs := sets.New[types.UID]()
+		for claimReq, cpus := range claimAllocations {
 			guaranteedCPUs = guaranteedCPUs.Union(cpus)
-			claimUIDs = append(claimUIDs, uid)
+			claimUIDs.Insert(claimReq.ClaimUID)
 		}
-		updatedClaims, err := cp.allocationState.Bind(logger, cp.checkpointMgr, podUID, ctr.Name, claimAllocations)
+		claimCount = claimUIDs.Len()
+		updatedRequests, err := cp.allocationState.Bind(logger, cp.checkpointMgr, podUID, ctr.Name, claimAllocations)
 		if err != nil {
 			return nil, nil, fmt.Errorf("cannot bind claim to container %q in pod %q: %w", ctr.Name, pod.Uid, err)
 		}
 		logger.V(2).Info("guaranteed CPUs found", "cpus", guaranteedCPUs.String())
-		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs...)
+		state := store.NewContainerState(ctr.GetName(), containerId, claimUIDs.UnsortedList()...)
 		adjust.SetLinuxCPUSetCPUs(guaranteedCPUs.String())
 		adjust.AddEnv(dracpuapi.EnvVarExclusiveAssignedCPUSet, guaranteedCPUs.String())
-		// An updated claim means this is the first CreateContainer after Prepare, so
+		// An updated request means this is the first CreateContainer after Prepare, so
 		// existing shared containers must be moved off the newly claimed CPUs.
 		// On restart the owner already exists and no shared-container updates are
 		// needed.
-		if len(updatedClaims) > 0 {
+		if len(updatedRequests) > 0 {
 			updates, err = sharedContainerUpdatesFor(logger, cp.allocationState, cp.podState, containerId)
 			if err != nil {
-				if unbindErr := cp.allocationState.Unbind(logger, cp.checkpointMgr, updatedClaims...); unbindErr != nil {
+				if unbindErr := cp.allocationState.Unbind(logger, cp.checkpointMgr, podUID, ctr.Name, updatedRequests...); unbindErr != nil {
 					return nil, nil, errors.Join(
 						fmt.Errorf("cannot update shared CPU pool after creating container %q in pod %q: %w", ctr.Name, pod.Uid, err),
 						fmt.Errorf("cannot roll back claim bindings: %w", unbindErr),

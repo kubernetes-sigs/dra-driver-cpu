@@ -416,6 +416,91 @@ var _ = ginkgo.Describe("CPU Allocation", ginkgo.Serial, ginkgo.Ordered, ginkgo.
 				gomega.Expect(alloc.CPUReported).To(cpusetmatchers.Equal(alloc.CPUAssigned), "assigned and reported CPUs do not match")
 			})
 
+			verifyPerRequestClaim := func(ctx context.Context, claimSpec resourcev1.ResourceClaimSpec, podRequests, expectedAllocResults []string) {
+				ginkgo.GinkgoHelper()
+				sharedPod := mustCreateBestEffortPod(ctx, fxt, targetNode.Name, dracpuTesterImage)
+
+				cpuClaim := &resourcev1.ResourceClaim{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace:    fxt.Namespace.Name,
+						GenerateName: "claim-per-request-",
+					},
+					Spec: claimSpec,
+				}
+				createdClaim, err := fxt.K8SClientset.ResourceV1().ResourceClaims(fxt.Namespace.Name).Create(ctx, cpuClaim, metav1.CreateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				pod := makeTesterPodWithRequestsInContainer(fxt.Namespace.Name, dracpuTesterImage, targetNode.Name, publishNodeAllocatableMapping, createdClaim.Name, podRequests...)
+				createdPod, err := e2epod.CreateSync(ctx, fxt.K8SClientset, pod)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				allocatedClaim, err := fxt.K8SClientset.ResourceV1().ResourceClaims(fxt.Namespace.Name).Get(ctx, createdClaim.Name, metav1.GetOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(allocatedClaim).To(resourceclaimmatchers.HaveAllocationResultFor(expectedAllocResults...))
+
+				expectNodeAllocatableClaimStatus(ctx, fxt.K8SClientset, createdPod, int64(len(podRequests)), publishNodeAllocatableMapping)
+
+				allocated := cpuset.New()
+				for _, cnt := range createdPod.Spec.Containers {
+					alloc := getTesterContainerCPUAllocation(fxt.K8SClientset, ctx, createdPod, cnt.Name)
+					fxt.Log.Info("per-request claim allocation", "container", cnt.Name, "cpus", alloc.CPUAssigned.String())
+					gomega.Expect(alloc.CPUAssigned).To(cpusetmatchers.HaveSize(1))
+					gomega.Expect(alloc.CPUAssigned).To(cpusetmatchers.BeSubsetOf(availableCPUs))
+					gomega.Expect(alloc.CPUReported).To(cpusetmatchers.Equal(alloc.CPUAssigned))
+					gomega.Expect(alloc.CPUAffinity).To(cpusetmatchers.Equal(alloc.CPUAssigned))
+					gomega.Expect(alloc.CPUAssigned).To(cpusetmatchers.HaveNoOverlapWith(allocated))
+					allocated = allocated.Union(alloc.CPUAssigned)
+				}
+
+				expectedShared := availableCPUs.Difference(allocated)
+				gomega.Eventually(observeAssignedCPUs(ctx, fxt, sharedPod)).WithTimeout(1*time.Minute).WithPolling(5*time.Second).
+					Should(cpusetmatchers.Equal(expectedShared), "shared pod %s does not exclude both request CPUs", e2epod.Identify(sharedPod))
+			}
+
+			ginkgo.It("should assign per-request CPUs to containers referencing individual requests of a multi-request claim", func(ctx context.Context) {
+				isGrouped := cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED
+				if isGrouped && groupBy == device.GROUP_BY_MACHINE {
+					ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
+				}
+				reqs := []string{"request-0", "request-1"}
+				verifyPerRequestClaim(ctx, makeResourceClaimSpec(1, isGrouped, reqs...), reqs, reqs)
+			})
+
+			ginkgo.It("should assign per-request CPUs when a multi-request claim uses FirstAvailable", func(ctx context.Context) {
+				isGrouped := cpuDeviceMode == device.CPU_DEVICE_MODE_GROUPED
+				if isGrouped && groupBy == device.GROUP_BY_MACHINE {
+					ginkgo.Skip("skipping this test in machine grouping mode as we do not configure opaque config in claim")
+				}
+				spec := makeResourceClaimSpec(1, isGrouped, "request-exact")
+				makeSubReq := func(name string, selectors []resourcev1.DeviceSelector) resourcev1.DeviceSubRequest {
+					sub := resourcev1.DeviceSubRequest{
+						Name:            name,
+						DeviceClassName: driverName,
+						Selectors:       selectors,
+					}
+					if isGrouped {
+						sub.Capacity = &resourcev1.CapacityRequirements{
+							Requests: map[resourcev1.QualifiedName]resource.Quantity{
+								"dra.cpu/cpu": *resource.NewQuantity(1, resource.DecimalSI),
+							},
+						}
+					} else {
+						sub.Count = 1
+					}
+					return sub
+				}
+				spec.Devices.Requests = append(spec.Devices.Requests, resourcev1.DeviceRequest{
+					Name: "request-prioritized",
+					FirstAvailable: []resourcev1.DeviceSubRequest{
+						makeSubReq("prefer-unavailable", []resourcev1.DeviceSelector{
+							{CEL: &resourcev1.CELDeviceSelector{Expression: `device.attributes["dra.cpu"].socketID == -1`}},
+						}),
+						makeSubReq("fallback", nil),
+					},
+				})
+				verifyPerRequestClaim(ctx, spec, []string{"request-exact", "request-prioritized"}, []string{"request-exact", "request-prioritized/fallback"})
+			})
+
 			ginkgo.It("should allocate non-overlapping CPUs for multiple claims", func(ctx context.Context) {
 				if cpuDeviceMode != "grouped" {
 					ginkgo.Skip("this test only applies to grouped CPU device mode")

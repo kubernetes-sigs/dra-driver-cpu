@@ -43,21 +43,55 @@ func getSpecFromCache(mgr *CdiManager, targetSpecName string) *cdiSpec.Spec {
 func TestAddDevice(t *testing.T) {
 	testcases := []struct {
 		name          string
-		deviceName    string
-		envVar        string
+		specKey       string
+		deviceEnvs    map[string]string
+		expectedDevs  []cdiSpec.Device
 		simulateErr   bool
 		expectedError string
 	}{
 		{
-			name:        "successfully writes a new device spec to disk",
-			deviceName:  "claim-cpu-add-success",
-			envVar:      "CPU=2,3",
-			simulateErr: false,
+			name:    "successfully writes a single-device spec to disk",
+			specKey: "claim-cpu-add-success",
+			deviceEnvs: map[string]string{
+				"claim-cpu-add-success": "CPU=2,3",
+			},
+			expectedDevs: []cdiSpec.Device{
+				{
+					Name: "claim-cpu-add-success",
+					ContainerEdits: cdiSpec.ContainerEdits{
+						Env: []string{"CPU=2,3"},
+					},
+				},
+			},
 		},
 		{
-			name:          "fails to writes pec to disk",
-			deviceName:    "claim-cpu-add-error",
-			envVar:        "CPU=2,3",
+			name:    "successfully writes multiple devices in sorted order into one spec file",
+			specKey: "claim-cpu-multi",
+			deviceEnvs: map[string]string{
+				"claim-cpu-multi_req-b": "DRA_CPUSET_multi_req-b=2-3",
+				"claim-cpu-multi_req-a": "DRA_CPUSET_multi_req-a=0-1",
+			},
+			expectedDevs: []cdiSpec.Device{
+				{
+					Name: "claim-cpu-multi_req-a",
+					ContainerEdits: cdiSpec.ContainerEdits{
+						Env: []string{"DRA_CPUSET_multi_req-a=0-1"},
+					},
+				},
+				{
+					Name: "claim-cpu-multi_req-b",
+					ContainerEdits: cdiSpec.ContainerEdits{
+						Env: []string{"DRA_CPUSET_multi_req-b=2-3"},
+					},
+				},
+			},
+		},
+		{
+			name:    "fails to write spec to disk",
+			specKey: "claim-cpu-add-error",
+			deviceEnvs: map[string]string{
+				"claim-cpu-add-error": "CPU=2,3",
+			},
 			simulateErr:   true,
 			expectedError: "failed to write CDI spec",
 		},
@@ -78,10 +112,10 @@ func TestAddDevice(t *testing.T) {
 			mgr, err := NewCdiManager(logger, testDriverName, tempCDIDir)
 			require.NoError(t, err)
 
-			expectedSpecName := mgr.getSpecName(tc.deviceName)
+			expectedSpecName := mgr.getSpecName(tc.specKey)
 			expectedFilePath := filepath.Join(tempCDIDir, expectedSpecName)
 
-			err = mgr.AddDevice(logger, tc.deviceName, tc.envVar)
+			err = mgr.AddDevice(logger, tc.specKey, tc.deviceEnvs)
 
 			if tc.expectedError != "" {
 				require.Error(t, err)
@@ -97,14 +131,7 @@ func TestAddDevice(t *testing.T) {
 			expectedSpec := &cdiSpec.Spec{
 				Version: cdiSpecVersion,
 				Kind:    cdiVendor + "/" + cdiClass,
-				Devices: []cdiSpec.Device{
-					{
-						Name: tc.deviceName,
-						ContainerEdits: cdiSpec.ContainerEdits{
-							Env: []string{tc.envVar},
-						},
-					},
-				},
+				Devices: tc.expectedDevs,
 			}
 
 			got := getSpecFromCache(mgr, expectedSpecName)
@@ -118,21 +145,25 @@ func TestAddDevice(t *testing.T) {
 func TestRemoveDevice(t *testing.T) {
 	testcases := []struct {
 		name          string
-		deviceName    string
-		envVar        string
+		specKey       string
+		deviceEnvs    map[string]string
 		simulateErr   bool
 		expectedError string
 	}{
 		{
-			name:        "successfully removes an existing device spec from disk",
-			deviceName:  "claim-cpu-remove-success",
-			envVar:      "CPU=4,5",
-			simulateErr: false,
+			name:    "successfully removes an existing multi-device spec from disk",
+			specKey: "claim-cpu-remove-success",
+			deviceEnvs: map[string]string{
+				"claim-cpu-remove-success_req-a": "CPU=4",
+				"claim-cpu-remove-success_req-b": "CPU=5",
+			},
 		},
 		{
-			name:          "fails to remove spec when directory is actually a file",
-			deviceName:    "claim-cpu-remove-error",
-			envVar:        "CPU=4,5",
+			name:    "fails to remove spec when directory is actually a file",
+			specKey: "claim-cpu-remove-error",
+			deviceEnvs: map[string]string{
+				"claim-cpu-remove-error": "CPU=4,5",
+			},
 			simulateErr:   true,
 			expectedError: "failed to remove CDI spec",
 		},
@@ -153,15 +184,15 @@ func TestRemoveDevice(t *testing.T) {
 			mgr, err := NewCdiManager(logger, testDriverName, tempCDIDir)
 			require.NoError(t, err)
 
-			expectedSpecName := mgr.getSpecName(tc.deviceName)
+			expectedSpecName := mgr.getSpecName(tc.specKey)
 			expectedFilePath := filepath.Join(tempCDIDir, expectedSpecName)
 
 			if !tc.simulateErr {
-				err = mgr.AddDevice(logger, tc.deviceName, tc.envVar)
+				err = mgr.AddDevice(logger, tc.specKey, tc.deviceEnvs)
 				require.NoError(t, err)
 			}
 
-			err = mgr.RemoveDevice(logger, tc.deviceName)
+			err = mgr.RemoveDevice(logger, tc.specKey)
 
 			if tc.expectedError != "" {
 				require.Error(t, err)
@@ -188,8 +219,8 @@ func TestAddDeviceOverwrite(t *testing.T) {
 	mgr, err := NewCdiManager(logger, testDriverName, tempCDIDir)
 	require.NoError(t, err)
 
-	deviceName := "claim-cpu-overwrite"
-	expectedSpecName := mgr.getSpecName(deviceName)
+	specKey := "claim-cpu-overwrite"
+	expectedSpecName := mgr.getSpecName(specKey)
 
 	assertFileCount := func(expected int) {
 		files, err := os.ReadDir(tempCDIDir)
@@ -197,7 +228,7 @@ func TestAddDeviceOverwrite(t *testing.T) {
 		require.Len(t, files, expected)
 	}
 
-	err = mgr.AddDevice(logger, deviceName, "CPU=0,1")
+	err = mgr.AddDevice(logger, specKey, map[string]string{specKey: "CPU=0,1"})
 	require.NoError(t, err)
 	assertFileCount(1)
 
@@ -206,8 +237,8 @@ func TestAddDeviceOverwrite(t *testing.T) {
 	require.NotNil(t, spec1)
 	require.Equal(t, []string{"CPU=0,1"}, spec1.Devices[0].ContainerEdits.Env)
 
-	// Call AddDevice again with the same deviceName and same data
-	err = mgr.AddDevice(logger, deviceName, "CPU=0,1")
+	// Call AddDevice again with the same specKey and same data
+	err = mgr.AddDevice(logger, specKey, map[string]string{specKey: "CPU=0,1"})
 	require.NoError(t, err)
 	// Verify that we do not create a new file
 	assertFileCount(1)
@@ -220,16 +251,21 @@ func TestGetDeviceEnv(t *testing.T) {
 	mgr, err := NewCdiManager(logger, testDriverName, tempCDIDir)
 	require.NoError(t, err)
 
-	deviceName := "claim-cpu-get-env"
-	expectedEnv := "DRA_CPUSET_claim-cpu-get-env=0,1"
-	err = mgr.AddDevice(logger, deviceName, expectedEnv)
+	specKey := "claim-cpu-get-env"
+	err = mgr.AddDevice(logger, specKey, map[string]string{
+		specKey + "_req-b": "DRA_CPUSET_claim-cpu-get-env_req-b=2-3",
+		specKey + "_req-a": "DRA_CPUSET_claim-cpu-get-env_req-a=0-1",
+	})
 	require.NoError(t, err)
 	err = mgr.Refresh()
 	require.NoError(t, err)
 
-	envs, err := mgr.GetDeviceEnv(deviceName)
+	envs, err := mgr.GetDeviceEnv(specKey)
 	require.NoError(t, err)
-	require.Equal(t, []string{expectedEnv}, envs)
+	require.Equal(t, []string{
+		"DRA_CPUSET_claim-cpu-get-env_req-a=0-1",
+		"DRA_CPUSET_claim-cpu-get-env_req-b=2-3",
+	}, envs)
 }
 
 func TestRefreshKeepsValidDevicesWhenAnotherSpecIsInvalid(t *testing.T) {
@@ -241,7 +277,7 @@ func TestRefreshKeepsValidDevicesWhenAnotherSpecIsInvalid(t *testing.T) {
 
 	deviceName := "claim-cpu-valid"
 	expectedEnv := "DRA_CPUSET_claim-cpu-valid=0,1"
-	err = mgr.AddDevice(logger, deviceName, expectedEnv)
+	err = mgr.AddDevice(logger, deviceName, map[string]string{deviceName: expectedEnv})
 	require.NoError(t, err)
 
 	err = os.WriteFile(filepath.Join(tempCDIDir, "unrelated-invalid.json"), []byte("{"), 0600)
@@ -262,5 +298,5 @@ func TestGetDeviceEnvMissingDevice(t *testing.T) {
 
 	_, err = mgr.GetDeviceEnv("missing-device")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), `failed to find CDI device "missing-device"`)
+	require.Contains(t, err.Error(), "failed to find CDI spec")
 }

@@ -19,7 +19,9 @@ package driver
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -43,6 +45,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/deviceattribute"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
+	"k8s.io/dynamic-resource-allocation/resourceclaim"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	registerapi "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
 	"k8s.io/utils/cpuset"
@@ -104,7 +107,7 @@ func (m *mockKubeletPlugin) RegistrationStatus() *registerapi.RegistrationStatus
 func (m *mockKubeletPlugin) Stop() {}
 
 type mockCdiMgr struct {
-	devices      map[string]string
+	specs        map[string]map[string]string
 	addError     error
 	refreshError error
 	getError     error
@@ -114,23 +117,38 @@ type mockCdiMgr struct {
 
 func newMockCdiMgr() *mockCdiMgr {
 	return &mockCdiMgr{
-		devices: make(map[string]string),
+		specs: make(map[string]map[string]string),
 	}
 }
 
 func newMockCdiMgrWithAllocations(allocations map[types.UID]cpuset.CPUSet) *mockCdiMgr {
 	mgr := newMockCdiMgr()
 	for uid, cpus := range allocations {
-		mgr.devices[getCDIDeviceName(uid)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, uid, cpus.String())
+		specKey := getCDISpecKey(uid)
+		mgr.specs[specKey] = map[string]string{
+			getCDIDeviceName(uid, ""): fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, uid, cpus.String()),
+		}
 	}
 	return mgr
 }
 
-func (m *mockCdiMgr) AddDevice(_ logr.Logger, deviceName, envVar string) error {
+func newMockCdiMgrWithRequestAllocations(allocations map[types.UID]map[string]cpuset.CPUSet) *mockCdiMgr {
+	mgr := newMockCdiMgr()
+	for uid, requests := range allocations {
+		deviceEnvs := make(map[string]string, len(requests))
+		for req, cpus := range requests {
+			deviceEnvs[getCDIDeviceName(uid, req)] = getDRAEnvVar(uid, req, cpus)
+		}
+		mgr.specs[getCDISpecKey(uid)] = deviceEnvs
+	}
+	return mgr
+}
+
+func (m *mockCdiMgr) AddDevice(_ logr.Logger, specKey string, deviceEnvs map[string]string) error {
 	if m.addError != nil {
 		return m.addError
 	}
-	m.devices[deviceName] = envVar
+	m.specs[specKey] = maps.Clone(deviceEnvs)
 	return nil
 }
 
@@ -139,22 +157,26 @@ func (m *mockCdiMgr) Refresh() error {
 	return m.refreshError
 }
 
-func (m *mockCdiMgr) GetDeviceEnv(deviceName string) ([]string, error) {
+func (m *mockCdiMgr) GetDeviceEnv(specKey string) ([]string, error) {
 	if m.getError != nil {
 		return nil, m.getError
 	}
-	env, ok := m.devices[deviceName]
+	deviceEnvs, ok := m.specs[specKey]
 	if !ok {
-		return nil, fmt.Errorf("device %q not found", deviceName)
+		return nil, fmt.Errorf("spec %q not found", specKey)
 	}
-	return []string{env}, nil
+	envs := make([]string, 0, len(deviceEnvs))
+	for _, devName := range slices.Sorted(maps.Keys(deviceEnvs)) {
+		envs = append(envs, deviceEnvs[devName])
+	}
+	return envs, nil
 }
 
-func (m *mockCdiMgr) RemoveDevice(_ logr.Logger, deviceName string) error {
+func (m *mockCdiMgr) RemoveDevice(_ logr.Logger, specKey string) error {
 	if m.removeError != nil {
 		return m.removeError
 	}
-	delete(m.devices, deviceName)
+	delete(m.specs, specKey)
 	return nil
 }
 
@@ -608,7 +630,7 @@ func TestPrepareResourceClaimsSucceedsBeforePublishResources(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, preparedClaims[claimUID].Err)
 			require.NotEmpty(t, preparedClaims[claimUID].Devices)
-			require.Len(t, mockCdiMgr.devices, 1)
+			require.Len(t, mockCdiMgr.specs, 1)
 
 			_, ok := driver.allocationState.GetResourceClaimAllocation(claimUID)
 			require.True(t, ok)
@@ -636,8 +658,10 @@ func TestPrepareResourceClaims(t *testing.T) {
 	}
 
 	claimUID := types.UID("claim-1")
-	cdiDeviceName := getCDIDeviceName(claimUID)
-	cdiQualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, cdiDeviceName)
+	cdiDeviceName := "claim-claim-1"
+	cdiQualifiedName := "dra.k8s.io/cpu=claim-claim-1"
+	reqAQualifiedName := "dra.k8s.io/cpu=claim-claim-1_req-a"
+	reqBQualifiedName := "dra.k8s.io/cpu=claim-claim-1_req-b"
 
 	testCases := []struct {
 		name                    string
@@ -646,9 +670,8 @@ func TestPrepareResourceClaims(t *testing.T) {
 		mockCdiAddError         error
 		expectedResultsCount    int
 		expectedError           bool
-		expectedCdiDevicesCount int
-		expectedCdiDevice       string
-		expectedCdiEnvVar       string
+		expectedCdiDevices      map[string]string
+		expectedRequestCPUs     map[string]cpuset.CPUSet
 		expectedPreparedDevices []kubeletplugin.Device
 	}{
 		{
@@ -669,15 +692,52 @@ func TestPrepareResourceClaims(t *testing.T) {
 					},
 				},
 			},
-			expectedResultsCount:    1,
-			expectedCdiDevicesCount: 1,
-			expectedCdiDevice:       cdiDeviceName,
-			expectedCdiEnvVar:       fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, "0-1"),
+			expectedResultsCount: 1,
+			expectedCdiDevices: map[string]string{
+				cdiDeviceName: "DRA_CPUSET_claim-1=0-1",
+			},
 			expectedPreparedDevices: []kubeletplugin.Device{
 				{PoolName: testNodeName, DeviceName: "cpudev000", CDIDeviceIDs: []string{cdiQualifiedName},
 					Metadata: metadataFromCPUInfo(cpuinfo.CPUInfo{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance}, true)},
 				{PoolName: testNodeName, DeviceName: "cpudev002", CDIDeviceIDs: []string{cdiQualifiedName},
 					Metadata: metadataFromCPUInfo(cpuinfo.CPUInfo{CpuID: 1, CoreID: 1, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance}, true)},
+			},
+		},
+		{
+			name:        "multi-request claim with FirstAvailable subrequest",
+			setupDriver: baseCPUDriver,
+			claims: []*resourceapi.ResourceClaim{
+				{
+					ObjectMeta: metav1.ObjectMeta{UID: claimUID, Name: "my-claim"},
+					Status: resourceapi.ResourceClaimStatus{
+						Allocation: &resourceapi.AllocationResult{
+							Devices: resourceapi.DeviceAllocationResult{
+								Results: []resourceapi.DeviceRequestAllocationResult{
+									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev000", Request: "req-a"},
+									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev002", Request: "req-a"},
+									{Driver: testDriverName, Pool: testNodeName, Device: "cpudev001", Request: "req-b/sub-1"},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedResultsCount: 1,
+			expectedCdiDevices: map[string]string{
+				"claim-claim-1_req-a": "DRA_CPUSET_claim-1_req-a=0-1",
+				"claim-claim-1_req-b": "DRA_CPUSET_claim-1_req-b=2",
+			},
+			expectedRequestCPUs: map[string]cpuset.CPUSet{
+				"req-a": cpuset.New(0, 1),
+				"req-b": cpuset.New(2),
+			},
+			expectedPreparedDevices: []kubeletplugin.Device{
+				{PoolName: testNodeName, DeviceName: "cpudev000", Requests: []string{"req-a"}, CDIDeviceIDs: []string{reqAQualifiedName},
+					Metadata: metadataFromCPUInfo(cpuinfo.CPUInfo{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance}, true)},
+				{PoolName: testNodeName, DeviceName: "cpudev002", Requests: []string{"req-a"}, CDIDeviceIDs: []string{reqAQualifiedName},
+					Metadata: metadataFromCPUInfo(cpuinfo.CPUInfo{CpuID: 1, CoreID: 1, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance}, true)},
+				{PoolName: testNodeName, DeviceName: "cpudev001", Requests: []string{"req-b/sub-1"}, CDIDeviceIDs: []string{reqBQualifiedName},
+					Metadata: metadataFromCPUInfo(cpuinfo.CPUInfo{CpuID: 2, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance}, true)},
 			},
 		},
 		{
@@ -713,7 +773,6 @@ func TestPrepareResourceClaims(t *testing.T) {
 				},
 			},
 			expectedResultsCount:    1,
-			expectedCdiDevicesCount: 0,
 			expectedPreparedDevices: nil,
 		},
 		{
@@ -775,10 +834,10 @@ func TestPrepareResourceClaims(t *testing.T) {
 					},
 				},
 			},
-			expectedResultsCount:    1,
-			expectedCdiDevicesCount: 1,
-			expectedCdiDevice:       cdiDeviceName,
-			expectedCdiEnvVar:       fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, "0"),
+			expectedResultsCount: 1,
+			expectedCdiDevices: map[string]string{
+				cdiDeviceName: "DRA_CPUSET_claim-1=0",
+			},
 			expectedPreparedDevices: []kubeletplugin.Device{
 				{PoolName: testNodeName, DeviceName: "cpudev000", CDIDeviceIDs: []string{cdiQualifiedName},
 					Metadata: metadataFromCPUInfo(cpuinfo.CPUInfo{CpuID: 0, CoreID: 0, SocketID: 0, NUMANodeID: 0, CoreType: cpuinfo.CoreTypePerformance}, true)},
@@ -838,11 +897,16 @@ func TestPrepareResourceClaims(t *testing.T) {
 				}
 			}
 
-			require.Len(t, mockCdiMgr.devices, tc.expectedCdiDevicesCount)
-			if tc.expectedCdiDevice != "" {
-				envVar, ok := mockCdiMgr.devices[tc.expectedCdiDevice]
-				require.True(t, ok, "expected CDI device not found")
-				require.Equal(t, tc.expectedCdiEnvVar, envVar)
+			if len(tc.expectedCdiDevices) == 0 {
+				require.Empty(t, mockCdiMgr.specs)
+			} else {
+				require.Len(t, mockCdiMgr.specs, 1)
+				require.Equal(t, tc.expectedCdiDevices, mockCdiMgr.specs[getCDISpecKey(tc.claims[0].UID)])
+			}
+			if tc.expectedRequestCPUs != nil {
+				gotRequests, ok := driver.allocationState.GetResourceClaimRequests(tc.claims[0].UID)
+				require.True(t, ok)
+				require.Equal(t, tc.expectedRequestCPUs, gotRequests)
 			}
 		})
 	}
@@ -941,7 +1005,7 @@ func TestPrepareResourceClaimsRejectAdminAccess(t *testing.T) {
 	}
 
 	claimUID := types.UID("claim-1")
-	cdiDeviceName := getCDIDeviceName(claimUID)
+	cdiDeviceName := getCDIDeviceName(claimUID, "")
 	cdiQualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, cdiDeviceName)
 
 	testCases := []struct {
@@ -1037,7 +1101,7 @@ func TestPrepareResourceClaimsRejectAdminAccess(t *testing.T) {
 			if tc.expectedError != "" {
 				require.ErrorContains(t, prep.Err, tc.expectedError)
 				require.Empty(t, prep.Devices)
-				require.Empty(t, mockCdiMgr.devices)
+				require.Empty(t, mockCdiMgr.specs)
 				_, allocated := driver.allocationState.GetResourceClaimAllocation(claimUID)
 				require.False(t, allocated, "rejected claim must not be recorded")
 			} else {
@@ -1179,7 +1243,7 @@ func TestPrepareResourceClaimsDoesNotCommitAllocationWhenCDIFails(t *testing.T) 
 			require.NoError(t, err)
 			require.Error(t, preparedClaims[claimUID].Err)
 			require.Empty(t, preparedClaims[claimUID].Devices)
-			require.Empty(t, mockCdiMgr.devices)
+			require.Empty(t, mockCdiMgr.specs)
 
 			gotCPUs, ok := tc.driver.allocationState.GetResourceClaimAllocation(claimUID)
 			require.Equal(t, tc.expectExistingAllocation, ok)
@@ -1222,8 +1286,6 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 	}
 
 	claimUID := types.UID("claim-1")
-	cdiDeviceName := getCDIDeviceName(claimUID)
-	cdiQualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, cdiDeviceName)
 
 	testCases := []struct {
 		name                    string
@@ -1508,6 +1570,7 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 
 					// Build expected devices based on the claim request
 					expectedPreparedDevices := []kubeletplugin.Device{}
+					expectedRequests := map[string]struct{}{}
 					if tc.expectedCPUSet.Size() != 0 || tc.expectedError {
 						smtEnabled := driver.topology.CPUTopology.SMTEnabled
 						for _, res := range tc.claims[0].Status.Allocation.Devices.Results {
@@ -1515,6 +1578,9 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 							if q, ok := devattr.LookupConsumedCapacity(res.ConsumedCapacity, testDriverName); ok {
 								allocatedCPUs = q.Value()
 							}
+							reqName := resourceclaim.BaseRequestRef(res.Request)
+							expectedRequests[reqName] = struct{}{}
+							cdiQualifiedName := cdiparser.QualifiedName(cdiVendor, cdiClass, getCDIDeviceName(claimUID, reqName))
 							expectedPreparedDevices = append(expectedPreparedDevices, kubeletplugin.Device{
 								PoolName:     res.Pool,
 								DeviceName:   res.Device,
@@ -1529,31 +1595,36 @@ func TestPrepareResourceClaimsGroupedMode(t *testing.T) {
 						t.Fatalf("prepared devices differ (-want +got):\n%s", diff)
 					}
 
-					envVar := mockCdiMgr.devices[cdiDeviceName]
-					parts := strings.SplitN(envVar, "=", 2)
-					// if expectedCPUSet is empty, parts[1] can be empty
 					if tc.expectedCPUSet.Size() > 0 {
-						require.Len(t, parts, 2, "CDI env var format error")
-					} else {
-						require.True(t, len(parts) == 2 || len(parts) == 1, "CDI env var format error")
-					}
+						require.Len(t, mockCdiMgr.specs, 1, "Expected 1 CDI spec to be created")
+						specDevices := mockCdiMgr.specs[getCDISpecKey(claimUID)]
+						require.Len(t, specDevices, len(expectedRequests), "Expected one CDI device per request")
 
-					actualCPUSet := cpuset.New()
-					if len(parts) == 2 && parts[1] != "" {
-						var err error
-						actualCPUSet, err = cpuset.Parse(parts[1])
-						require.NoError(t, err, "Failed to parse actual CPUSet from env var")
-					}
-					require.True(t, actualCPUSet.Equals(tc.expectedCPUSet), "Expected CPUSet %s, but got %s for test case %s", tc.expectedCPUSet.String(), actualCPUSet.String(), tc.name)
-					if tc.expectedCPUSet.Size() > 0 {
-						require.Equal(t, 1, len(mockCdiMgr.devices), "Expected 1 CDI device to be created")
+						storedRequests, ok := driver.allocationState.GetResourceClaimRequests(claimUID)
+						require.True(t, ok)
+						require.Len(t, storedRequests, len(expectedRequests))
+
+						actualCPUSet := cpuset.New()
+						for req := range expectedRequests {
+							envVar, ok := specDevices[getCDIDeviceName(claimUID, req)]
+							require.True(t, ok, "missing CDI device for request %q", req)
+							parts := strings.SplitN(envVar, "=", 2)
+							require.Len(t, parts, 2, "CDI env var format error")
+							reqCPUs, err := cpuset.Parse(parts[1])
+							require.NoError(t, err, "Failed to parse actual CPUSet from env var")
+							require.Equal(t, fmt.Sprintf("%s_%s_%s=%s", cdiEnvVarPrefix, claimUID, req, reqCPUs), envVar)
+							require.True(t, storedRequests[req].Equals(reqCPUs), "stored CPUs for request %q: got %s, want %s", req, storedRequests[req], reqCPUs)
+							require.True(t, actualCPUSet.Intersection(reqCPUs).IsEmpty(), "overlapping CPUs across requests")
+							actualCPUSet = actualCPUSet.Union(reqCPUs)
+						}
+						require.True(t, actualCPUSet.Equals(tc.expectedCPUSet), "Expected CPUSet %s, but got %s for test case %s", tc.expectedCPUSet.String(), actualCPUSet.String(), tc.name)
 					} else {
-						require.Equal(t, 0, len(mockCdiMgr.devices), "Expected 0 CDI devices to be created")
+						require.Empty(t, mockCdiMgr.specs, "Expected 0 CDI specs to be created")
 					}
 				}
 			} else {
 				require.Len(t, preparedClaims, 0)
-				require.Len(t, mockCdiMgr.devices, 0)
+				require.Len(t, mockCdiMgr.specs, 0)
 			}
 		})
 	}
@@ -1627,7 +1698,7 @@ func TestPrepareResourceClaimsGroupedModeRejectsInvalidCPUCapacity(t *testing.T)
 			result := preparedClaims[claimUID]
 			require.ErrorContains(t, result.Err, tc.expectedError)
 			require.Empty(t, result.Devices)
-			require.Empty(t, mockCdiMgr.devices)
+			require.Empty(t, mockCdiMgr.specs)
 
 			_, allocated := driver.allocationState.GetResourceClaimAllocation(claimUID)
 			require.False(t, allocated)
@@ -1670,7 +1741,7 @@ func TestPrepareResourceClaimsGroupedModeIgnoresAllocationsFromOtherDrivers(t *t
 	result := preparedClaims[claimUID]
 	require.NoError(t, result.Err)
 	require.Empty(t, result.Devices)
-	require.Empty(t, mockCdiMgr.devices)
+	require.Empty(t, mockCdiMgr.specs)
 
 	_, allocated := driver.allocationState.GetResourceClaimAllocation(claimUID)
 	require.False(t, allocated)
@@ -1679,31 +1750,73 @@ func TestPrepareResourceClaimsGroupedModeIgnoresAllocationsFromOtherDrivers(t *t
 
 func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 	claimUID := types.UID("claim-1")
-	cdiDeviceName := getCDIDeviceName(claimUID)
+
+	deviceResults := func(devices ...string) []resourceapi.DeviceRequestAllocationResult {
+		results := make([]resourceapi.DeviceRequestAllocationResult, len(devices))
+		for i, d := range devices {
+			results[i] = resourceapi.DeviceRequestAllocationResult{Driver: testDriverName, Pool: testNodeName, Device: d}
+		}
+		return results
+	}
 
 	testCases := []struct {
-		name           string
-		firstDevices   []string
-		secondDevices  []string
-		expectedCPUSet cpuset.CPUSet
-		expectedShared cpuset.CPUSet
-		expectError    bool
+		name            string
+		preReserved     map[string]cpuset.CPUSet
+		firstResults    []resourceapi.DeviceRequestAllocationResult
+		secondResults   []resourceapi.DeviceRequestAllocationResult
+		expectedCPUSet  cpuset.CPUSet
+		expectedShared  cpuset.CPUSet
+		expectedCDISpec map[string]string
+		expectError     bool
 	}{
 		{
 			name:           "individual mode - same devices repeated",
-			firstDevices:   []string{"cpudev000", "cpudev002"},
-			secondDevices:  []string{"cpudev000", "cpudev002"},
+			firstResults:   deviceResults("cpudev000", "cpudev002"),
+			secondResults:  deviceResults("cpudev000", "cpudev002"),
 			expectedCPUSet: cpuset.New(0, 1),
 			expectedShared: cpuset.New(2, 3),
-			expectError:    false,
+			expectedCDISpec: map[string]string{
+				"claim-claim-1": "DRA_CPUSET_claim-1=0-1",
+			},
+			expectError: false,
 		},
 		{
 			name:           "individual mode - different devices repeated",
-			firstDevices:   []string{"cpudev000", "cpudev002"},
-			secondDevices:  []string{"cpudev001", "cpudev003"},
+			firstResults:   deviceResults("cpudev000", "cpudev002"),
+			secondResults:  deviceResults("cpudev001", "cpudev003"),
 			expectedCPUSet: cpuset.New(0, 1),
 			expectedShared: cpuset.New(2, 3),
 			expectError:    true,
+		},
+		{
+			name: "individual mode - multi-request same split repeated",
+			firstResults: []resourceapi.DeviceRequestAllocationResult{
+				{Driver: testDriverName, Pool: testNodeName, Device: "cpudev000", Request: "req-a"},
+				{Driver: testDriverName, Pool: testNodeName, Device: "cpudev002", Request: "req-b"},
+			},
+			secondResults: []resourceapi.DeviceRequestAllocationResult{
+				{Driver: testDriverName, Pool: testNodeName, Device: "cpudev000", Request: "req-a"},
+				{Driver: testDriverName, Pool: testNodeName, Device: "cpudev002", Request: "req-b"},
+			},
+			expectedCPUSet: cpuset.New(0, 1),
+			expectedShared: cpuset.New(2, 3),
+			expectedCDISpec: map[string]string{
+				"claim-claim-1_req-a": "DRA_CPUSET_claim-1_req-a=0",
+				"claim-claim-1_req-b": "DRA_CPUSET_claim-1_req-b=1",
+			},
+		},
+		{
+			name:        "individual mode - legacy whole-claim reused on re-prepare",
+			preReserved: fullClaimRequest(cpuset.New(0, 1)),
+			secondResults: []resourceapi.DeviceRequestAllocationResult{
+				{Driver: testDriverName, Pool: testNodeName, Device: "cpudev000", Request: "req-a"},
+				{Driver: testDriverName, Pool: testNodeName, Device: "cpudev002", Request: "req-b"},
+			},
+			expectedCPUSet: cpuset.New(0, 1),
+			expectedShared: cpuset.New(2, 3),
+			expectedCDISpec: map[string]string{
+				"claim-claim-1": "DRA_CPUSET_claim-1=0-1",
+			},
 		},
 	}
 
@@ -1725,11 +1838,7 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 			require.NoError(t, err)
 			driver.cdiMgr = mockCdiMgr
 
-			makeClaim := func(devices []string) []*resourceapi.ResourceClaim {
-				results := make([]resourceapi.DeviceRequestAllocationResult, len(devices))
-				for i, d := range devices {
-					results[i] = resourceapi.DeviceRequestAllocationResult{Driver: testDriverName, Pool: testNodeName, Device: d}
-				}
+			makeClaim := func(results []resourceapi.DeviceRequestAllocationResult) []*resourceapi.ResourceClaim {
 				return []*resourceapi.ResourceClaim{
 					{
 						ObjectMeta: metav1.ObjectMeta{UID: claimUID},
@@ -1744,10 +1853,17 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 
 			// This fixture exercises preparation after initial runtime recovery.
 			driver.hasSynchronized = true
-			_, err = driver.PrepareResourceClaims(context.Background(), makeClaim(tc.firstDevices))
-			require.NoError(t, err)
+			if tc.preReserved != nil {
+				require.NoError(t, driver.allocationState.Reserve(testr.New(t), noop, store.ClaimIdentifier{UID: claimUID}, tc.preReserved, false))
+			} else {
+				firstResults, err := driver.PrepareResourceClaims(context.Background(), makeClaim(tc.firstResults))
+				require.NoError(t, err)
+				firstClaimResult, ok := firstResults[claimUID]
+				require.True(t, ok)
+				require.NoError(t, firstClaimResult.Err)
+			}
 
-			prepareResults, err := driver.PrepareResourceClaims(context.Background(), makeClaim(tc.secondDevices))
+			prepareResults, err := driver.PrepareResourceClaims(context.Background(), makeClaim(tc.secondResults))
 			require.NoError(t, err)
 
 			claimResult, ok := prepareResults[claimUID]
@@ -1762,13 +1878,7 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 				require.True(t, ok)
 				require.True(t, tc.expectedCPUSet.Equals(gotCPUs), "claim cpus: got %s, want %s", gotCPUs, tc.expectedCPUSet)
 				require.True(t, tc.expectedShared.Equals(driver.allocationState.GetSharedCPUs()), "shared cpus: got %s, want %s", driver.allocationState.GetSharedCPUs(), tc.expectedShared)
-
-				envVar := mockCdiMgr.devices[cdiDeviceName]
-				parts := strings.SplitN(envVar, "=", 2)
-				require.Len(t, parts, 2)
-				actualCPUSet, err := cpuset.Parse(parts[1])
-				require.NoError(t, err)
-				require.True(t, tc.expectedCPUSet.Equals(actualCPUSet), "cdi env cpus: got %s, want %s", actualCPUSet, tc.expectedCPUSet)
+				require.Equal(t, tc.expectedCDISpec, mockCdiMgr.specs[getCDISpecKey(claimUID)])
 			}
 		})
 	}
@@ -1777,7 +1887,6 @@ func TestPrepareResourceClaimsRepeatedCalls(t *testing.T) {
 func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 	logger := testr.New(t)
 	claimUID := types.UID("claim-1")
-	cdiDeviceName := getCDIDeviceName(claimUID)
 
 	// tests should not access private data. Using fake/mocks, passing them to the driver
 	// and asserting on the fake/mock state accessed directly from test code (not through
@@ -1876,6 +1985,20 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			expectedCPUSet: cpuset.New(0, 4),
 			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
 		},
+		{
+			name:       "multi-request claim repeated",
+			makeDriver: makeSocketDriver,
+			firstClaim: testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{
+				{Driver: testDriverName, Pool: testNodeName, Device: "cpudevsocket0", Request: "req-0", ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{devattr.CPUResourceQualifiedName: *resource.NewQuantity(1, resource.DecimalSI)}},
+				{Driver: testDriverName, Pool: testNodeName, Device: "cpudevsocket0", Request: "req-1", ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{devattr.CPUResourceQualifiedName: *resource.NewQuantity(1, resource.DecimalSI)}},
+			}),
+			secondClaim: testClaimWithResults(claimUID, []resourceapi.DeviceRequestAllocationResult{
+				{Driver: testDriverName, Pool: testNodeName, Device: "cpudevsocket0", Request: "req-0", ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{devattr.CPUResourceQualifiedName: *resource.NewQuantity(1, resource.DecimalSI)}},
+				{Driver: testDriverName, Pool: testNodeName, Device: "cpudevsocket0", Request: "req-1", ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{devattr.CPUResourceQualifiedName: *resource.NewQuantity(1, resource.DecimalSI)}},
+			}),
+			expectedCPUSet: cpuset.New(0, 4),
+			expectedShared: cpuset.New(1, 2, 3, 5, 6, 7),
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1891,6 +2014,8 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			require.True(t, ok)
 			require.True(t, tc.expectedCPUSet.Equals(gotCPUsAfterFirst), "claim cpus after first prepare: got %s, want %s", gotCPUsAfterFirst, tc.expectedCPUSet)
 			require.True(t, tc.expectedShared.Equals(cpuStore.GetSharedCPUs()), "shared cpus after first prepare: got %s, want %s", cpuStore.GetSharedCPUs(), tc.expectedShared)
+			gotRequestsAfterFirst, ok := cpuStore.GetResourceClaimRequests(claimUID)
+			require.True(t, ok)
 
 			prepareResults, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{tc.secondClaim})
 			require.NoError(t, err)
@@ -1901,12 +2026,15 @@ func TestPrepareGroupedResourceClaimsRepeatedCalls(t *testing.T) {
 			require.True(t, gotCPUsAfterFirst.Equals(gotCPUs), "claim cpus must be unchanged after second prepare: got %s, want %s", gotCPUs, gotCPUsAfterFirst)
 			require.True(t, tc.expectedShared.Equals(cpuStore.GetSharedCPUs()), "shared cpus must be unchanged after second prepare: got %s, want %s", cpuStore.GetSharedCPUs(), tc.expectedShared)
 
-			envVar := cdiMgr.devices[cdiDeviceName]
-			parts := strings.SplitN(envVar, "=", 2)
-			require.Len(t, parts, 2)
-			actualCPUSet, err := cpuset.Parse(parts[1])
-			require.NoError(t, err)
-			require.True(t, tc.expectedCPUSet.Equals(actualCPUSet), "cdi env cpus: got %s, want %s", actualCPUSet, tc.expectedCPUSet)
+			gotRequests, ok := cpuStore.GetResourceClaimRequests(claimUID)
+			require.True(t, ok)
+			require.Equal(t, gotRequestsAfterFirst, gotRequests)
+
+			specDevices := cdiMgr.specs[getCDISpecKey(claimUID)]
+			require.Len(t, specDevices, len(gotRequests))
+			for req, reqCPUs := range gotRequests {
+				require.Equal(t, fmt.Sprintf("%s_%s_%s=%s", cdiEnvVarPrefix, claimUID, req, reqCPUs), specDevices[getCDIDeviceName(claimUID, req)])
+			}
 		})
 	}
 }
@@ -1979,7 +2107,6 @@ func TestUnprepareResourceClaims(t *testing.T) {
 func TestUnprepareResourceClaimsKeepsAllocationWhenCDIRemoveFails(t *testing.T) {
 	logger := testr.New(t)
 	claimUID := types.UID("claim-cdi-remove-fails")
-	cdiDeviceName := getCDIDeviceName(claimUID)
 	allocatedCPUs := cpuset.New(0, 2)
 
 	cp, mockCdiMgr := newDriverWithAllocatedClaim(t, logger, claimUID, allocatedCPUs)
@@ -1993,14 +2120,13 @@ func TestUnprepareResourceClaimsKeepsAllocationWhenCDIRemoveFails(t *testing.T) 
 	require.True(t, ok)
 	require.True(t, allocatedCPUs.Equals(gotCPUs), "claim cpus: got %s, want %s", gotCPUs, allocatedCPUs)
 	require.True(t, cpuset.New(1, 3).Equals(cp.allocationState.GetSharedCPUs()), "shared cpus: got %s", cp.allocationState.GetSharedCPUs())
-	require.True(t, cp.allocationState.IsOwner(claimUID, "pod", "container"))
-	require.Contains(t, mockCdiMgr.devices, cdiDeviceName)
+	require.True(t, cp.allocationState.IsOwner("pod", "container", store.ClaimRequest{ClaimUID: claimUID}))
+	require.Contains(t, mockCdiMgr.specs, getCDISpecKey(claimUID))
 }
 
 func TestUnprepareResourceClaimsRemovesAllocationAfterCDIRemoveSucceeds(t *testing.T) {
 	logger := testr.New(t)
 	claimUID := types.UID("claim-cdi-remove-succeeds")
-	cdiDeviceName := getCDIDeviceName(claimUID)
 	allocatedCPUs := cpuset.New(0, 2)
 
 	cp, mockCdiMgr := newDriverWithAllocatedClaim(t, logger, claimUID, allocatedCPUs)
@@ -2012,21 +2138,20 @@ func TestUnprepareResourceClaimsRemovesAllocationAfterCDIRemoveSucceeds(t *testi
 	_, ok := cp.allocationState.GetResourceClaimAllocation(claimUID)
 	require.False(t, ok)
 	require.True(t, cpuset.New(0, 1, 2, 3).Equals(cp.allocationState.GetSharedCPUs()), "shared cpus: got %s", cp.allocationState.GetSharedCPUs())
-	require.False(t, cp.allocationState.IsOwner(claimUID, "pod", "container"))
-	require.NotContains(t, mockCdiMgr.devices, cdiDeviceName)
+	require.False(t, cp.allocationState.IsOwner("pod", "container", store.ClaimRequest{ClaimUID: claimUID}))
+	require.NotContains(t, mockCdiMgr.specs, getCDISpecKey(claimUID))
 }
 
 func newDriverWithAllocatedClaim(t *testing.T, logger logr.Logger, claimUID types.UID, allocatedCPUs cpuset.CPUSet) (*CPUDriver, *mockCdiMgr) {
 	t.Helper()
 
-	mockCdiMgr := newMockCdiMgr()
-	mockCdiMgr.devices[getCDIDeviceName(claimUID)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, allocatedCPUs.String())
+	mockCdiMgr := newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{claimUID: allocatedCPUs})
 	mockProvider := &cpuinfo.MockCPUInfoProvider{CPUInfos: mockCPUInfos_SingleSocket_4CPUS_HT}
 	topo, err := mockProvider.GetCPUTopology(logger)
 	require.NoError(t, err)
 	allocationState := store.NewAllocationState(testNodeName, topo, cpuset.New())
 	require.NoError(t, allocationState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, fullClaimRequest(allocatedCPUs), false))
-	_, err = allocationState.Bind(logger, noop, "pod", "container", map[types.UID]cpuset.CPUSet{claimUID: allocatedCPUs})
+	_, err = allocationState.Bind(logger, noop, "pod", "container", map[store.ClaimRequest]cpuset.CPUSet{{ClaimUID: claimUID}: allocatedCPUs})
 	require.NoError(t, err)
 
 	return &CPUDriver{
@@ -2492,9 +2617,9 @@ func TestOpaqueConfigAllocation(t *testing.T) {
 					assert.True(t, found, "Allocation not stored for claim %s", claim.UID)
 					assert.Equal(t, expectedSet, alloc)
 
-					cdiDeviceName := fmt.Sprintf("claim-%s", claim.UID)
-					expectedEnvVar := fmt.Sprintf("DRA_CPUSET_%s=%s", claim.UID, expectedSet.String())
-					assert.Equal(t, expectedEnvVar, mockCdi.devices[cdiDeviceName])
+					req := resourceclaim.BaseRequestRef(claim.Status.Allocation.Devices.Results[0].Request)
+					spec := mockCdi.specs[getCDISpecKey(claim.UID)]
+					assert.Equal(t, fmt.Sprintf("%s_%s_%s=%s", cdiEnvVarPrefix, claim.UID, req, expectedSet), spec[getCDIDeviceName(claim.UID, req)])
 				}
 			}
 		})

@@ -78,11 +78,45 @@ func RunToCompletion(ctx context.Context, cs kubernetes.Interface, pod *v1.Pod) 
 }
 
 func WaitToBeRunning(ctx context.Context, cs kubernetes.Interface, podNamespace, podName string) error {
-	phase, err := WaitForPhase(ctx, cs, podNamespace, podName, v1.PodRunning)
+	podPhase := v1.PodUnknown
+	var notRunning []string
+	err := wait.PollUntilContextTimeout(ctx, PollInterval, PollTimeout, true, func(ctx2 context.Context) (bool, error) {
+		pod, err := cs.CoreV1().Pods(podNamespace).Get(ctx2, podName, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+
+		podPhase = pod.Status.Phase
+		if podPhase != v1.PodRunning {
+			notRunning = nil
+			return false, nil
+		}
+		notRunning = nonRunningContainers(pod)
+		return len(notRunning) == 0, nil
+	})
 	if err != nil {
-		return fmt.Errorf("pod=%s/%s is not Running; phase=%q; %w", podNamespace, podName, phase, err)
+		if len(notRunning) > 0 {
+			return fmt.Errorf("pod=%s/%s is not Running; phase=%q; containers not running=%v; %w", podNamespace, podName, podPhase, notRunning, err)
+		}
+		return fmt.Errorf("pod=%s/%s is not Running; phase=%q; %w", podNamespace, podName, podPhase, err)
 	}
 	return nil
+}
+
+func nonRunningContainers(pod *v1.Pod) []string {
+	running := make(map[string]bool, len(pod.Status.ContainerStatuses))
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.State.Running != nil {
+			running[status.Name] = true
+		}
+	}
+	var notRunning []string
+	for _, cnt := range pod.Spec.Containers {
+		if !running[cnt.Name] {
+			notRunning = append(notRunning, cnt.Name)
+		}
+	}
+	return notRunning
 }
 
 func WaitToBeDeleted(ctx context.Context, cs kubernetes.Interface, podNamespace, podName string) error {

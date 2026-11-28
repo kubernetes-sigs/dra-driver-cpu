@@ -59,201 +59,230 @@ func TestAllocationStatePreparedLifecycle(t *testing.T) {
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
 	require.Error(t, store.Reserve(logger, noop, ClaimIdentifier{UID: "claim-2"}, fullClaimRequest(claimCPUs.UnsortedList()...), false))
 
-	updatedClaims, err := store.Bind(logger, noop, "pod", "app", map[types.UID]cpuset.CPUSet{claimUID: claimCPUs})
+	updatedClaims, err := store.Bind(logger, noop, "pod", "app", map[ClaimRequest]cpuset.CPUSet{{ClaimUID: claimUID}: claimCPUs})
 	require.NoError(t, err)
-	require.Equal(t, []types.UID{claimUID}, updatedClaims)
+	require.Equal(t, []ClaimRequest{{ClaimUID: claimUID}}, updatedClaims)
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2, 3)))
 
 	require.NoError(t, store.Release(logger, noop, claimUID))
-	require.False(t, store.IsOwner(claimUID, "pod", "app"))
+	require.False(t, store.IsOwner("pod", "app", ClaimRequest{ClaimUID: claimUID}))
 	require.True(t, store.GetSharedCPUs().Equals(allCPUs))
 }
 
 func TestAllocationStateBind(t *testing.T) {
-	owner := OwnerIdentifier{
-		PodUID:        "pod",
-		ContainerName: "app",
-	}
+	const (
+		podUID        types.UID = "pod"
+		containerName string    = "app"
+	)
 	allocations := map[types.UID]cpuset.CPUSet{
 		"a": cpuset.New(0),
 		"b": cpuset.New(1),
 	}
+	bindAll := map[ClaimRequest]cpuset.CPUSet{
+		{ClaimUID: "a"}: cpuset.New(0),
+		{ClaimUID: "b"}: cpuset.New(1),
+	}
 	tests := []struct {
-		name              string
-		initial           *OwnerIdentifier // Initial owner of claim b.
-		expected          map[types.UID]cpuset.CPUSet
-		wantUpdatedClaims []types.UID
-		wantClaimInfo     map[string]claimAllocationCheckpoint
-		wantErrIs         error
+		name                string
+		initialPod          types.UID // Initial owner pod of claim b (or initialRequest if set).
+		initialContainer    string
+		initialRequest      *ClaimRequest
+		expected            map[ClaimRequest]cpuset.CPUSet
+		wantUpdatedRequests []ClaimRequest
+		wantClaimInfo       map[string]claimAllocationCheckpoint
+		wantErrIs           error
 	}{
 		{
 			name:      "empty claim list",
 			wantErrIs: ErrEmptyClaimList,
 		},
 		{
-			name:              "first binding",
-			expected:          allocations,
-			wantUpdatedClaims: []types.UID{"a", "b"},
+			name:                "first binding",
+			expected:            bindAll,
+			wantUpdatedRequests: []ClaimRequest{{ClaimUID: "a"}, {ClaimUID: "b"}},
 			wantClaimInfo: map[string]claimAllocationCheckpoint{
 				"a": {
-					CPUs: "0",
+					OwnerPod: "pod",
+					CPUs:     "0",
 					Requests: map[string]requestAllocationCheckpoint{
-						"": {
-							CPUs: "0",
-							Owners: []ownerIdentifierCheckpoint{
-								{PodUID: "pod", ContainerName: "app"},
-							},
-						},
+						"": {CPUs: "0", Containers: []string{"app"}},
 					},
 				},
 				"b": {
-					CPUs: "1",
+					OwnerPod: "pod",
+					CPUs:     "1",
 					Requests: map[string]requestAllocationCheckpoint{
-						"": {
-							CPUs: "1",
-							Owners: []ownerIdentifierCheckpoint{
-								{PodUID: "pod", ContainerName: "app"},
-							},
-						},
-					},
-				},
-				"c": {
-					CPUs: "2-3",
-					Requests: map[string]requestAllocationCheckpoint{
-						"x": {
-							CPUs:   "2",
-							Owners: []ownerIdentifierCheckpoint{},
-						},
-						"y": {
-							CPUs:   "3",
-							Owners: []ownerIdentifierCheckpoint{},
-						},
+						"": {CPUs: "1", Containers: []string{"app"}},
 					},
 				},
 			},
 		},
 		{
-			name:     "same owner",
-			initial:  &owner,
-			expected: map[types.UID]cpuset.CPUSet{"b": cpuset.New(1)},
+			name:             "same owner",
+			initialPod:       podUID,
+			initialContainer: containerName,
+			expected:         map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "b"}: cpuset.New(1)},
 		},
 		{
-			name:              "mixed new and existing owners",
-			initial:           &owner,
-			expected:          allocations,
-			wantUpdatedClaims: []types.UID{"a"},
+			name:                "mixed new and existing owners",
+			initialPod:          podUID,
+			initialContainer:    containerName,
+			expected:            bindAll,
+			wantUpdatedRequests: []ClaimRequest{{ClaimUID: "a"}},
 			wantClaimInfo: map[string]claimAllocationCheckpoint{
 				"a": {
-					CPUs: "0",
+					OwnerPod: "pod",
+					CPUs:     "0",
 					Requests: map[string]requestAllocationCheckpoint{
-						"": {
-							CPUs: "0",
-							Owners: []ownerIdentifierCheckpoint{
-								{PodUID: "pod", ContainerName: "app"},
-							},
-						},
-					},
-				},
-				"b": {
-					CPUs: "1",
-					Requests: map[string]requestAllocationCheckpoint{
-						"": {
-							CPUs: "1",
-							Owners: []ownerIdentifierCheckpoint{
-								{PodUID: "pod", ContainerName: "app"},
-							},
-						},
-					},
-				},
-				"c": {
-					CPUs: "2-3",
-					Requests: map[string]requestAllocationCheckpoint{
-						"x": {
-							CPUs:   "2",
-							Owners: []ownerIdentifierCheckpoint{},
-						},
-						"y": {
-							CPUs:   "3",
-							Owners: []ownerIdentifierCheckpoint{},
-						},
+						"": {CPUs: "0", Containers: []string{"app"}},
 					},
 				},
 			},
 		},
 		{
-			name:              "multi-request claim",
-			expected:          map[types.UID]cpuset.CPUSet{"c": cpuset.New(2, 3)},
-			wantUpdatedClaims: []types.UID{"c"},
+			name:                "multi-request claim bound as whole claim (legacy)",
+			expected:            map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "c"}: cpuset.New(2, 3)},
+			wantUpdatedRequests: []ClaimRequest{{ClaimUID: "c", Request: "x"}, {ClaimUID: "c", Request: "y"}},
 			wantClaimInfo: map[string]claimAllocationCheckpoint{
-				"a": {
-					CPUs: "0",
-					Requests: map[string]requestAllocationCheckpoint{
-						"": {
-							CPUs:   "0",
-							Owners: []ownerIdentifierCheckpoint{},
-						},
-					},
-				},
-				"b": {
-					CPUs: "1",
-					Requests: map[string]requestAllocationCheckpoint{
-						"": {
-							CPUs:   "1",
-							Owners: []ownerIdentifierCheckpoint{},
-						},
-					},
-				},
 				"c": {
-					CPUs: "2-3",
+					OwnerPod: "pod",
+					CPUs:     "2-3",
 					Requests: map[string]requestAllocationCheckpoint{
-						"x": {
-							CPUs: "2",
-							Owners: []ownerIdentifierCheckpoint{
-								{PodUID: "pod", ContainerName: "app"},
-							},
-						},
-						"y": {
-							CPUs: "3",
-							Owners: []ownerIdentifierCheckpoint{
-								{PodUID: "pod", ContainerName: "app"},
-							},
-						},
+						"x": {CPUs: "2", Containers: []string{"app"}},
+						"y": {CPUs: "3", Containers: []string{"app"}},
 					},
 				},
 			},
 		},
 		{
-			name:      "pod conflict",
-			initial:   &OwnerIdentifier{PodUID: "other", ContainerName: "app"},
-			expected:  allocations,
-			wantErrIs: ErrClaimAlreadyBound,
+			name:                "multi-request claim bound as whole claim when one request already bound",
+			initialPod:          podUID,
+			initialContainer:    containerName,
+			initialRequest:      &ClaimRequest{ClaimUID: "c", Request: "x"},
+			expected:            map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "c"}: cpuset.New(2, 3)},
+			wantUpdatedRequests: []ClaimRequest{{ClaimUID: "c", Request: "y"}},
+			wantClaimInfo: map[string]claimAllocationCheckpoint{
+				"c": {
+					OwnerPod: "pod",
+					CPUs:     "2-3",
+					Requests: map[string]requestAllocationCheckpoint{
+						"x": {CPUs: "2", Containers: []string{"app"}},
+						"y": {CPUs: "3", Containers: []string{"app"}},
+					},
+				},
+			},
 		},
 		{
-			name:      "container conflict",
-			initial:   &OwnerIdentifier{PodUID: "pod", ContainerName: "other"},
-			expected:  allocations,
-			wantErrIs: ErrClaimAlreadyBound,
+			name:                "single request of a multi-request claim",
+			expected:            map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "c", Request: "x"}: cpuset.New(2)},
+			wantUpdatedRequests: []ClaimRequest{{ClaimUID: "c", Request: "x"}},
+			wantClaimInfo: map[string]claimAllocationCheckpoint{
+				"c": {
+					OwnerPod: "pod",
+					CPUs:     "2-3",
+					Requests: map[string]requestAllocationCheckpoint{
+						"x": {CPUs: "2", Containers: []string{"app"}},
+						"y": {CPUs: "3", Containers: []string{}},
+					},
+				},
+			},
+		},
+		{
+			name:                "second container in same pod binds sibling request of same claim",
+			initialPod:          "pod",
+			initialContainer:    "other",
+			initialRequest:      &ClaimRequest{ClaimUID: "c", Request: "x"},
+			expected:            map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "c", Request: "y"}: cpuset.New(3)},
+			wantUpdatedRequests: []ClaimRequest{{ClaimUID: "c", Request: "y"}},
+			wantClaimInfo: map[string]claimAllocationCheckpoint{
+				"c": {
+					OwnerPod: "pod",
+					CPUs:     "2-3",
+					Requests: map[string]requestAllocationCheckpoint{
+						"x": {CPUs: "2", Containers: []string{"other"}},
+						"y": {CPUs: "3", Containers: []string{"app"}},
+					},
+				},
+			},
+		},
+		{
+			name:             "different pod cannot bind sibling request of owned claim",
+			initialPod:       "other-pod",
+			initialContainer: "other-app",
+			initialRequest:   &ClaimRequest{ClaimUID: "c", Request: "x"},
+			expected:         map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "c", Request: "y"}: cpuset.New(3)},
+			wantErrIs:        ErrClaimAlreadyBound,
+		},
+		{
+			name: "container binds both named requests of one claim",
+			expected: map[ClaimRequest]cpuset.CPUSet{
+				{ClaimUID: "c", Request: "x"}: cpuset.New(2),
+				{ClaimUID: "c", Request: "y"}: cpuset.New(3),
+			},
+			wantUpdatedRequests: []ClaimRequest{{ClaimUID: "c", Request: "x"}, {ClaimUID: "c", Request: "y"}},
+			wantClaimInfo: map[string]claimAllocationCheckpoint{
+				"c": {
+					OwnerPod: "pod",
+					CPUs:     "2-3",
+					Requests: map[string]requestAllocationCheckpoint{
+						"x": {CPUs: "2", Containers: []string{"app"}},
+						"y": {CPUs: "3", Containers: []string{"app"}},
+					},
+				},
+			},
+		},
+		{
+			name:             "same request conflict",
+			initialPod:       "pod",
+			initialContainer: "other",
+			initialRequest:   &ClaimRequest{ClaimUID: "c", Request: "x"},
+			expected:         map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "c", Request: "x"}: cpuset.New(2)},
+			wantErrIs:        ErrClaimAlreadyBound,
+		},
+		{
+			name:      "unknown request in prepared claim",
+			expected:  map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "c", Request: "z"}: cpuset.New(2)},
+			wantErrIs: ErrUnknownClaim,
+		},
+		{
+			name:      "request CPU mismatch",
+			expected:  map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "c", Request: "x"}: cpuset.New(3)},
+			wantErrIs: ErrClaimCPUMismatch,
+		},
+		{
+			name:             "pod conflict",
+			initialPod:       "other",
+			initialContainer: "app",
+			expected:         bindAll,
+			wantErrIs:        ErrClaimAlreadyBound,
+		},
+		{
+			name:             "container conflict",
+			initialPod:       "pod",
+			initialContainer: "other",
+			expected:         bindAll,
+			wantErrIs:        ErrClaimAlreadyBound,
 		},
 		{
 			name:      "missing claim",
-			expected:  map[types.UID]cpuset.CPUSet{"a": cpuset.New(0), "missing": cpuset.New(2)},
+			expected:  map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "a"}: cpuset.New(0), {ClaimUID: "missing"}: cpuset.New(2)},
 			wantErrIs: ErrUnknownClaim,
 		},
 		{
 			name:      "CPU mismatch",
-			expected:  map[types.UID]cpuset.CPUSet{"a": cpuset.New(0), "b": cpuset.New(2)},
+			expected:  map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "a"}: cpuset.New(0), {ClaimUID: "b"}: cpuset.New(2)},
 			wantErrIs: ErrClaimCPUMismatch,
 		},
 		{
-			name:      "CPU mismatch for existing owner",
-			initial:   &owner,
-			expected:  map[types.UID]cpuset.CPUSet{"a": cpuset.New(0), "b": cpuset.New(2)},
-			wantErrIs: ErrClaimCPUMismatch,
+			name:             "CPU mismatch for existing owner",
+			initialPod:       podUID,
+			initialContainer: containerName,
+			expected:         map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "a"}: cpuset.New(0), {ClaimUID: "b"}: cpuset.New(2)},
+			wantErrIs:        ErrClaimCPUMismatch,
 		},
 		{
-			// The CDI env has one cpuset per claim, so one request is a mismatch.
-			name:      "one request of a multi-request claim",
-			expected:  map[types.UID]cpuset.CPUSet{"c": cpuset.New(2)},
+			name:      "whole-claim binding with partial CPUs mismatches",
+			expected:  map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "c"}: cpuset.New(2)},
 			wantErrIs: ErrClaimCPUMismatch,
 		},
 	}
@@ -264,62 +293,57 @@ func TestAllocationStateBind(t *testing.T) {
 			store := newTestAllocationState(t, logger, cpuset.New(0, 1, 2, 3, 4, 5), cpuset.New())
 
 			// add a sentinel which pre-exists and is not mutated by the binding under tests, so we check no unrelated overwrites
-			sentinelOwner := OwnerIdentifier{
-				PodUID:        "other-pod",
-				ContainerName: "other-app",
-			}
 			require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: "sentinel"}, fullClaimRequest(4), false))
-			_, err := store.Bind(logger, manager, sentinelOwner.PodUID, sentinelOwner.ContainerName, map[types.UID]cpuset.CPUSet{"sentinel": cpuset.New(4)})
+			_, err := store.Bind(logger, manager, "other-pod", "other-app", map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "sentinel"}: cpuset.New(4)})
 			require.NoError(t, err)
-
-			wantClaimInfo := map[string]claimAllocationCheckpoint{
-				"sentinel": {
-					CPUs: "4",
-					Requests: map[string]requestAllocationCheckpoint{
-						"": {
-							CPUs: "4",
-							Owners: []ownerIdentifierCheckpoint{
-								{PodUID: "other-pod", ContainerName: "other-app"},
-							},
-						},
-					},
-				},
-			}
 
 			for uid, cpus := range allocations {
 				require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: uid}, fullClaimRequest(cpus.UnsortedList()...), false))
 			}
 			require.NoError(t, store.Reserve(logger, manager, ClaimIdentifier{UID: "c"}, map[string]cpuset.CPUSet{"x": cpuset.New(2), "y": cpuset.New(3)}, false))
-			if tc.initial != nil {
-				_, err := store.Bind(logger, manager, tc.initial.PodUID, tc.initial.ContainerName, map[types.UID]cpuset.CPUSet{"b": cpuset.New(1)})
+			if tc.initialPod != "" {
+				target := ClaimRequest{ClaimUID: "b"}
+				cpus := cpuset.New(1)
+				if tc.initialRequest != nil {
+					target = *tc.initialRequest
+					reqs, ok := store.GetResourceClaimRequests(target.ClaimUID)
+					require.True(t, ok)
+					cpus = reqs[target.Request]
+				}
+				_, err := store.Bind(logger, manager, tc.initialPod, tc.initialContainer, map[ClaimRequest]cpuset.CPUSet{target: cpus})
 				require.NoError(t, err)
 			}
 			allocStateBefore := store.Clone()
 			checkpointBefore := readAllocationCheckpoint(t, manager)
 			createAttemptsBefore := manager.createAttempts
 
-			updatedClaims, err := store.Bind(logger, manager, owner.PodUID, owner.ContainerName, tc.expected)
+			updatedRequests, err := store.Bind(logger, manager, podUID, containerName, tc.expected)
 			if tc.wantErrIs != nil {
 				require.ErrorIs(t, err, tc.wantErrIs)
 				require.Equal(t, allocStateBefore.resourceClaimAllocations, store.resourceClaimAllocations, "failed validation must not change any claim")
 			} else {
 				require.NoError(t, err)
-				for uid := range tc.expected {
-					require.True(t, store.IsOwner(uid, owner.PodUID, owner.ContainerName))
+				for claimReq := range tc.expected {
+					require.True(t, store.IsOwner(podUID, containerName, claimReq))
 				}
 			}
-			require.ElementsMatch(t, tc.wantUpdatedClaims, updatedClaims)
-			if len(tc.wantUpdatedClaims) == 0 {
+			require.ElementsMatch(t, tc.wantUpdatedRequests, updatedRequests)
+			if len(tc.wantUpdatedRequests) == 0 {
 				require.Equal(t, createAttemptsBefore, manager.createAttempts)
 				require.Equal(t, checkpointBefore, readAllocationCheckpoint(t, manager))
 			} else {
 				require.Equal(t, createAttemptsBefore+1, manager.createAttempts)
+				wantClaimInfo := maps.Clone(checkpointBefore.Payload.ClaimInfo)
 				maps.Insert(wantClaimInfo, maps.All(tc.wantClaimInfo))
 				require.Equal(t, wantClaimInfo, readAllocationCheckpoint(t, manager).Payload.ClaimInfo)
 			}
 			require.Equal(t, allocStateBefore.Snapshot(), store.Snapshot())
-			// Unbind clears only updated claims, preserving prior owners and CPU reservations.
-			require.NoError(t, store.Unbind(logger, noop, append(updatedClaims, "missing")...))
+			allocStateAfterBind := store.Clone()
+			// Unbind with a different pod UID is ignored even if the container name matches.
+			require.NoError(t, store.Unbind(logger, noop, "wrong-pod", containerName, updatedRequests...))
+			require.Equal(t, allocStateAfterBind.resourceClaimAllocations, store.resourceClaimAllocations)
+			// Unbind clears only updated requests for containerName in podUID, preserving prior bindings and CPU reservations.
+			require.NoError(t, store.Unbind(logger, noop, podUID, containerName, append(updatedRequests, ClaimRequest{ClaimUID: "missing"})...))
 			require.Equal(t, allocStateBefore.resourceClaimAllocations, store.resourceClaimAllocations)
 			require.True(t, store.GetSharedCPUs().Equals(cpuset.New(5)))
 		})
@@ -328,28 +352,61 @@ func TestAllocationStateBind(t *testing.T) {
 
 func TestAllocationStateBindErrorDetails(t *testing.T) {
 	logger := testr.New(t)
-	store := newTestAllocationState(t, logger, cpuset.New(0, 1, 2), cpuset.New())
+	store := newTestAllocationState(t, logger, cpuset.New(0, 1, 2, 3), cpuset.New())
 	requirePreparedAllocation(t, logger, store, "a", cpuset.New(0))
+	require.NoError(t, store.Reserve(logger, noop, ClaimIdentifier{UID: "c"}, map[string]cpuset.CPUSet{"x": cpuset.New(1), "y": cpuset.New(2)}, false))
 
-	_, err := store.Bind(logger, noop, "pod", "app", map[types.UID]cpuset.CPUSet{"missing": cpuset.New(2)})
+	_, err := store.Bind(logger, noop, "pod", "app", map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "missing"}: cpuset.New(2)})
 	var unknownClaimErr UnknownClaimError
 	require.ErrorAs(t, err, &unknownClaimErr)
 	require.Equal(t, types.UID("missing"), unknownClaimErr.ClaimUID)
 
-	_, err = store.Bind(logger, noop, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(2)})
+	_, err = store.Bind(logger, noop, "pod", "app", map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "c", Request: "missing-req"}: cpuset.New(1)})
+	require.ErrorAs(t, err, &unknownClaimErr)
+	require.Equal(t, types.UID("c"), unknownClaimErr.ClaimUID)
+
+	_, err = store.Bind(logger, noop, "pod", "app", map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "a"}: cpuset.New(2)})
 	var mismatchErr ClaimCPUMismatchError
 	require.ErrorAs(t, err, &mismatchErr)
 	require.Equal(t, types.UID("a"), mismatchErr.ClaimUID)
 	require.True(t, mismatchErr.Expected.Equals(cpuset.New(0)))
 	require.True(t, mismatchErr.Got.Equals(cpuset.New(2)))
 
-	_, err = store.Bind(logger, noop, "", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
-	require.ErrorContains(t, err, "invalid claim owner")
-	require.False(t, store.IsOwner("a", "", "app"))
+	_, err = store.Bind(logger, noop, "pod", "app", map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "c", Request: "x"}: cpuset.New(2)})
+	require.ErrorAs(t, err, &mismatchErr)
+	require.Equal(t, types.UID("c"), mismatchErr.ClaimUID)
+	require.True(t, mismatchErr.Expected.Equals(cpuset.New(1)))
+	require.True(t, mismatchErr.Got.Equals(cpuset.New(2)))
 
-	_, err = store.Bind(logger, noop, "pod", "", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
-	require.ErrorContains(t, err, "invalid claim owner")
-	require.False(t, store.IsOwner("a", "pod", ""))
+	_, err = store.Bind(logger, noop, "pod-a", "c1", map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "c", Request: "x"}: cpuset.New(1)})
+	require.NoError(t, err)
+	require.True(t, store.IsOwner("pod-a", "c1", ClaimRequest{ClaimUID: "c", Request: "x"}))
+	require.False(t, store.IsOwner("pod-a", "c1", ClaimRequest{ClaimUID: "c"}))
+	_, found := store.GetResourceClaimRequests("missing")
+	require.False(t, found)
+
+	// Cross-pod conflict on a sibling request reports the owning pod.
+	_, err = store.Bind(logger, noop, "pod-b", "c2", map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "c", Request: "y"}: cpuset.New(2)})
+	var alreadyBoundErr ClaimAlreadyBoundError
+	require.ErrorAs(t, err, &alreadyBoundErr)
+	require.Equal(t, types.UID("c"), alreadyBoundErr.ClaimUID)
+	require.Equal(t, types.UID("pod-a"), alreadyBoundErr.PodUID)
+	require.Equal(t, `claimUID "c" is already bound to pod "pod-a"`, alreadyBoundErr.Error())
+
+	// Same-pod conflict on the same request also reports the owning pod.
+	_, err = store.Bind(logger, noop, "pod-a", "c2", map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "c", Request: "x"}: cpuset.New(1)})
+	require.ErrorAs(t, err, &alreadyBoundErr)
+	require.Equal(t, types.UID("c"), alreadyBoundErr.ClaimUID)
+	require.Equal(t, types.UID("pod-a"), alreadyBoundErr.PodUID)
+	require.Equal(t, `claimUID "c" is already bound to pod "pod-a"`, alreadyBoundErr.Error())
+
+	_, err = store.Bind(logger, noop, "", "app", map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "a"}: cpuset.New(0)})
+	require.ErrorContains(t, err, "invalid container identity")
+	require.False(t, store.IsOwner("", "app", ClaimRequest{ClaimUID: "a"}))
+
+	_, err = store.Bind(logger, noop, "pod", "", map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "a"}: cpuset.New(0)})
+	require.ErrorContains(t, err, "invalid container identity")
+	require.False(t, store.IsOwner("pod", "", ClaimRequest{ClaimUID: "a"}))
 }
 
 func TestAllocationStateCloneRetainsOwnership(t *testing.T) {
@@ -357,25 +414,25 @@ func TestAllocationStateCloneRetainsOwnership(t *testing.T) {
 	store := newTestAllocationState(t, logger, cpuset.New(0, 1, 2), cpuset.New())
 	requirePreparedAllocation(t, logger, store, "a", cpuset.New(0))
 	requirePreparedAllocation(t, logger, store, "b", cpuset.New(1))
-	_, err := store.Bind(logger, noop, "pod", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
+	_, err := store.Bind(logger, noop, "pod", "app", map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "a"}: cpuset.New(0)})
 	require.NoError(t, err)
-	require.True(t, store.IsOwner("a", "pod", "app"))
-	require.False(t, store.IsOwner("b", "pod", "app"))
+	require.True(t, store.IsOwner("pod", "app", ClaimRequest{ClaimUID: "a"}))
+	require.False(t, store.IsOwner("pod", "app", ClaimRequest{ClaimUID: "b"}))
 
 	clone := store.Clone()
 	// mirror checks done on the original to make sure they agree
-	require.True(t, clone.IsOwner("a", "pod", "app"))
-	require.False(t, clone.IsOwner("b", "pod", "app"))
+	require.True(t, clone.IsOwner("pod", "app", ClaimRequest{ClaimUID: "a"}))
+	require.False(t, clone.IsOwner("pod", "app", ClaimRequest{ClaimUID: "b"}))
 	require.Equal(t, store.Snapshot(), clone.Snapshot())
-	require.NoError(t, clone.Unbind(logger, noop, "a"))
-	_, err = clone.Bind(logger, noop, "other", "app", map[types.UID]cpuset.CPUSet{"a": cpuset.New(0)})
+	require.NoError(t, clone.Unbind(logger, noop, "pod", "app", ClaimRequest{ClaimUID: "a"}))
+	_, err = clone.Bind(logger, noop, "other", "app", map[ClaimRequest]cpuset.CPUSet{{ClaimUID: "a"}: cpuset.New(0)})
 	require.NoError(t, err)
 	require.NoError(t, clone.Release(logger, noop, "b"))
-	require.True(t, clone.IsOwner("a", "other", "app"))
+	require.True(t, clone.IsOwner("other", "app", ClaimRequest{ClaimUID: "a"}))
 	require.True(t, clone.GetSharedCPUs().Equals(cpuset.New(1, 2)))
 
 	// verify clone mutations didn't affect the original
-	require.True(t, store.IsOwner("a", "pod", "app"))
+	require.True(t, store.IsOwner("pod", "app", ClaimRequest{ClaimUID: "a"}))
 	require.True(t, store.GetSharedCPUs().Equals(cpuset.New(2)))
 }
 
@@ -470,11 +527,12 @@ func TestAllocationStateReserveRepeatedCalls(t *testing.T) {
 	// secondCPUs) causes no storage write. Keep the testcases preserving
 	// this invariant, or split the test accordingly when extending.
 	testCases := []struct {
-		name          string
-		firstRequests map[string]cpuset.CPUSet // per-request split of firstCPUs, if set
-		firstCPUs     cpuset.CPUSet
-		secondCPUs    cpuset.CPUSet
-		expectError   bool
+		name           string
+		firstRequests  map[string]cpuset.CPUSet // per-request split of firstCPUs, if set
+		firstCPUs      cpuset.CPUSet
+		secondRequests map[string]cpuset.CPUSet // per-request split of secondCPUs, if set
+		secondCPUs     cpuset.CPUSet
+		expectError    bool
 	}{
 		{
 			name:        "same cpus repeated",
@@ -499,7 +557,28 @@ func TestAllocationStateReserveRepeatedCalls(t *testing.T) {
 			firstRequests: map[string]cpuset.CPUSet{"a": cpuset.New(0, 1), "b": cpuset.New(2, 3)},
 			firstCPUs:     cpuset.New(0, 1, 2, 3),
 			secondCPUs:    cpuset.New(0, 1, 2, 3),
-			expectError:   false,
+			expectError:   true,
+		},
+		{
+			name:           "same per-request split repeated",
+			firstRequests:  map[string]cpuset.CPUSet{"a": cpuset.New(0, 1), "b": cpuset.New(2, 3)},
+			firstCPUs:      cpuset.New(0, 1, 2, 3),
+			secondRequests: map[string]cpuset.CPUSet{"a": cpuset.New(0, 1), "b": cpuset.New(2, 3)},
+			expectError:    false,
+		},
+		{
+			name:           "swapped per-request cpus with same union",
+			firstRequests:  map[string]cpuset.CPUSet{"a": cpuset.New(0, 1), "b": cpuset.New(2, 3)},
+			firstCPUs:      cpuset.New(0, 1, 2, 3),
+			secondRequests: map[string]cpuset.CPUSet{"a": cpuset.New(2, 3), "b": cpuset.New(0, 1)},
+			expectError:    true,
+		},
+		{
+			name:           "different request names with same union",
+			firstRequests:  map[string]cpuset.CPUSet{"a": cpuset.New(0, 1), "b": cpuset.New(2, 3)},
+			firstCPUs:      cpuset.New(0, 1, 2, 3),
+			secondRequests: map[string]cpuset.CPUSet{"a": cpuset.New(0, 1), "c": cpuset.New(2, 3)},
+			expectError:    true,
 		},
 		{
 			name:          "per-request cpus repeated with other cpus",
@@ -525,7 +604,11 @@ func TestAllocationStateReserveRepeatedCalls(t *testing.T) {
 			before := readAllocationCheckpoint(t, manager)
 			writes := manager.createAttempts
 
-			err := store.Reserve(logger, manager, ClaimIdentifier{UID: claimUID}, fullClaimRequest(tc.secondCPUs.UnsortedList()...), false)
+			second := fullClaimRequest(tc.secondCPUs.UnsortedList()...)
+			if tc.secondRequests != nil {
+				second = tc.secondRequests
+			}
+			err := store.Reserve(logger, manager, ClaimIdentifier{UID: claimUID}, second, false)
 			if tc.expectError {
 				require.Error(t, err)
 			} else {
@@ -585,6 +668,11 @@ func TestAllocationStateReserveSharedPoolGuard(t *testing.T) {
 			requests: map[string]cpuset.CPUSet{},
 			wantErr:  "has no CPUs",
 		},
+		{
+			name:     "rejects mixing whole-claim and named requests",
+			requests: map[string]cpuset.CPUSet{"": cpuset.New(0), "a": cpuset.New(1)},
+			wantErr:  "cannot mix whole-claim and named requests",
+		},
 	}
 
 	for _, test := range tests {
@@ -622,8 +710,8 @@ func TestAllocationStateReserveSharedPoolGuard(t *testing.T) {
 						CPUs: "4-7",
 						Requests: map[string]requestAllocationCheckpoint{
 							"": {
-								CPUs:   "4-7",
-								Owners: []ownerIdentifierCheckpoint{},
+								CPUs:       "4-7",
+								Containers: []string{},
 							},
 						},
 					},
@@ -631,8 +719,8 @@ func TestAllocationStateReserveSharedPoolGuard(t *testing.T) {
 						CPUs: test.cpus.String(),
 						Requests: map[string]requestAllocationCheckpoint{
 							"": {
-								CPUs:   test.cpus.String(),
-								Owners: []ownerIdentifierCheckpoint{},
+								CPUs:       test.cpus.String(),
+								Containers: []string{},
 							},
 						},
 					},

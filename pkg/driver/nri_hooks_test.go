@@ -39,14 +39,32 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 	testCases := []struct {
 		name                  string
 		envs                  []string
-		expectedAllocations   map[types.UID]cpuset.CPUSet
+		expectedAllocations   map[store.ClaimRequest]cpuset.CPUSet
 		expectedErrorContains string
 	}{
 		{
 			name: "single valid env",
 			envs: []string{fmt.Sprintf("%s_claim-uid-1=%s", cdiEnvVarPrefix, "0-1")},
-			expectedAllocations: map[types.UID]cpuset.CPUSet{
-				"claim-uid-1": cpuset.New(0, 1),
+			expectedAllocations: map[store.ClaimRequest]cpuset.CPUSet{
+				{ClaimUID: "claim-uid-1"}: cpuset.New(0, 1),
+			},
+		},
+		{
+			name: "single request-qualified env",
+			envs: []string{fmt.Sprintf("%s_claim-uid-1_req-a=%s", cdiEnvVarPrefix, "0-1")},
+			expectedAllocations: map[store.ClaimRequest]cpuset.CPUSet{
+				{ClaimUID: "claim-uid-1", Request: "req-a"}: cpuset.New(0, 1),
+			},
+		},
+		{
+			name: "multiple requests from the same claim",
+			envs: []string{
+				fmt.Sprintf("%s_claim-uid-1_req-a=%s", cdiEnvVarPrefix, "0,1"),
+				fmt.Sprintf("%s_claim-uid-1_req-b=%s", cdiEnvVarPrefix, "2,3"),
+			},
+			expectedAllocations: map[store.ClaimRequest]cpuset.CPUSet{
+				{ClaimUID: "claim-uid-1", Request: "req-a"}: cpuset.New(0, 1),
+				{ClaimUID: "claim-uid-1", Request: "req-b"}: cpuset.New(2, 3),
 			},
 		},
 		{
@@ -55,9 +73,9 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 				fmt.Sprintf("%s_claim-uid-1=%s", cdiEnvVarPrefix, "0,1"),
 				fmt.Sprintf("%s_claim-uid-2=%s", cdiEnvVarPrefix, "2,3"),
 			},
-			expectedAllocations: map[types.UID]cpuset.CPUSet{
-				"claim-uid-1": cpuset.New(0, 1),
-				"claim-uid-2": cpuset.New(2, 3),
+			expectedAllocations: map[store.ClaimRequest]cpuset.CPUSet{
+				{ClaimUID: "claim-uid-1"}: cpuset.New(0, 1),
+				{ClaimUID: "claim-uid-2"}: cpuset.New(2, 3),
 			},
 		},
 		{
@@ -66,19 +84,81 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 				fmt.Sprintf("%s_claim-uid-1=0-1", cdiEnvVarPrefix),
 				dracpuapi.EnvVarExclusiveAssignedCPUSet + "=0-1",
 			},
-			expectedAllocations: map[types.UID]cpuset.CPUSet{
-				"claim-uid-1": cpuset.New(0, 1),
+			expectedAllocations: map[store.ClaimRequest]cpuset.CPUSet{
+				{ClaimUID: "claim-uid-1"}: cpuset.New(0, 1),
 			},
 		},
 		{
 			name:                "no relevant envs",
 			envs:                []string{"OTHER_ENV=value"},
-			expectedAllocations: map[types.UID]cpuset.CPUSet{},
+			expectedAllocations: map[store.ClaimRequest]cpuset.CPUSet{},
 		},
 		{
 			name:                  "malformed env - no equals",
 			envs:                  []string{fmt.Sprintf("%s_claim-uid-1", cdiEnvVarPrefix)},
 			expectedErrorContains: "malformed DRA env entry",
+		},
+		{
+			name:                  "malformed env - empty claim UID",
+			envs:                  []string{fmt.Sprintf("%s_=0-1", cdiEnvVarPrefix)},
+			expectedErrorContains: "malformed DRA env key",
+		},
+		{
+			name:                  "malformed env - empty request name",
+			envs:                  []string{fmt.Sprintf("%s_claim-uid-1_=0-1", cdiEnvVarPrefix)},
+			expectedErrorContains: "malformed DRA env key",
+		},
+		{
+			name:                  "malformed env - empty claim UID with request",
+			envs:                  []string{fmt.Sprintf("%s__req-a=0-1", cdiEnvVarPrefix)},
+			expectedErrorContains: "malformed DRA env key",
+		},
+		{
+			name:                  "malformed env - too many components",
+			envs:                  []string{fmt.Sprintf("%s_claim-uid-1_req_extra=0-1", cdiEnvVarPrefix)},
+			expectedErrorContains: "malformed DRA env key",
+		},
+		{
+			name: "identical duplicate request env entries are deduplicated",
+			envs: []string{
+				fmt.Sprintf("%s_claim-uid-1_req-a=0-1", cdiEnvVarPrefix),
+				fmt.Sprintf("%s_claim-uid-1_req-a=0,1", cdiEnvVarPrefix),
+			},
+			expectedAllocations: map[store.ClaimRequest]cpuset.CPUSet{
+				{ClaimUID: "claim-uid-1", Request: "req-a"}: cpuset.New(0, 1),
+			},
+		},
+		{
+			name: "conflicting duplicate request env entries",
+			envs: []string{
+				fmt.Sprintf("%s_claim-uid-1_req-a=0-1", cdiEnvVarPrefix),
+				fmt.Sprintf("%s_claim-uid-1_req-a=2-3", cdiEnvVarPrefix),
+			},
+			expectedErrorContains: "conflicting DRA env entries",
+		},
+		{
+			name: "conflicting legacy and per-request env entries for same claim",
+			envs: []string{
+				fmt.Sprintf("%s_claim-uid-1=0-3", cdiEnvVarPrefix),
+				fmt.Sprintf("%s_claim-uid-1_req-a=0-1", cdiEnvVarPrefix),
+			},
+			expectedErrorContains: "conflicting legacy and per-request DRA env entries",
+		},
+		{
+			name: "legacy and per-request env entries for different claims",
+			envs: []string{
+				fmt.Sprintf("%s_claim-uid-1=0-1", cdiEnvVarPrefix),
+				fmt.Sprintf("%s_claim-uid-2_req-a=2-3", cdiEnvVarPrefix),
+			},
+			expectedAllocations: map[store.ClaimRequest]cpuset.CPUSet{
+				{ClaimUID: "claim-uid-1"}:                   cpuset.New(0, 1),
+				{ClaimUID: "claim-uid-2", Request: "req-a"}: cpuset.New(2, 3),
+			},
+		},
+		{
+			name:                  "malformed env - empty cpuset",
+			envs:                  []string{fmt.Sprintf("%s_claim-uid-1_req-a=", cdiEnvVarPrefix)},
+			expectedErrorContains: "empty cpuset value",
 		},
 		{
 			name:                  "malformed env - invalid cpuset",
@@ -88,7 +168,7 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 		{
 			name:                "empty env",
 			envs:                []string{},
-			expectedAllocations: map[types.UID]cpuset.CPUSet{},
+			expectedAllocations: map[store.ClaimRequest]cpuset.CPUSet{},
 		},
 	}
 
@@ -101,9 +181,9 @@ func TestParseDRAEnvToClaimAllocations(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				require.Equal(t, len(tc.expectedAllocations), len(allocations))
-				for uid, expectedCpus := range tc.expectedAllocations {
-					actualCpus, ok := allocations[uid]
-					require.True(t, ok)
+				for claimReq, expectedCpus := range tc.expectedAllocations {
+					actualCpus, ok := allocations[claimReq]
+					require.True(t, ok, "missing claim request %+v", claimReq)
 					require.True(t, expectedCpus.Equals(actualCpus))
 				}
 			}
@@ -312,7 +392,7 @@ func TestCreateContainer(t *testing.T) {
 				require.Nil(t, adjust)
 				require.Nil(t, updates)
 				require.Equal(t, before, tc.allocationState.Snapshot(), "failed CreateContainer must retain prepared allocations")
-				require.False(t, tc.allocationState.IsOwner(types.UID(claimUID), types.UID(pod.Uid), tc.container.Name), "failed CreateContainer must not retain claim owners")
+				require.False(t, tc.allocationState.IsOwner(types.UID(pod.Uid), tc.container.Name, store.ClaimRequest{ClaimUID: claimUID}), "failed CreateContainer must not retain claim owners")
 				require.Nil(t, tc.podState.GetContainerState(types.UID(pod.Uid), tc.container.Name), "failed CreateContainer must not retain container state")
 				return
 			}
@@ -320,6 +400,172 @@ func TestCreateContainer(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.expectedContainerAdjustment, adjust)
 			require.ElementsMatch(t, tc.expectedContainerUpdates, updates)
+		})
+	}
+}
+
+func TestCreateContainerMultiRequest(t *testing.T) {
+	logger := testr.New(t)
+	allCPUs := cpuset.New(0, 1, 2, 3, 4, 5, 6, 7)
+	var infos []cpuinfo.CPUInfo
+	for _, cpuID := range allCPUs.UnsortedList() {
+		infos = append(infos, cpuinfo.CPUInfo{CpuID: cpuID, CoreID: cpuID, SocketID: 0, NUMANodeID: 0})
+	}
+	topo, err := (&cpuinfo.MockCPUInfoProvider{CPUInfos: infos}).GetCPUTopology(logger)
+	require.NoError(t, err)
+
+	pod := &api.PodSandbox{Id: "pod-id-1", Name: "my-pod", Namespace: "my-ns", Uid: "pod-uid-1"}
+	otherPod := &api.PodSandbox{Id: "pod-id-2", Name: "other-pod", Namespace: "my-ns", Uid: "pod-uid-2"}
+	claimUID := types.UID("claim-uid-1")
+
+	type reqOwner struct {
+		podUID    types.UID
+		container string
+	}
+	myCtrOwner := reqOwner{podUID: types.UID(pod.Uid), container: "my-ctr"}
+	otherCtrOwner := reqOwner{podUID: types.UID(pod.Uid), container: "other-ctr"}
+
+	defaultRequests := map[string]cpuset.CPUSet{
+		"req-a": cpuset.New(0, 1),
+		"req-b": cpuset.New(2, 3),
+	}
+	fullPoolRequests := map[string]cpuset.CPUSet{
+		"req-a": cpuset.New(0, 1, 2, 3),
+		"req-b": cpuset.New(4, 5, 6, 7),
+	}
+
+	testCases := []struct {
+		name          string
+		requests      map[string]cpuset.CPUSet
+		preBound      map[string]reqOwner
+		withSharedCtr bool
+		pod           *api.PodSandbox
+		envs          []string
+		expectedCPUs  string
+		expectedErr   string
+		expectedOwner map[string]reqOwner
+	}{
+		{
+			name:          "binds single request",
+			envs:          []string{"DRA_CPUSET_claim-uid-1_req-a=0-1"},
+			expectedCPUs:  "0-1",
+			expectedOwner: map[string]reqOwner{"req-a": myCtrOwner},
+		},
+		{
+			name:          "second container binds sibling request",
+			preBound:      map[string]reqOwner{"req-a": otherCtrOwner},
+			envs:          []string{"DRA_CPUSET_claim-uid-1_req-b=2-3"},
+			expectedCPUs:  "2-3",
+			expectedOwner: map[string]reqOwner{"req-a": otherCtrOwner, "req-b": myCtrOwner},
+		},
+		{
+			name:          "container binds multiple requests of same claim",
+			envs:          []string{"DRA_CPUSET_claim-uid-1_req-a=0-1", "DRA_CPUSET_claim-uid-1_req-b=2-3"},
+			expectedCPUs:  "0-3",
+			expectedOwner: map[string]reqOwner{"req-a": myCtrOwner, "req-b": myCtrOwner},
+		},
+		{
+			name:          "rejects already-owned request",
+			preBound:      map[string]reqOwner{"req-a": otherCtrOwner},
+			envs:          []string{"DRA_CPUSET_claim-uid-1_req-a=0-1"},
+			expectedErr:   fmt.Sprintf("claimUID %q is already bound", claimUID),
+			expectedOwner: map[string]reqOwner{"req-a": otherCtrOwner},
+		},
+		{
+			name:          "rejects cross-pod sibling request",
+			preBound:      map[string]reqOwner{"req-a": otherCtrOwner},
+			pod:           otherPod,
+			envs:          []string{"DRA_CPUSET_claim-uid-1_req-b=2-3"},
+			expectedErr:   fmt.Sprintf("claimUID %q is already bound to pod %q", claimUID, pod.Uid),
+			expectedOwner: map[string]reqOwner{"req-a": otherCtrOwner},
+		},
+		{
+			name:          "multi-request bind fails atomically when one request is already owned",
+			preBound:      map[string]reqOwner{"req-a": otherCtrOwner},
+			envs:          []string{"DRA_CPUSET_claim-uid-1_req-a=0-1", "DRA_CPUSET_claim-uid-1_req-b=2-3"},
+			expectedErr:   fmt.Sprintf("claimUID %q is already bound", claimUID),
+			expectedOwner: map[string]reqOwner{"req-a": otherCtrOwner},
+		},
+		{
+			name:          "rollback unbinds failing sibling request and preserves existing owner",
+			requests:      fullPoolRequests,
+			preBound:      map[string]reqOwner{"req-a": otherCtrOwner},
+			withSharedCtr: true,
+			envs:          []string{"DRA_CPUSET_claim-uid-1_req-b=4-7"},
+			expectedErr:   "no shared CPUs available",
+			expectedOwner: map[string]reqOwner{"req-a": otherCtrOwner},
+		},
+		{
+			name:          "rollback unbinds all newly bound requests on shared pool exhaustion",
+			requests:      fullPoolRequests,
+			withSharedCtr: true,
+			envs:          []string{"DRA_CPUSET_claim-uid-1_req-a=0-3", "DRA_CPUSET_claim-uid-1_req-b=4-7"},
+			expectedErr:   "no shared CPUs available",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			requests := tc.requests
+			if requests == nil {
+				requests = defaultRequests
+			}
+			testPod := tc.pod
+			if testPod == nil {
+				testPod = pod
+			}
+
+			allocState := store.NewAllocationState(testNodeName, topo, cpuset.New())
+			require.NoError(t, allocState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, requests, false))
+			for reqName, owner := range tc.preBound {
+				_, err := allocState.Bind(logger, noop, owner.podUID, owner.container, map[store.ClaimRequest]cpuset.CPUSet{
+					{ClaimUID: claimUID, Request: reqName}: requests[reqName],
+				})
+				require.NoError(t, err)
+			}
+
+			podState := store.NewPodState()
+			if tc.withSharedCtr {
+				podState.SetContainerState("shared-pod", store.NewContainerState("shared-ctr", "shared-uid"))
+			}
+
+			driver := &CPUDriver{
+				podState:        podState,
+				allocationState: allocState,
+				checkpointMgr:   noop,
+				metrics:         cpumetrics.Noop(),
+			}
+
+			adjust, updates, err := driver.CreateContainer(context.Background(), testPod, &api.Container{
+				Id:           "ctr-id-1",
+				PodSandboxId: testPod.Id,
+				Name:         "my-ctr",
+				Env:          tc.envs,
+			})
+			if tc.expectedErr != "" {
+				require.ErrorContains(t, err, tc.expectedErr)
+				require.Nil(t, adjust)
+				require.Nil(t, updates)
+				require.Nil(t, podState.GetContainerState(types.UID(testPod.Uid), "my-ctr"))
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tc.expectedCPUs, adjust.Linux.Resources.Cpu.Cpus)
+				require.Equal(t, []*api.KeyValue{{Key: dracpuapi.EnvVarExclusiveAssignedCPUSet, Value: tc.expectedCPUs}}, adjust.Env)
+				require.Empty(t, updates)
+				claimUIDs, removed := podState.RemoveContainerState(types.UID(testPod.Uid), "my-ctr", "ctr-id-1")
+				require.True(t, removed)
+				require.Equal(t, []types.UID{claimUID}, claimUIDs)
+			}
+
+			for reqName := range requests {
+				claimReq := store.ClaimRequest{ClaimUID: claimUID, Request: reqName}
+				if want, ok := tc.expectedOwner[reqName]; ok {
+					require.True(t, allocState.IsOwner(want.podUID, want.container, claimReq))
+				} else {
+					require.False(t, allocState.IsOwner(types.UID(testPod.Uid), "my-ctr", claimReq))
+					require.False(t, allocState.IsOwner(types.UID(pod.Uid), "other-ctr", claimReq))
+				}
+			}
 		})
 	}
 }
@@ -433,7 +679,7 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, preparedCPUs.Equals(claimCPUs))
 	require.True(t, allocState.GetSharedCPUs().Equals(cpuset.New(2, 3)))
-	require.True(t, driver.allocationState.IsOwner(claimUID, types.UID(pod.Uid), "app"))
+	require.True(t, driver.allocationState.IsOwner(types.UID(pod.Uid), "app", store.ClaimRequest{ClaimUID: claimUID}))
 
 	restarted := container("container-2")
 	adjustment, updates, err = driver.CreateContainer(context.Background(), pod, restarted)
@@ -441,7 +687,7 @@ func TestGuaranteedContainerRestartWithoutReprepare(t *testing.T) {
 	require.Equal(t, claimCPUs.String(), adjustment.Linux.Resources.Cpu.Cpus)
 	require.Empty(t, updates)
 	require.True(t, allocState.GetSharedCPUs().Equals(cpuset.New(2, 3)))
-	require.True(t, driver.allocationState.IsOwner(claimUID, types.UID(pod.Uid), "app"))
+	require.True(t, driver.allocationState.IsOwner(types.UID(pod.Uid), "app", store.ClaimRequest{ClaimUID: claimUID}))
 
 	// Delayed events for the old runtime ID must not remove or release the replacement.
 	require.NoError(t, driver.RemoveContainer(context.Background(), pod, first))
@@ -475,7 +721,7 @@ func TestGuaranteedContainerRestartNotBlockedByEmptySharedPool(t *testing.T) {
 	allocState := store.NewAllocationState(testNodeName, topo, cpuset.New())
 	require.NoError(t, allocState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, fullClaimRequest(allCPUs), false))
 	pod := &api.PodSandbox{Id: "sandbox", Uid: "pod", Name: "pod", Namespace: "ns"}
-	_, err = allocState.Bind(logger, noop, types.UID(pod.Uid), "app", map[types.UID]cpuset.CPUSet{claimUID: allCPUs})
+	_, err = allocState.Bind(logger, noop, types.UID(pod.Uid), "app", map[store.ClaimRequest]cpuset.CPUSet{{ClaimUID: claimUID}: allCPUs})
 	require.NoError(t, err)
 
 	driver := &CPUDriver{
@@ -500,7 +746,7 @@ func TestGuaranteedContainerRestartNotBlockedByEmptySharedPool(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, adjustment)
 	require.Empty(t, updates)
-	require.True(t, allocState.IsOwner(claimUID, types.UID(pod.Uid), "app"), "an existing owner must not be removed on restart rejection")
+	require.True(t, allocState.IsOwner(types.UID(pod.Uid), "app", store.ClaimRequest{ClaimUID: claimUID}), "an existing owner must not be removed on restart rejection")
 }
 
 func TestNRISynchronize(t *testing.T) {
@@ -524,6 +770,7 @@ func TestNRISynchronize(t *testing.T) {
 		expectedUpdates      []*api.ContainerUpdate
 		expectedError        string
 		expectedRefreshCalls int
+		verify               func(t *testing.T, driver *CPUDriver)
 	}{
 		{
 			name: "empty runtime state clears the store",
@@ -785,6 +1032,171 @@ func TestNRISynchronize(t *testing.T) {
 			},
 			expectedRefreshCalls: 1,
 		},
+		{
+			name: "two containers using different requests of a multi-request claim",
+			driver: &CPUDriver{
+				podState:        store.NewPodState(),
+				allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+				checkpointMgr:   noop,
+				cdiMgr: newMockCdiMgrWithRequestAllocations(map[types.UID]map[string]cpuset.CPUSet{
+					"claim-A": {
+						"req-a": cpuset.New(0, 1),
+						"req-b": cpuset.New(2, 3),
+					},
+				}),
+				topology: deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
+				metrics:  cpumetrics.Noop(),
+			},
+			runtimePods: []*api.PodSandbox{pod1, pod2},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-req-a", PodSandboxId: pod1.Id, Name: "ctr-a", Env: []string{"DRA_CPUSET_claim-A_req-a=0-1"}},
+				{Id: "p1-req-b", PodSandboxId: pod1.Id, Name: "ctr-b", Env: []string{"DRA_CPUSET_claim-A_req-b=2-3"}},
+				{Id: "p2-shared", PodSandboxId: pod2.Id, Name: "shared-ctr"},
+			},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-req-a",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1"}}},
+				},
+				{
+					ContainerId: "p1-req-b",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "2-3"}}},
+				},
+				{
+					ContainerId: "p2-shared",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "4-7"}}},
+				},
+			},
+			expectedRefreshCalls: 1,
+		},
+		{
+			name: "single running container on multi-request claim keeps sibling request out of shared pool",
+			driver: &CPUDriver{
+				podState:        store.NewPodState(),
+				allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+				checkpointMgr:   noop,
+				cdiMgr: newMockCdiMgrWithRequestAllocations(map[types.UID]map[string]cpuset.CPUSet{
+					"claim-A": {
+						"req-a": cpuset.New(0, 1),
+						"req-b": cpuset.New(2, 3),
+					},
+				}),
+				topology: deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
+				metrics:  cpumetrics.Noop(),
+			},
+			runtimePods: []*api.PodSandbox{pod1, pod2},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-req-a", PodSandboxId: pod1.Id, Name: "ctr-a", Env: []string{"DRA_CPUSET_claim-A_req-a=0-1"}},
+				{Id: "p2-shared", PodSandboxId: pod2.Id, Name: "shared-ctr"},
+			},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-req-a",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-1"}}},
+				},
+				{
+					ContainerId: "p2-shared",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "4-7"}}},
+				},
+			},
+			expectedRefreshCalls: 1,
+			verify: func(t *testing.T, driver *CPUDriver) {
+				require.True(t, driver.allocationState.IsOwner(types.UID(pod1.Uid), "ctr-a", store.ClaimRequest{ClaimUID: "claim-A", Request: "req-a"}))
+				require.False(t, driver.allocationState.IsOwner(types.UID(pod1.Uid), "ctr-b", store.ClaimRequest{ClaimUID: "claim-A", Request: "req-b"}))
+
+				adj, upd, err := driver.CreateContainer(context.Background(), pod1, &api.Container{
+					Id:           "p1-req-b",
+					PodSandboxId: pod1.Id,
+					Name:         "ctr-b",
+					Env:          []string{"DRA_CPUSET_claim-A_req-b=2-3"},
+				})
+				require.NoError(t, err)
+				require.Equal(t, "2-3", adj.Linux.Resources.Cpu.Cpus)
+				require.Equal(t, []*api.ContainerUpdate{
+					{
+						ContainerId: "p2-shared",
+						Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "4-7"}}},
+					},
+				}, upd)
+				require.True(t, driver.allocationState.IsOwner(types.UID(pod1.Uid), "ctr-b", store.ClaimRequest{ClaimUID: "claim-A", Request: "req-b"}))
+			},
+		},
+		{
+			name: "CDI spec containing a foreign claim UID is ignored",
+			driver: func() *CPUDriver {
+				cdiMgr := newMockCdiMgr()
+				cdiMgr.specs[getCDISpecKey("claim-A")] = map[string]string{
+					getCDIDeviceName("claim-A", "req-a"): "DRA_CPUSET_claim-A_req-a=0-1",
+					getCDIDeviceName("claim-B", "req-b"): "DRA_CPUSET_claim-B_req-b=2-3",
+				}
+				return &CPUDriver{
+					podState:        store.NewPodState(),
+					allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+					checkpointMgr:   noop,
+					cdiMgr:          cdiMgr,
+					topology:        deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
+					metrics:         cpumetrics.Noop(),
+				}
+			}(),
+			runtimePods: []*api.PodSandbox{pod1},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-ctr", PodSandboxId: pod1.Id, Name: "ctr-a", Env: []string{"DRA_CPUSET_claim-A_req-a=0-1"}},
+			},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-ctr",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
+				},
+			},
+			expectedRefreshCalls: 1,
+		},
+		{
+			name: "CDI spec missing container request is ignored",
+			driver: &CPUDriver{
+				podState:        store.NewPodState(),
+				allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+				checkpointMgr:   noop,
+				cdiMgr: newMockCdiMgrWithRequestAllocations(map[types.UID]map[string]cpuset.CPUSet{
+					"claim-A": {"req-b": cpuset.New(2, 3)},
+				}),
+				topology: deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
+				metrics:  cpumetrics.Noop(),
+			},
+			runtimePods: []*api.PodSandbox{pod1},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-ctr", PodSandboxId: pod1.Id, Name: "ctr-a", Env: []string{"DRA_CPUSET_claim-A_req-a=0-1"}},
+			},
+			expectedUpdates: []*api.ContainerUpdate{
+				{
+					ContainerId: "p1-ctr",
+					Linux:       &api.LinuxContainerUpdate{Resources: &api.LinuxResources{Cpu: &api.LinuxCPU{Cpus: "0-7"}}},
+				},
+			},
+			expectedRefreshCalls: 1,
+		},
+		{
+			name: "cold synchronize rejects cross-pod containers claiming sibling requests",
+			driver: &CPUDriver{
+				podState:        store.NewPodState(),
+				allocationState: store.NewAllocationState(testNodeName, topo, cpuset.New()),
+				checkpointMgr:   noop,
+				cdiMgr: newMockCdiMgrWithRequestAllocations(map[types.UID]map[string]cpuset.CPUSet{
+					"claim-A": {
+						"req-a": cpuset.New(0, 1),
+						"req-b": cpuset.New(2, 3),
+					},
+				}),
+				topology: deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
+				metrics:  cpumetrics.Noop(),
+			},
+			runtimePods: []*api.PodSandbox{pod1, pod2},
+			runtimeCtrs: []*api.Container{
+				{Id: "p1-req-a", PodSandboxId: pod1.Id, Name: "ctr-a", Env: []string{"DRA_CPUSET_claim-A_req-a=0-1"}},
+				{Id: "p2-req-b", PodSandboxId: pod2.Id, Name: "ctr-b", Env: []string{"DRA_CPUSET_claim-A_req-b=2-3"}},
+			},
+			expectedError:        "is already bound to pod",
+			expectedRefreshCalls: 1,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -800,6 +1212,9 @@ func TestNRISynchronize(t *testing.T) {
 			require.NoError(t, err)
 
 			require.ElementsMatch(t, tc.expectedUpdates, updates)
+			if tc.verify != nil {
+				tc.verify(t, tc.driver)
+			}
 		})
 	}
 }
@@ -825,15 +1240,14 @@ func TestStopContainerKeepsClaimOutOfSharedPoolUntilUnprepare(t *testing.T) {
 	require.NoError(t, allocationState.Reserve(logger, noop, store.ClaimIdentifier{UID: claimUID}, fullClaimRequest(claimedCPUs), false))
 
 	driver := &CPUDriver{
-		cdiMgr:          newMockCdiMgr(),
+		cdiMgr:          newMockCdiMgrWithAllocations(map[types.UID]cpuset.CPUSet{claimUID: claimedCPUs}),
 		podState:        store.NewPodState(),
 		allocationState: allocationState,
 		checkpointMgr:   noop,
 		topology:        deviceTopology{Inventory: device.Inventory{CPUTopology: topo}},
 		metrics:         cpumetrics.Noop(),
 	}
-	driver.cdiMgr.(*mockCdiMgr).devices[getCDIDeviceName(claimUID)] = fmt.Sprintf("%s_%s=%s", cdiEnvVarPrefix, claimUID, claimedCPUs.String())
-	_, err := driver.allocationState.Bind(logger, noop, types.UID(guaranteedPod.Uid), guaranteedCtr.Name, map[types.UID]cpuset.CPUSet{claimUID: claimedCPUs})
+	_, err := driver.allocationState.Bind(logger, noop, types.UID(guaranteedPod.Uid), guaranteedCtr.Name, map[store.ClaimRequest]cpuset.CPUSet{{ClaimUID: claimUID}: claimedCPUs})
 	require.NoError(t, err)
 	driver.podState.SetContainerState(types.UID(guaranteedPod.Uid),
 		store.NewContainerState(guaranteedCtr.Name, types.UID(guaranteedCtr.Id), claimUID))

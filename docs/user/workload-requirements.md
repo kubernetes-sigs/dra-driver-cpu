@@ -15,7 +15,25 @@ How to configure your workloads depends on whether KEP-5517 accounting is active
 
 To check which mode is active, inspect the driver's ResourceSlices (`kubectl get resourceslice -o yaml`): the devices include a `nodeAllocatableResources` entry only when the mapping is enabled.
 
-**1-to-1 Claim to Container:** in both modes, this driver enforces that a specific CPU `ResourceClaim` can only be used by *one* container within or across pods. See [Sharing resource claims](feature-support.md#sharing-resource-claims).
+**Claim and request ownership:** In both modes, only one pod can use a CPU `ResourceClaim`, and no two containers can map to the same request. If a container omits `request`, it maps to all requests in the claim. See [Sharing resource claims](feature-support.md#sharing-resource-claims) and [`hack/examples/pod_with_multi_request_claim.yaml`](../../hack/examples/pod_with_multi_request_claim.yaml).
+
+```yaml
+spec:
+  containers:
+    - name: app
+      resources:
+        claims:
+          - name: cpu-claim
+            request: app-cpus    # gets only app-cpus
+    - name: worker
+      resources:
+        claims:
+          - name: cpu-claim
+            request: worker-cpus # gets only worker-cpus
+  resourceClaims:
+    - name: cpu-claim
+      resourceClaimName: claim-multi-request-cpus # defines requests "app-cpus" and "worker-cpus"
+```
 
 ## Before KEP-5517 (before 1.37 or alpha FG `DRANodeAllocatableResources` disabled)
 
@@ -66,7 +84,7 @@ The scheduler and kubelet are unaware of claim CPUs, so you MUST configure your 
 
 - **Option B: Container-Level Resources (No Pod Level Resources)**
 
-  - For each container that uses a DRA CPU claim, set `spec.containers[].resources.requests.cpu` and `spec.containers[].resources.limits.cpu` to be *exactly equal* to the number of CPUs requested in the `ResourceClaim` referenced by that container.
+  - For each container that uses a DRA CPU claim, set `spec.containers[].resources.requests.cpu` and `spec.containers[].resources.limits.cpu` to be *exactly equal* to the number of CPUs requested by the `ResourceClaim` requests referenced by that container.
 
   A complete, runnable version of this pattern is in
   [`hack/examples/pod_with_resource_claim_grouped_mode.yaml`](../../hack/examples/pod_with_resource_claim_grouped_mode.yaml).
