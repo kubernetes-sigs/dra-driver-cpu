@@ -18,7 +18,8 @@ featureGates:
   DRAListTypeAttributes: true
 nodes:
 # Node images are not pinned here: kind takes the image from the --image flag,
-# which the Makefile sets to kindest/node:$(KIND_K8S_VERSION).
+# which the Makefile sets to $(KIND_NODE_IMAGE). The CRI-O lane appends
+# hack/ci/crio/kind-patch.yaml, so keep top-level kubeadmConfigPatches out of this file.
 - role: control-plane
   kubeadmConfigPatches:
   - |
