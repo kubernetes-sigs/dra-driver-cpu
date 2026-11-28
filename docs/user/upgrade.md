@@ -97,6 +97,13 @@ Go consumers of the opaque allocation configuration API must update their import
 
 The serialized `v1alpha1` schema and parsing behavior are unchanged.
 
+### Per-request claims and rollback
+
+Release `0.4.0` writes per-request CDI entries for new claims instead of one whole-claim entry.
+
+- **Upgrading from `0.3.x` to `0.4.0`:** Running pods prepared by `0.3.x` keep working without restart.
+- **Rolling back from `0.4.0` to `0.3.x`:** Drain or delete pods using `0.4.0`-prepared claims before rolling back. Otherwise `0.3.x` cannot release those CPUs on claim unprepare until the `0.3.x` driver pod restarts.
+
 ### Early warning
 
 Before the driver enters beta stage, a batch of **breaking** changes are planned.

@@ -1,0 +1,64 @@
+# This example shows a Pod with two containers that each consume one request
+# from the same multi-request ResourceClaim.
+#
+# Driver Configuration:
+#   cpuDeviceMode: "grouped" (default).
+#
+# Note: Mirror each container's claim CPU count in resources.requests.cpu and
+# resources.limits.cpu when publishNodeAllocatableResourceMapping is disabled.
+# Omit container CPU requests/limits when publishNodeAllocatableResourceMapping
+# is enabled (see pod_with_resource_claim_node_allocatable.yaml).
+#
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: claim-multi-request-cpus
+spec:
+  devices:
+    requests:
+      - name: app-cpus
+        exactly:
+          deviceClassName: dra.cpu
+          capacity:
+            requests:
+              dra.cpu/cpu: "4"
+      - name: worker-cpus
+        exactly:
+          deviceClassName: dra.cpu
+          capacity:
+            requests:
+              dra.cpu/cpu: "2"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-multi-request-claim
+spec:
+  containers:
+    - name: app
+      image: "registry.k8s.io/pause:3.9"
+      resources:
+        requests:
+          cpu: "4"
+          memory: "2Gi"
+        limits:
+          cpu: "4"
+          memory: "2Gi"
+        claims:
+          - name: cpu-claim
+            request: app-cpus
+    - name: worker
+      image: "registry.k8s.io/pause:3.9"
+      resources:
+        requests:
+          cpu: "2"
+          memory: "1Gi"
+        limits:
+          cpu: "2"
+          memory: "1Gi"
+        claims:
+          - name: cpu-claim
+            request: worker-cpus
+  resourceClaims:
+    - name: cpu-claim
+      resourceClaimName: claim-multi-request-cpus
